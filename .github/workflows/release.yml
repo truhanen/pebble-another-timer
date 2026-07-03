@@ -1,0 +1,35 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install pebble-tool
+        run: uv tool install pebble-tool --python 3.13
+
+      - name: Install Pebble SDK
+        run: pebble sdk install latest
+
+      - name: Install npm deps
+        run: npm ci
+
+      - name: Build Pebble app
+        run: pebble build
+
+      - name: Upload release artifact
+        run: gh release create ${{ github.ref_name }} build/*.pbw --title ${{ github.ref_name }} --notes "See commit messages for details."
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
