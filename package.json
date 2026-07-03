@@ -1,7 +1,7 @@
 {
   "name": "countdown-timer",
   "author": "Sykerö Software",
-  "version": "1.1.9",
+  "version": "1.1.10",
   "keywords": ["pebble-app"],
   "private": true,
   "dependencies": {
