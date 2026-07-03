@@ -936,6 +936,13 @@ static void remove_timer_at(int idx) {
   if (idx < 0 || idx >= s_count) { return; }
   for (int i = idx; i < s_count - 1; i++) { s_timers[i] = s_timers[i + 1]; }
   s_count--;
+  // Keep the draft-tracking index valid across the shift: clear it if the draft
+  // itself was removed, decrement it if a lower row was removed. Prevents
+  // s_new_timer_idx from desyncing (e.g. an alarm snooze re-points s_detail_idx
+  // to a fired timer mid-draft; a later delete would otherwise leave
+  // s_new_timer_idx pointing at the wrong row).
+  if (idx == s_new_timer_idx) { s_new_timer_idx = -1; }
+  else if (s_new_timer_idx > idx) { s_new_timer_idx--; }
 }
 
 // Create a NEW unnamed timer of `secs`, started now, appended at the end of the
