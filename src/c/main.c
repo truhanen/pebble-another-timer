@@ -883,6 +883,12 @@ static void inbox_received(DictionaryIterator *iter, void *ctx) {
     int mn = tc_reconcile(s_timers, s_count, parsed, pn, merged);
     memcpy(s_timers, merged, sizeof(Timer) * (size_t)mn);
     s_count = mn;
+    // A reconcile can renumber s_timers (a grown config may overwrite the draft's
+    // slot, or shift a preserved trailing custom row), so abandon draft-tracking:
+    // otherwise a stale s_new_timer_idx could point at a real config-backed timer and
+    // let BACK delete it or Start duplicate it. The draft row itself is still
+    // preserved by tc_reconcile (custom trailing row) — only the draft flag is dropped.
+    s_new_timer_idx = -1;
     sweep_expiries();   // mark stale expiries DONE; no alarm for a config reconcile
     persist_all(); rearm_wakeup(); ensure_ticking();
   }
