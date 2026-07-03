@@ -40,6 +40,7 @@ static MenuLayer *s_detail_menu;
 static int s_detail_idx = -1;   // config index the detail window is showing
 static DetailAction s_detail_acts[7];   // rebuilt per reload by dl_rebuild_actions
 static int s_detail_act_count = 0;
+static int s_new_timer_idx = -1;  // index in s_timers of an un-started draft new timer, or -1
 
 // ---- transient "Started" confirmation shown ~1.1s before auto-return closes the app ----
 static Window  *s_confirm_window;
@@ -467,6 +468,7 @@ static void dl_draw_row(GContext *gctx, const Layer *cell, MenuIndex *ci, void *
 }
 
 static void save_as_new_and_start(int32_t secs);  // defined below
+static void create_new_timer(void);                // defined below ("+ New timer" row)
 static void open_delete_confirm(void);             // defined below (delete path)
 static void send_delete_timer(int32_t idx);        // defined below (delete path)
 static void remove_timer_at(int idx);              // defined below (delete path)
@@ -626,16 +628,35 @@ static void open_detail_window(int timer_idx) {
 }
 
 // ---- MenuLayer callbacks ----
+// The "+ New timer" action row is always the LAST row. With an empty list the
+// two-line hint occupies row 0 and "New timer" is row 1.
+static bool ml_is_new_row(uint16_t row) {
+  return row == (s_count == 0 ? 1 : (uint16_t)s_count);
+}
 static uint16_t ml_num_rows(MenuLayer *ml, uint16_t section, void *ctx) {
-  return s_count == 0 ? 1 : s_count;
+  // timers + trailing "New timer"; empty list: hint row + "New timer".
+  return s_count == 0 ? 2 : s_count + 1;
 }
 // Timer rows are single-line (32px); the empty-state row uses menu_cell_basic_draw
 // (title + subtitle), which needs the taller 44px to render both lines without clipping.
 static int16_t ml_cell_height(MenuLayer *ml, MenuIndex *ci, void *ctx) {
-  return s_count == 0 ? 44 : 32;
+  if (s_count == 0 && ci->row == 0) { return 44; }   // two-line empty-state hint
+  return 32;                                          // timer rows + "New timer" row
 }
 
 static void ml_draw_row(GContext *gctx, const Layer *cell, MenuIndex *ci, void *ctx) {
+  if (ml_is_new_row(ci->row)) {
+    GRect b = layer_get_bounds(cell);
+    MenuIndex sel = menu_layer_get_selected_index(s_menu);
+    bool selected = (menu_index_compare(&sel, ci) == 0);
+    graphics_context_set_fill_color(gctx, selected ? GColorBlack : GColorWhite);
+    graphics_fill_rect(gctx, b, 0, GCornerNone);
+    graphics_context_set_text_color(gctx, selected ? GColorWhite : GColorBlack);
+    graphics_draw_text(gctx, "+ New timer", fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD),
+      GRect(4, (b.size.h - 26) / 2, b.size.w - 8, 26),
+      GTextOverflowModeFill, GTextAlignmentCenter, NULL);
+    return;
+  }
   if (s_count == 0) {
     menu_cell_basic_draw(gctx, cell, "No timers", "Configure on your phone", NULL);
     return;
@@ -762,6 +783,7 @@ static void show_start_confirmation(int idx) {
 
 static void ml_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
   idle_reset();
+  if (ml_is_new_row(ci->row)) { create_new_timer(); return; }
   if (s_count == 0) { return; }
   int idx = s_order[ci->row];
   // An unstarted (idle) timer has only one useful action — skip the menu, just start.
@@ -781,6 +803,7 @@ static void ml_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
 // the "Save as new & start" action.
 static void ml_select_long(MenuLayer *ml, MenuIndex *ci, void *ctx) {
   idle_reset();
+  if (ml_is_new_row(ci->row)) { create_new_timer(); return; }
   if (s_count == 0) { return; }
   open_detail_window(s_order[ci->row]);
 }
@@ -911,6 +934,25 @@ static void save_as_new_and_start(int32_t secs) {
   select_timer_row(idx);
   if (s_auto_return) { show_start_confirmation(idx); }   // flash -> watchface
   else { window_stack_remove(s_detail_window, true); }   // back to the list
+}
+
+// "+ New timer" action: create an unnamed IDLE draft timer (default 1:00) held in
+// RAM only (not persisted, not sent to the phone) and open its detail window. The
+// draft is committed on Start (persist + AddTimer) or discarded on BACK/Delete/close.
+static void create_new_timer(void) {
+  if (s_count >= MAX_TIMERS) { return; }   // list full: no-op
+  int idx = s_count;
+  Timer *t = &s_timers[idx];
+  memset(t, 0, sizeof(*t));
+  t->name[0] = 0;
+  t->duration = 60; t->remaining = 60;     // default 1:00
+  t->state = TS_IDLE;
+  t->custom = true;                        // survive a mid-draft config reconcile
+  t->last_used = now_s();
+  s_count++;
+  s_new_timer_idx = idx;
+  reload_ui();
+  open_detail_window(idx);
 }
 
 // ---- window ----
