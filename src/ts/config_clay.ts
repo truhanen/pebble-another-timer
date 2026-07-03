@@ -51,6 +51,32 @@ const config = [
         ] },
     ],
   },
+  {
+    type: 'section',
+    items: [
+      { type: 'heading', defaultValue: 'Using the timers on your watch' },
+      { type: 'text', defaultValue:
+        '<b>Timer list</b><br>' +
+        '• <b>Up / Down</b> — move between timers.<br>' +
+        '• <b>Select</b> (short press) — on a stopped timer, starts it right away; ' +
+        'on a running or paused timer, opens its menu.<br>' +
+        '• <b>Select (long press / hold)</b> — opens the menu for <i>any</i> timer. ' +
+        'This is the only way to reach <b>+1 min / -1 min</b>, <b>Start &amp; Save</b> and ' +
+        '<b>Delete</b> for a timer that has not been started yet.' },
+      { type: 'text', defaultValue:
+        '<b>Timer menu</b> (opened as above)<br>' +
+        '• <b>Start / Pause / Stop</b> — control the timer.<br>' +
+        '• <b>+1 min / -1 min</b> — adjust its time.<br>' +
+        '• <b>Start &amp; Save</b> — after adjusting, start it and save the new time ' +
+        'as a separate timer.<br>' +
+        '• <b>Delete</b> — remove the timer (asks to confirm).' },
+      { type: 'text', defaultValue:
+        '<b>When a timer reaches zero</b><br>' +
+        '• <b>Up</b> — +1 min (snooze). ' +
+        '• <b>Down</b> — Stop. ' +
+        '• <b>Back</b> — snooze.' },
+    ],
+  },
   { type: 'submit', defaultValue: 'Save' },
 ];
 
