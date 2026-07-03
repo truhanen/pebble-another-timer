@@ -594,7 +594,8 @@ static void del_window_unload(Window *w) {
 static void del_confirm_select(ClickRecognizerRef rec, void *ctx) {
   int idx = s_detail_idx;
   if (idx >= 0 && idx < s_count) {
-    send_delete_timer(idx);
+    if (idx == s_new_timer_idx) { s_new_timer_idx = -1; }  // draft: never synced -> no phone delete
+    else { send_delete_timer(idx); }
     remove_timer_at(idx);
     persist_all(); rearm_wakeup(); reload_ui();
   }
@@ -625,13 +626,26 @@ static void open_delete_confirm(void) {
   window_stack_push(s_del_window, true);
 }
 
+// Leaving the detail window: stop the idle timer AND discard an un-started draft
+// new timer (BACK without Start). A committed timer has s_new_timer_idx == -1
+// (cleared in DACT_START), so this never discards a started/real timer.
+static void detail_disappear(Window *w) {
+  idle_cancel();
+  if (s_new_timer_idx >= 0 && s_new_timer_idx == s_detail_idx
+      && s_new_timer_idx < s_count && s_timers[s_new_timer_idx].state == TS_IDLE) {
+    remove_timer_at(s_new_timer_idx);
+    s_new_timer_idx = -1;
+    reload_ui();
+  }
+}
+
 static void open_detail_window(int timer_idx) {
   s_detail_idx = timer_idx;
   if (!s_detail_window) {
     s_detail_window = window_create();
     window_set_window_handlers(s_detail_window, (WindowHandlers){
       .load = detail_window_load, .unload = detail_window_unload,
-      .appear = idle_appear, .disappear = idle_disappear });
+      .appear = idle_appear, .disappear = detail_disappear });
   }
   // Idempotent: if it is already on the stack (e.g. it was open under the alarm when
   // a timer expired), just refresh it instead of pushing it a second time.
@@ -1039,6 +1053,7 @@ static void init(void) {
 static void deinit(void) {
   if (s_tick) { app_timer_cancel(s_tick); }
   idle_cancel();
+  if (s_new_timer_idx >= 0 && s_new_timer_idx < s_count) { remove_timer_at(s_new_timer_idx); }
   persist_all();
   rearm_wakeup();   // ensure the closed-app wakeup reflects final state
   if (s_confirm_window) { window_destroy(s_confirm_window); }
