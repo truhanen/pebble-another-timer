@@ -468,6 +468,7 @@ static void dl_draw_row(GContext *gctx, const Layer *cell, MenuIndex *ci, void *
 }
 
 static void save_as_new_and_start(int32_t secs);  // defined below
+static void send_add_timer(int32_t secs);          // defined below (phone sync)
 static void create_new_timer(void);                // defined below ("+ New timer" row)
 static void open_delete_confirm(void);             // defined below (delete path)
 static void send_delete_timer(int32_t idx);        // defined below (delete path)
@@ -492,6 +493,10 @@ static void dl_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
       break;
     case DACT_START:                    // start (idle/done) or resume (paused), in place
       tc_start(t, now_s());
+      if (idx == s_new_timer_idx) {      // draft commit: sync final duration, then it's a real timer
+        send_add_timer(t->duration);
+        s_new_timer_idx = -1;
+      }
       persist_all(); rearm_wakeup(); ensure_ticking();
       reload_ui();
       if (s_auto_return) { show_start_confirmation(idx); }   // flash, then pop to watchface
@@ -511,6 +516,16 @@ static void dl_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
     case DACT_PLUS:
     case DACT_MINUS: {
       int32_t secs = (a == DACT_PLUS) ? 60 : -60;
+      if (idx == s_new_timer_idx && t->state == TS_IDLE) {
+        // Draft new timer: +/- sets the DURATION (the saved length); remaining tracks
+        // it, so it stays "unchanged" (no Start & Save). RAM-only: do NOT persist/sync.
+        int32_t d = t->duration + secs;
+        if (d < 60) { d = 60; }
+        t->duration = d; t->remaining = d; t->last_used = now_s();
+        reload_ui(); menu_layer_reload_data(s_detail_menu);
+        dl_select_action(a);
+        break;
+      }
       if (t->state == TS_RUNNING || t->state == TS_PAUSED) {
         tc_add(t, secs, now_s());
       } else {                          // idle/done: adjust `remaining` (60s floor), keep template
