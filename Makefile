@@ -32,8 +32,8 @@ build_and_install_cloudpebble: build install_cloudpebble
 send_emulator_configuration:
 	pebble send-app-message --emulator emery \
 		--app-uuid 6514c531-5e09-470e-8ffb-ce633f721e64 \
-		--string 10000="$$(printf 'Egg 7 min\037420\036Egg 9 min\037540\036Egg 12 min\037720')" \
-		--int 10001=0 10003=0 10004=1 10007=15 10009=1
+		--string 10000="$$(printf '10 s\03710\036Egg 9 min\037540\036Egg 12 min\037720')" \
+		--int 10001=0 10003=0 10004=0 10009=0 10010=0
 
 .PHONY: long_press_select_emulator
 long_press_select_emulator:
