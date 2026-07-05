@@ -15,7 +15,7 @@
     "targetPlatforms": ["aplite", "basalt", "diorite", "emery", "flint"],
     "capabilities": [],
     "watchapp": { "watchface": false },
-    "messageKeys": ["TimerConfig", "SortOrder", "Request", "AutoReturn", "RunningFirst", "AddTimer", "DeleteTimer", "UpdateTimerIndex", "UpdateTimerSeconds", "IdleExitSec", "CfgOpen"],
+    "messageKeys": ["TimerConfig", "SortOrder", "Request", "AutoReturn", "RunningFirst", "AddTimer", "DeleteTimer", "UpdateTimerIndex", "UpdateTimerSeconds", "IdleExitSec", "CfgOpen", "LaunchSync"],
     "resources": {
       "media": [
         { "type": "bitmap", "menuIcon": true, "name": "MENU_ICON", "file": "images/menuicon.png" }

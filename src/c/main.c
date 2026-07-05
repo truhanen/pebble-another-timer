@@ -36,6 +36,8 @@ static SortMode s_sort = SORT_MRU;
 static int s_last_fired_idx = -1; // first timer that newly expired in the latest sweep
 static bool s_auto_return = false; // config: pop to watchface after a start/resume
 static bool s_running_first = true; // config: float RUNNING timers to the top
+static bool s_launch_sync = false; // config: subtract elapsed-from-launch on starts
+static int64_t s_app_launch_s = 0; // app launch timestamp for launch-sync elapsed
 
 // ---- per-timer detail window: long-press menu workflow ----
 static Window *s_detail_window;
@@ -68,6 +70,25 @@ static Layer   *s_del_layer;
 static char     s_del_name[NAME_LEN + 1];
 
 static int64_t now_s(void) { return (int64_t)time(NULL); }
+
+static int32_t launch_elapsed_s(void) {
+  if (!s_launch_sync || s_app_launch_s <= 0) { return 0; }
+  int64_t d = now_s() - s_app_launch_s;
+  if (d < 0) { d = 0; }
+  if (d > INT32_MAX) { d = INT32_MAX; }
+  return (int32_t)d;
+}
+
+static int32_t launch_adjust_start_secs(int32_t base) {
+  return base - launch_elapsed_s();
+}
+
+static void format_launch_sync_suffix(char *buf, size_t n) {
+  int32_t e = launch_elapsed_s();
+  int m = e / 60;
+  int s = e % 60;
+  snprintf(buf, n, "-%d:%02d", m, s);
+}
 
 // Close the app to the WATCHFACE (not the launcher). exit_reason_set tells
 // PebbleOS this was a completed action, so it returns to the watchface; without
@@ -213,9 +234,22 @@ static void format_unnamed_running_label(int idx, char *buf, size_t n) {
   }
 }
 
-static void ensure_ticking(void);   // defined below; used by the alarm handlers
+static void ensure_ticking(void);   // defined below; used by start/alarm handlers
 static void open_detail_window(int timer_idx, DetailStyle style);  // defined below; used by alarm + menus
 static void remove_timer_at(int idx); // defined below; used by alarm stop/delete paths
+static int sweep_expiries(void); // defined below; used by tick/start helpers
+static void trigger_alarm(int idx, int count); // defined below; alarm UI path
+
+static void start_with_secs(Timer *t, int32_t secs) {
+  tc_extend(t, secs, now_s());  // secs may be <=0 (immediate expiry on next sweep/check)
+}
+
+static bool finish_start_tail(void) {
+  int fired = sweep_expiries();
+  persist_all(); rearm_wakeup(); ensure_ticking(); reload_ui();
+  if (fired) { trigger_alarm(s_last_fired_idx, fired); return true; }
+  return false;
+}
 
 // Mark every expired RUNNING timer DONE. Returns the count that NEWLY expired and
 // sets s_last_fired_idx to the first of them (drives the alarm screen). No UI here.
@@ -437,11 +471,12 @@ static void tick_cb(void *ctx) {
     menu_layer_reload_data(s_detail_menu);   // retick the live time header
   }
   if (fired) { persist_all(); rearm_wakeup(); trigger_alarm(s_last_fired_idx, fired); }
-  s_tick = running ? app_timer_register(1000, tick_cb, NULL) : NULL;
+  s_tick = (running || s_launch_sync) ? app_timer_register(1000, tick_cb, NULL) : NULL;
 }
 
 static void ensure_ticking(void) {
   if (s_tick) { return; }
+  if (s_launch_sync) { s_tick = app_timer_register(1000, tick_cb, NULL); return; }
   for (int i = 0; i < s_count; i++) {
     if (s_timers[i].state == TS_RUNNING) { s_tick = app_timer_register(1000, tick_cb, NULL); return; }
   }
@@ -497,6 +532,13 @@ static void dl_draw_header(GContext *gctx, const Layer *cell, uint16_t section, 
   Timer *t = &s_timers[s_detail_idx];
   int32_t shown = (s_detail_style == DSTYLE_LEGACY) ? tc_remaining_now(t, now_s()) : s_detail_edit_secs;
   char rem[16]; tc_format_remaining(rem, sizeof(rem), shown);
+  char rem_head[36];
+  snprintf(rem_head, sizeof(rem_head), "%s", rem);
+  if (s_launch_sync && s_detail_style != DSTYLE_LEGACY) {
+    char sync[16];
+    format_launch_sync_suffix(sync, sizeof(sync));
+    snprintf(rem_head, sizeof(rem_head), "%s %s", rem, sync);
+  }
   char head[NAME_LEN + 8];
   GRect b = layer_get_bounds(cell);
   GFont f = fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD);
@@ -511,14 +553,14 @@ static void dl_draw_header(GContext *gctx, const Layer *cell, uint16_t section, 
     }
     graphics_draw_text(gctx, head, f, GRect(4, 3, b.size.w - 92, 26),
       GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
-    graphics_draw_text(gctx, rem, f, GRect(4, 3, b.size.w - 8, 26),
+    graphics_draw_text(gctx, rem_head, f, GRect(4, 3, b.size.w - 8, 26),
       GTextOverflowModeTrailingEllipsis, GTextAlignmentRight, NULL);
     return;
   }
   if (t->name[0]) {
     graphics_draw_text(gctx, t->name, f, GRect(4, 3, b.size.w - 92, 26),
       GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
-    graphics_draw_text(gctx, rem, f, GRect(4, 3, b.size.w - 8, 26),
+    graphics_draw_text(gctx, rem_head, f, GRect(4, 3, b.size.w - 8, 26),
       GTextOverflowModeTrailingEllipsis, GTextAlignmentRight, NULL);
   } else {
     ensure_unnamed_star(s_detail_idx);
@@ -526,7 +568,7 @@ static void dl_draw_header(GContext *gctx, const Layer *cell, uint16_t section, 
     format_unnamed_running_label(s_detail_idx, lbl, sizeof(lbl));
     graphics_draw_text(gctx, lbl, f, GRect(4, 3, b.size.w - 92, 26),
       GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
-    graphics_draw_text(gctx, rem, f, GRect(4, 3, b.size.w - 8, 26),
+    graphics_draw_text(gctx, rem_head, f, GRect(4, 3, b.size.w - 8, 26),
       GTextOverflowModeTrailingEllipsis, GTextAlignmentRight, NULL);
   }
 }
@@ -597,17 +639,21 @@ static void dl_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
         else { menu_layer_reload_data(s_detail_menu); }
         break;
       case DACT_START:
-        tc_start(t, now_s());
+        {
+        int32_t base = t->remaining;
+        if (base < 1) { base = t->duration; }
+        start_with_secs(t, launch_adjust_start_secs(base));
         ensure_unnamed_star(idx);
         if (idx == s_new_timer_idx) {
           send_add_timer(t->duration);
           s_new_timer_idx = -1;
         }
-        persist_all(); rearm_wakeup(); ensure_ticking();
-        reload_ui();
+        bool fired = finish_start_tail();
+        if (fired) { break; }
         if (s_auto_return) { show_start_confirmation(idx); }
         else { menu_layer_reload_data(s_detail_menu); }
         break;
+        }
       case DACT_SAVE_START: {
         int32_t rem = tc_remaining_now(t, now_s());
         start_as_new(rem >= 1 ? rem : t->duration, true);
@@ -659,10 +705,11 @@ static void dl_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
       t->remaining = s_detail_edit_secs;
       t->custom = true;
       s_ephemeral[idx] = true;
-      tc_start(t, now_s());
+      start_with_secs(t, launch_adjust_start_secs(s_detail_edit_secs));
       ensure_unnamed_star(idx);
       s_new_timer_idx = -1;
-      persist_all(); rearm_wakeup(); ensure_ticking(); reload_ui();
+      bool fired = finish_start_tail();
+      if (fired) { return; }
       select_timer_row(idx);
       if (s_auto_return) { show_start_confirmation(idx); }
       else { window_stack_remove(s_detail_window, true); }
@@ -678,11 +725,12 @@ static void dl_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
       t->remaining = s_detail_edit_secs;
       t->custom = true;
       s_ephemeral[idx] = false;
-      tc_start(t, now_s());
+      start_with_secs(t, launch_adjust_start_secs(s_detail_edit_secs));
       ensure_unnamed_star(idx);
       s_new_timer_idx = -1;
-      persist_all(); rearm_wakeup(); ensure_ticking(); reload_ui();
+      bool fired = finish_start_tail();
       send_add_timer(s_detail_edit_secs);
+      if (fired) { return; }
       select_timer_row(idx);
       if (s_auto_return) { show_start_confirmation(idx); }
       else { window_stack_remove(s_detail_window, true); }
@@ -987,17 +1035,28 @@ static void ml_draw_row(GContext *gctx, const Layer *cell, MenuIndex *ci, void *
   // constant width) with a small gap — much tighter than the old 96px column.
   GSize tw = graphics_text_layout_get_content_size(rem, tf,
     GRect(0, 0, b.size.w, th), GTextOverflowModeFill, GTextAlignmentLeft);
-  int name_x = 4 + tw.w + 8;
+  int desc_x = 4 + tw.w + 8;
+  char sync[16]; sync[0] = '\0';
+  bool show_sync = selected && s_launch_sync && t->state != TS_RUNNING;
+  if (show_sync) { format_launch_sync_suffix(sync, sizeof(sync)); }
+  if (show_sync) {
+    graphics_draw_text(gctx, sync, nf,
+      GRect(desc_x, ty, b.size.w - 4 - desc_x, th),
+      GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
+    GSize sw = graphics_text_layout_get_content_size(sync, nf,
+      GRect(0, 0, b.size.w, th), GTextOverflowModeFill, GTextAlignmentLeft);
+    desc_x += sw.w + 6;
+  }
   if (t->name[0]) {
     graphics_draw_text(gctx, t->name, nf,
-      GRect(name_x, ty, b.size.w - 4 - name_x, th),
+      GRect(desc_x, ty, b.size.w - 4 - desc_x, th),
       GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
   } else {
     ensure_unnamed_star(idx);
     char lbl[24];
     format_unnamed_running_label(idx, lbl, sizeof(lbl));
     graphics_draw_text(gctx, lbl, nf,
-      GRect(name_x, ty, b.size.w - 4 - name_x, th),
+      GRect(desc_x, ty, b.size.w - 4 - desc_x, th),
       GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
   }
 }
@@ -1076,9 +1135,12 @@ static void ml_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
   int idx = s_order[ci->row];
   // An unstarted (idle) timer has only one useful action — skip the menu, just start.
   if (s_timers[idx].state == TS_IDLE) {
-    tc_start(&s_timers[idx], now_s());
+    int32_t base = s_timers[idx].remaining;
+    if (base < 1) { base = s_timers[idx].duration; }
+    start_with_secs(&s_timers[idx], launch_adjust_start_secs(base));
     ensure_unnamed_star(idx);
-    persist_all(); rearm_wakeup(); ensure_ticking(); reload_ui();
+    bool fired = finish_start_tail();
+    if (fired) { return; }
     select_timer_row(idx);
     if (s_auto_return) { show_start_confirmation(idx); }   // flash, then pop to watchface
     return;
@@ -1121,6 +1183,12 @@ static void inbox_received(DictionaryIterator *iter, void *ctx) {
     s_idle_timeout_sec = isec;
     store_save_idleexit(isec);
     idle_reset();
+  }
+  Tuple *ls = dict_find(iter, MESSAGE_KEY_LaunchSync);
+  if (ls) {
+    s_launch_sync = ls->value->int32 != 0;
+    store_save_launchsync(s_launch_sync);
+    ensure_ticking();
   }
   // Pause the idle auto-exit while the phone config page is open (no watch buttons are
   // pressed during config, so the idle timer would otherwise fire and kill the app —
@@ -1262,12 +1330,12 @@ static void start_as_new(int32_t secs, bool save_to_phone) {
   t->custom = true;
   s_ephemeral[idx] = !save_to_phone;
   s_unnamed_star[idx] = -1;
-  tc_start(t, now_s());            // -> RUNNING, end_time = now + secs
+  start_with_secs(t, launch_adjust_start_secs(secs));
   ensure_unnamed_star(idx);
   s_count++;
-  persist_all(); rearm_wakeup(); ensure_ticking();
+  bool fired = finish_start_tail();
   if (save_to_phone) { send_add_timer(secs); }
-  reload_ui();
+  if (fired) { return; }
   select_timer_row(idx);
   if (s_auto_return) { show_start_confirmation(idx); }   // flash -> watchface
   else { window_stack_remove(s_detail_window, true); }   // back to the list
@@ -1313,11 +1381,12 @@ static void apply_overwrite_start(int idx, int32_t secs) {
   Timer *t = &s_timers[idx];
   t->duration = secs;
   t->remaining = secs;
-  tc_start(t, now_s());
+  start_with_secs(t, launch_adjust_start_secs(secs));
   ensure_unnamed_star(idx);
   s_ephemeral[idx] = false;
-  persist_all(); rearm_wakeup(); ensure_ticking(); reload_ui();
+  bool fired = finish_start_tail();
   send_update_timer(idx, secs);
+  if (fired) { return; }
   if (s_auto_return) { show_start_confirmation(idx); }
   else { window_stack_remove(s_detail_window, true); }
 }
@@ -1361,6 +1430,7 @@ static void window_load(Window *w) {
 static void window_unload(Window *w) { menu_layer_destroy(s_menu); s_menu = NULL; }
 
 static void init(void) {
+  s_app_launch_s = now_s();
   s_count = store_load(s_timers);
   memset(s_ephemeral, 0, sizeof(s_ephemeral));
   for (int i = 0; i < MAX_TIMERS; i++) { s_unnamed_star[i] = -1; }
@@ -1373,6 +1443,7 @@ static void init(void) {
   s_auto_return = store_load_autoreturn();
   s_running_first = store_load_runningfirst();
   s_idle_timeout_sec = store_load_idleexit();
+  s_launch_sync = store_load_launchsync();
 #ifdef SCREENSHOT_FIXTURES
   if (s_count == 0) {
     s_count = 3;

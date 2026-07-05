@@ -72,13 +72,15 @@ Pebble.addEventListener('webviewclosed', (e: any) => {
   dict.AutoReturn = s.AutoReturn ? 1 : 0;
   dict.RunningFirst = s.RunningFirst ? 1 : 0;
   dict.IdleExitSec = parseInt(s.IdleExitSec, 10) || 0;
+  dict.LaunchSync = s.LaunchSync ? 1 : 0;
   // persist so we can re-send when the watchapp later launches and asks (above)
   window.localStorage.setItem('timer_config', dict.TimerConfig);
   window.localStorage.setItem('sort_order', String(dict.SortOrder));
   window.localStorage.setItem('auto_return', String(dict.AutoReturn));
   window.localStorage.setItem('running_first', String(dict.RunningFirst));
   window.localStorage.setItem('idle_exit', String(dict.IdleExitSec));
-  console.log('Sending TimerConfig: ' + JSON.stringify(dict.TimerConfig) + ' sort=' + dict.SortOrder + ' autoReturn=' + dict.AutoReturn + ' runningFirst=' + dict.RunningFirst + ' idleExit=' + dict.IdleExitSec);
+  window.localStorage.setItem('launch_sync', String(dict.LaunchSync));
+  console.log('Sending TimerConfig: ' + JSON.stringify(dict.TimerConfig) + ' sort=' + dict.SortOrder + ' autoReturn=' + dict.AutoReturn + ' runningFirst=' + dict.RunningFirst + ' idleExit=' + dict.IdleExitSec + ' launchSync=' + dict.LaunchSync);
   Pebble.sendAppMessage(dict, () => { console.log('config sent'); },
     () => { console.log('config send failed'); });
 });

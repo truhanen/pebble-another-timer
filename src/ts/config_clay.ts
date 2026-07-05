@@ -49,6 +49,10 @@ const config = [
           { label: '30 seconds', value: '30' },
           { label: '60 seconds', value: '60' },
         ] },
+      { type: 'toggle', messageKey: 'LaunchSync',
+        label: 'Launch-sync starts',
+        description: 'When on, starts subtract elapsed time since app launch from the started timer.',
+        defaultValue: false },
     ],
   },
   {

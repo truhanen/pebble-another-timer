@@ -12,6 +12,7 @@
 #define PERSIST_KEY_RUNNINGFIRST 6
 #define PERSIST_KEY_IDLEEXIT 7       // idle auto-exit timeout, seconds (0 = off)
 #define PERSIST_KEY_EPHEMERAL 8      // bit i => timer i is ephemeral ("Start unsaved")
+#define PERSIST_KEY_LAUNCHSYNC 9     // launch-sync starts (0/1)
 #define PERSIST_KEY_TIMER_BASE 100   // timer i -> key 100+i (one Timer per key; 256B/key cap)
 #define STORE_SCHEMA 2
 
@@ -37,3 +38,6 @@ void store_save_idleexit(int seconds);
 // Bitmask of ephemeral timers (bit i corresponds to row i in persisted timer list).
 uint32_t store_load_ephemeral_mask(void);
 void store_save_ephemeral_mask(uint32_t mask);
+// Launch-sync starts setting (default OFF).
+bool store_load_launchsync(void);
+void store_save_launchsync(bool on);

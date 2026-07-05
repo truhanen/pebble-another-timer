@@ -88,3 +88,12 @@ uint32_t store_load_ephemeral_mask(void) {
 void store_save_ephemeral_mask(uint32_t mask) {
   persist_write_int(PERSIST_KEY_EPHEMERAL, (int32_t)mask);
 }
+
+bool store_load_launchsync(void) {
+  if (!persist_exists(PERSIST_KEY_LAUNCHSYNC)) { return false; }   // default OFF
+  return persist_read_bool(PERSIST_KEY_LAUNCHSYNC);
+}
+
+void store_save_launchsync(bool on) {
+  persist_write_bool(PERSIST_KEY_LAUNCHSYNC, on);
+}

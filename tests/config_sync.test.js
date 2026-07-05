@@ -10,16 +10,16 @@ test('resendDict: never saved (timer_config absent) -> null (do not clobber watc
   assert.strictEqual(resendDict(store({ sort_order: '2' })), null);
 });
 
-test('resendDict: saved config -> dict with parsed SortOrder + AutoReturn + RunningFirst + IdleExitSec', () => {
+test('resendDict: saved config -> dict with parsed SortOrder + AutoReturn + RunningFirst + IdleExitSec + LaunchSync', () => {
   assert.deepStrictEqual(
-    resendDict(store({ timer_config: 'Egg\x1f300\x1eTea\x1f120', sort_order: '1', auto_return: '1', running_first: '1', idle_exit: '30' })),
-    { TimerConfig: 'Egg\x1f300\x1eTea\x1f120', SortOrder: 1, AutoReturn: 1, RunningFirst: 1, IdleExitSec: 30 });
+    resendDict(store({ timer_config: 'Egg\x1f300\x1eTea\x1f120', sort_order: '1', auto_return: '1', running_first: '1', idle_exit: '30', launch_sync: '1' })),
+    { TimerConfig: 'Egg\x1f300\x1eTea\x1f120', SortOrder: 1, AutoReturn: 1, RunningFirst: 1, IdleExitSec: 30, LaunchSync: 1 });
 });
 
 test('resendDict: explicitly-saved empty list ("") IS sent (user cleared all timers)', () => {
   assert.deepStrictEqual(
     resendDict(store({ timer_config: '', sort_order: '0' })),
-    { TimerConfig: '', SortOrder: 0, AutoReturn: 0, RunningFirst: 1, IdleExitSec: 15 });
+    { TimerConfig: '', SortOrder: 0, AutoReturn: 0, RunningFirst: 1, IdleExitSec: 15, LaunchSync: 0 });
 });
 
 test('resendDict: missing/garbage sort_order defaults to 0', () => {
@@ -53,4 +53,12 @@ test('resendDict: saved idle_exit "0" (Off) round-trips to 0', () => {
 
 test('resendDict: saved idle_exit "60" round-trips to 60', () => {
   assert.strictEqual(resendDict(store({ timer_config: 'a\x1f60', idle_exit: '60' })).IdleExitSec, 60);
+});
+
+test('resendDict: missing launch_sync defaults to 0 (OFF)', () => {
+  assert.strictEqual(resendDict(store({ timer_config: 'a\x1f60' })).LaunchSync, 0);
+});
+
+test('resendDict: saved launch_sync "1" round-trips to 1', () => {
+  assert.strictEqual(resendDict(store({ timer_config: 'a\x1f60', launch_sync: '1' })).LaunchSync, 1);
 });
