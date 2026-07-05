@@ -11,7 +11,9 @@ const config = [
     type: 'section',
     items: [
       { type: 'heading', defaultValue: 'Timers' },
-      { type: 'text', defaultValue: 'Add timers below. On the watch, open a timer to Start/Pause/Stop it.' },
+      { type: 'text', defaultValue:
+        'Add timers below. On the watch: short Select on a stopped timer starts it; ' +
+        'short Select on a running/paused timer opens quick controls; long Select opens the edit/save menu.' },
       { type: 'timerList', messageKey: 'TimerList', defaultValue: [{ name: '', seconds: 0 }] },
     ],
   },
@@ -63,18 +65,23 @@ const config = [
         '<b>Timer list</b><br>' +
         '• <b>Up / Down</b> — move between timers.<br>' +
         '• <b>Select</b> (short press) — on a stopped timer, starts it right away; ' +
-        'on a running or paused timer, opens its menu.<br>' +
-        '• <b>Select (long press / hold)</b> — opens the menu for <i>any</i> timer.' },
+        'on a running or paused timer, opens quick controls.<br>' +
+        '• <b>Select (long press / hold)</b> — opens the edit/save menu for <i>any</i> timer.' },
       { type: 'text', defaultValue:
-        '<b>Timer menu</b> (opened as above)<br>' +
+        '<b>Quick controls menu</b> (short Select on running/paused timer)<br>' +
+        '• Start/Pause, +10s/+1 min, and Stop.' },
+      { type: 'text', defaultValue:
+        '<b>Edit/save menu</b> (long Select)<br>' +
         '• <b>+1 min / +10s</b> — short press adds 1 minute at 1:00 or above, and 10 seconds below 1:00.<br>' +
         '• <b>Hold on the same item</b> — subtract 1 minute above 1:00, and 10 seconds at/below 1:00 (down to 0:10).<br>' +
-        '• <b>Start unsaved</b> — add and start a temporary timer (not saved to phone).<br>' +
+        '• <b>Start unsaved</b> — add and start a temporary timer (not saved, disappears after finishing).<br>' +
         '• <b>Start &amp; save</b> / <b>Only save</b> — then choose save type: ' +
         '<b>As new timer</b> or <b>Overwrite current</b>.<br>' +
-        '• <b>Delete timer</b> — remove the selected timer (asks to confirm).<br>' +
-        '• <b>New timer menu</b> is the same except no Delete and no save-type submenu ' +
-        '(save is always as new timer).' },
+        '• <b>Delete timer</b> — remove the selected timer (asks to confirm).' },
+      { type: 'text', defaultValue:
+          '<b>New timer menu</b><br>' +
+          '• Same as timer edit/save menu except no Delete and no save-type submenu ' +
+          '(save is always as new timer).' },
       { type: 'text', defaultValue:
         '<b>When a timer reaches zero</b><br>' +
         '• <b>Up</b> — +1 min (snooze). ' +
