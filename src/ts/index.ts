@@ -8,6 +8,7 @@ import { timerListToString } from './timer_config';
 import { resendDict } from './config_sync';
 import { appendCustomTimer } from './add_timer';
 import { deleteTimer } from './delete_timer';
+import { updateTimer } from './update_timer';
 
 const clay = new Clay(clayConfig, null, { autoHandleEvents: false });
 clay.registerComponent(timerListComponent);
@@ -33,6 +34,17 @@ Pebble.addEventListener('appmessage', (e: any) => {
     console.log(left === null ? 'DeleteTimer rejected (out of range): ' + p.DeleteTimer
       : 'DeleteTimer applied at index ' + p.DeleteTimer);
     return;   // no echo — the watch already removed it locally
+  }
+  if (p && typeof p.UpdateTimerIndex === 'number' && typeof p.UpdateTimerSeconds === 'number') {
+    const saved = updateTimer(
+      (k) => window.localStorage.getItem(k),
+      (k, v) => window.localStorage.setItem(k, v),
+      p.UpdateTimerIndex,
+      p.UpdateTimerSeconds);
+    console.log(saved === null
+      ? 'UpdateTimer rejected: idx=' + p.UpdateTimerIndex + ' secs=' + p.UpdateTimerSeconds
+      : 'UpdateTimer applied at index ' + p.UpdateTimerIndex + ' -> ' + p.UpdateTimerSeconds + 's');
+    return;   // no echo — the watch already applied it locally
   }
   const dict = resendDict((k) => window.localStorage.getItem(k));
   if (!dict) { return; }

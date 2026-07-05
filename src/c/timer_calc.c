@@ -208,12 +208,15 @@ bool tc_detail_changed(const Timer *t) {
 
 int tc_detail_actions(TimerState st, bool changed, DetailAction *out) {
   int n = 0;
+  bool allow_delete = true;
   if (st == TS_RUNNING) {
     out[n++] = DACT_STOP;
     out[n++] = DACT_PAUSE;
+    allow_delete = false;
   } else if (st == TS_PAUSED) {
     out[n++] = DACT_STOP;
     out[n++] = DACT_START;   // resume
+    allow_delete = false;
   } else if (st == TS_DONE) {
     out[n++] = DACT_STOP;    // finished -> reset to idle, dismissing the red 00:00:00 row
     out[n++] = DACT_START;   // re-run from full duration
@@ -224,6 +227,6 @@ int tc_detail_actions(TimerState st, bool changed, DetailAction *out) {
   }
   out[n++] = DACT_PLUS;
   out[n++] = DACT_MINUS;
-  out[n++] = DACT_DELETE;
+  if (allow_delete) { out[n++] = DACT_DELETE; }
   return n;
 }

@@ -189,14 +189,14 @@ int main(void) {
   dc.state = TS_RUNNING; dc.remaining = 999; assert(tc_detail_changed(&dc) == false); // running never "changed"
   dc.state = TS_PAUSED;  assert(tc_detail_changed(&dc) == false);
 
-  // --- tc_detail_actions: ordered list per state (Stop first for running/paused, Delete last) ---
+  // --- tc_detail_actions: ordered list per state ---
   DetailAction acts[7]; int an;
   an = tc_detail_actions(TS_RUNNING, false, acts);
-  assert(an == 5 && acts[0] == DACT_STOP && acts[1] == DACT_PAUSE &&
-         acts[2] == DACT_PLUS && acts[3] == DACT_MINUS && acts[4] == DACT_DELETE);
+  assert(an == 4 && acts[0] == DACT_STOP && acts[1] == DACT_PAUSE &&
+         acts[2] == DACT_PLUS && acts[3] == DACT_MINUS);
   an = tc_detail_actions(TS_PAUSED, false, acts);
-  assert(an == 5 && acts[0] == DACT_STOP && acts[1] == DACT_START &&
-         acts[2] == DACT_PLUS && acts[3] == DACT_MINUS && acts[4] == DACT_DELETE);
+  assert(an == 4 && acts[0] == DACT_STOP && acts[1] == DACT_START &&
+         acts[2] == DACT_PLUS && acts[3] == DACT_MINUS);
   an = tc_detail_actions(TS_IDLE, false, acts);   // unchanged -> no Save row
   assert(an == 4 && acts[0] == DACT_START && acts[1] == DACT_PLUS &&
          acts[2] == DACT_MINUS && acts[3] == DACT_DELETE);

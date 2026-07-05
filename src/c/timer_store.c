@@ -79,3 +79,12 @@ int store_load_idleexit(void) {
 void store_save_idleexit(int seconds) {
   persist_write_int(PERSIST_KEY_IDLEEXIT, seconds);
 }
+
+uint32_t store_load_ephemeral_mask(void) {
+  if (!persist_exists(PERSIST_KEY_EPHEMERAL)) { return 0; }
+  return (uint32_t)persist_read_int(PERSIST_KEY_EPHEMERAL);
+}
+
+void store_save_ephemeral_mask(uint32_t mask) {
+  persist_write_int(PERSIST_KEY_EPHEMERAL, (int32_t)mask);
+}

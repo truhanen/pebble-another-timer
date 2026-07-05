@@ -3,6 +3,7 @@
 #include <pebble.h>
 #include "timer_calc.h"
 #include "timer_store.h"
+#include <string.h>
 
 static Window *s_window;
 static MenuLayer *s_menu;
@@ -27,6 +28,8 @@ static AppTimer *s_alarm_buzz_timer;
 static int64_t   s_alarm_buzz_start_s;
 
 static Timer s_timers[MAX_TIMERS];
+static bool s_ephemeral[MAX_TIMERS];  // true => watch-local "start as new" timer, never phone-synced
+static int8_t s_unnamed_star[MAX_TIMERS]; // unnamed RUNNING timers: duplicate suffix level (0="",1="*",...)
 static int s_count = 0;
 static int s_order[MAX_TIMERS];   // display order, rebuilt on reload per s_sort
 static SortMode s_sort = SORT_MRU;
@@ -34,13 +37,22 @@ static int s_last_fired_idx = -1; // first timer that newly expired in the lates
 static bool s_auto_return = false; // config: pop to watchface after a start/resume
 static bool s_running_first = true; // config: float RUNNING timers to the top
 
-// ---- per-timer detail window: live-time header + Pause/Stop/+N actions ----
+// ---- per-timer detail window: long-press menu workflow ----
 static Window *s_detail_window;
 static MenuLayer *s_detail_menu;
 static int s_detail_idx = -1;   // config index the detail window is showing
-static DetailAction s_detail_acts[7];   // rebuilt per reload by dl_rebuild_actions
+static DetailAction s_detail_acts[7];
 static int s_detail_act_count = 0;
 static int s_new_timer_idx = -1;  // index in s_timers of an un-started draft new timer, or -1
+static int32_t s_detail_edit_secs = 60;
+typedef enum { DSTYLE_LEGACY = 0, DSTYLE_LONG_EXISTING = 1, DSTYLE_LONG_NEW = 2 } DetailStyle;
+static DetailStyle s_detail_style = DSTYLE_LEGACY;
+typedef enum { SAVE_INTENT_NONE = 0, SAVE_INTENT_START_AND_SAVE = 1, SAVE_INTENT_ONLY_SAVE = 2 } SaveIntent;
+static SaveIntent s_save_intent = SAVE_INTENT_NONE;
+
+// ---- save-type submenu: "As new timer" / "Overwrite current" ----
+static Window *s_save_window;
+static MenuLayer *s_save_menu;
 
 // ---- transient "Started" confirmation shown ~1.1s before auto-return closes the app ----
 static Window  *s_confirm_window;
@@ -143,7 +155,14 @@ static void rearm_wakeup(void) {
   APP_LOG(APP_LOG_LEVEL_WARNING, "wakeup_schedule failed after retries");
 }
 
-static void persist_all(void) { store_save(s_timers, s_count); }
+static void persist_all(void) {
+  uint32_t mask = 0;
+  for (int i = 0; i < s_count && i < 32; i++) {
+    if (s_ephemeral[i]) { mask |= (1u << i); }
+  }
+  store_save(s_timers, s_count);
+  store_save_ephemeral_mask(mask);
+}
 
 static void rebuild_order(void) { tc_display_order(s_timers, s_count, s_sort, now_s(), s_order, s_running_first); }
 
@@ -152,8 +171,51 @@ static void reload_ui(void) {
   if (s_menu) { menu_layer_reload_data(s_menu); }
 }
 
+static int next_unnamed_star(int32_t duration) {
+  int m = -1;
+  for (int i = 0; i < s_count; i++) {
+    if (s_timers[i].name[0] != 0) { continue; }
+    if (s_timers[i].duration != duration) { continue; }
+    if (s_unnamed_star[i] > m) { m = s_unnamed_star[i]; }
+  }
+  return m + 1;
+}
+
+static void ensure_unnamed_star(int idx) {
+  if (idx < 0 || idx >= s_count) { return; }
+  Timer *t = &s_timers[idx];
+  if (t->name[0] != 0) { return; }
+  if (s_unnamed_star[idx] >= 0) { return; }
+  s_unnamed_star[idx] = next_unnamed_star(t->duration);
+}
+
+static void format_unnamed_running_label(int idx, char *buf, size_t n) {
+  Timer *t = &s_timers[idx];
+  int32_t d = t->duration;
+  if (d < 0) { d = 0; }
+  if (d >= 3600) {
+    int h = d / 3600;
+    int m = (d % 3600) / 60;
+    int s = d % 60;
+    snprintf(buf, n, "%d:%02d:%02d", h, m, s); // h:mm:ss (no leading zero hour)
+  } else {
+    int m = d / 60;
+    int s = d % 60;
+    snprintf(buf, n, "%d:%02d", m, s); // m:ss (no leading zero minute)
+  }
+  int stars = s_unnamed_star[idx];
+  while (stars > 0) {
+    size_t len = strlen(buf);
+    if (len + 1 >= n) { break; }
+    buf[len] = '*';
+    buf[len + 1] = '\0';
+    stars--;
+  }
+}
+
 static void ensure_ticking(void);   // defined below; used by the alarm handlers
-static void open_detail_window(int timer_idx);  // defined below; used by the alarm snooze
+static void open_detail_window(int timer_idx, DetailStyle style);  // defined below; used by alarm + menus
+static void remove_timer_at(int idx); // defined below; used by alarm stop/delete paths
 
 // Mark every expired RUNNING timer DONE. Returns the count that NEWLY expired and
 // sets s_last_fired_idx to the first of them (drives the alarm screen). No UI here.
@@ -203,7 +265,8 @@ static void alarm_stop(ClickRecognizerRef rec, void *ctx) {
   // (-> watchface). The alarm often fires while the app is closed (wakeup-launched),
   // so after dismissing the user wants the watchface, not to be left in the app.
   if (s_alarm_idx >= 0 && s_alarm_idx < s_count) {
-    tc_reset(&s_timers[s_alarm_idx], now_s());
+    if (s_ephemeral[s_alarm_idx]) { remove_timer_at(s_alarm_idx); }
+    else { tc_reset(&s_timers[s_alarm_idx], now_s()); }
     persist_all(); rearm_wakeup(); reload_ui();
   }
   close_to_watchface();
@@ -217,7 +280,7 @@ static void alarm_add_minute(ClickRecognizerRef rec, void *ctx) {
   if (idx >= 0 && idx < s_count) {
     tc_extend(&s_timers[idx], 60, now_s());
     persist_all(); rearm_wakeup(); ensure_ticking(); reload_ui();
-    open_detail_window(idx);
+    open_detail_window(idx, DSTYLE_LEGACY);
     window_stack_remove(s_alarm_window, false);
   } else {
     window_stack_remove(s_alarm_window, true);
@@ -405,21 +468,7 @@ static void dl_rebuild_actions(void) {
   s_detail_act_count = tc_detail_actions(t->state, tc_detail_changed(t), s_detail_acts);
 }
 
-// Move the detail cursor onto the row that now carries action `a` (the list can
-// grow when +/- introduces the Save row, so a repeated +/- press must follow its
-// button instead of landing on whatever shifted under the cursor).
-static void dl_select_action(DetailAction a) {
-  if (!s_detail_menu) { return; }
-  for (int r = 0; r < s_detail_act_count; r++) {
-    if (s_detail_acts[r] == a) {
-      menu_layer_set_selected_index(s_detail_menu,
-        (MenuIndex){ .section = 0, .row = (uint16_t)r }, MenuRowAlignNone, false);
-      return;
-    }
-  }
-}
-
-static const char *dl_action_label(DetailAction a) {
+static const char *dl_legacy_action_label(DetailAction a) {
   switch (a) {
     case DACT_STOP:       return "Stop";
     case DACT_PAUSE:      return "Pause";
@@ -433,116 +482,241 @@ static const char *dl_action_label(DetailAction a) {
 }
 
 static uint16_t dl_num_rows(MenuLayer *ml, uint16_t section, void *ctx) {
-  dl_rebuild_actions();
-  return (uint16_t)s_detail_act_count;
+  if (s_detail_style == DSTYLE_LEGACY) {
+    dl_rebuild_actions();
+    return (uint16_t)s_detail_act_count;
+  }
+  return (s_detail_style == DSTYLE_LONG_NEW) ? 4 : 5;
 }
 static int16_t dl_cell_height(MenuLayer *ml, MenuIndex *ci, void *ctx) { return 34; }
 static int16_t dl_header_height(MenuLayer *ml, uint16_t section, void *ctx) { return 32; }
 
-// Header: timer name (left) + live remaining time (right); time only if unnamed.
+// Header: timer name (left) + edited time (right); time only if unnamed.
 static void dl_draw_header(GContext *gctx, const Layer *cell, uint16_t section, void *ctx) {
   if (s_detail_idx < 0 || s_detail_idx >= s_count) { return; }
   Timer *t = &s_timers[s_detail_idx];
-  char rem[16]; tc_format_remaining(rem, sizeof(rem), tc_remaining_now(t, now_s()));
+  int32_t shown = (s_detail_style == DSTYLE_LEGACY) ? tc_remaining_now(t, now_s()) : s_detail_edit_secs;
+  char rem[16]; tc_format_remaining(rem, sizeof(rem), shown);
+  char head[NAME_LEN + 8];
   GRect b = layer_get_bounds(cell);
   GFont f = fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD);
   graphics_context_set_text_color(gctx, GColorBlack);
+  if (s_detail_style == DSTYLE_LONG_EXISTING) {
+    if (t->name[0]) { snprintf(head, sizeof(head), "Edit %s", t->name); }
+    else {
+      ensure_unnamed_star(s_detail_idx);
+      char lbl[24];
+      format_unnamed_running_label(s_detail_idx, lbl, sizeof(lbl));
+      snprintf(head, sizeof(head), "Edit %s", lbl);
+    }
+    graphics_draw_text(gctx, head, f, GRect(4, 3, b.size.w - 92, 26),
+      GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
+    graphics_draw_text(gctx, rem, f, GRect(4, 3, b.size.w - 8, 26),
+      GTextOverflowModeTrailingEllipsis, GTextAlignmentRight, NULL);
+    return;
+  }
   if (t->name[0]) {
     graphics_draw_text(gctx, t->name, f, GRect(4, 3, b.size.w - 92, 26),
       GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
     graphics_draw_text(gctx, rem, f, GRect(4, 3, b.size.w - 8, 26),
       GTextOverflowModeTrailingEllipsis, GTextAlignmentRight, NULL);
   } else {
+    ensure_unnamed_star(s_detail_idx);
+    char lbl[24];
+    format_unnamed_running_label(s_detail_idx, lbl, sizeof(lbl));
+    graphics_draw_text(gctx, lbl, f, GRect(4, 3, b.size.w - 92, 26),
+      GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
     graphics_draw_text(gctx, rem, f, GRect(4, 3, b.size.w - 8, 26),
-      GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter, NULL);
+      GTextOverflowModeTrailingEllipsis, GTextAlignmentRight, NULL);
   }
 }
 
 static void dl_draw_row(GContext *gctx, const Layer *cell, MenuIndex *ci, void *ctx) {
-  if (ci->row >= s_detail_act_count) { return; }
+  const char *label = "";
+  if (s_detail_style == DSTYLE_LEGACY) {
+    if (ci->row >= s_detail_act_count) { return; }
+    label = dl_legacy_action_label(s_detail_acts[ci->row]);
+  } else {
+    if (ci->row == 0) {
+      if (s_detail_edit_secs == 10) { label = "+10s"; }
+      else if (s_detail_edit_secs < 60) { label = "+10s (hold for -10)"; }
+      else if (s_detail_edit_secs == 60) { label = "+1 min (hold for -10s)"; }
+      else { label = "+1 min (hold for -1)"; }
+    }
+    else if (ci->row == 1) { label = "Start unsaved"; }
+    else if (ci->row == 2) { label = "Start & save"; }
+    else if (ci->row == 3) { label = "Only save"; }
+    else if (ci->row == 4 && s_detail_style == DSTYLE_LONG_EXISTING) { label = "Delete timer"; }
+    else { return; }
+  }
   GRect b = layer_get_bounds(cell);
-  graphics_draw_text(gctx, dl_action_label(s_detail_acts[ci->row]),
+  graphics_draw_text(gctx, label,
     fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD),
     GRect(6, (b.size.h - 26) / 2, b.size.w - 12, 26),
     GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
 }
 
-static void save_as_new_and_start(int32_t secs);  // defined below
+static void start_as_new(int32_t secs, bool save_to_phone); // defined below
+static void save_as_new_only(int32_t secs);       // defined below
+static void apply_overwrite_only(int idx, int32_t secs);    // defined below
+static void apply_overwrite_start(int idx, int32_t secs);   // defined below
 static void send_add_timer(int32_t secs);          // defined below (phone sync)
+static void send_update_timer(int32_t idx, int32_t secs); // defined below (phone sync)
 static void create_new_timer(void);                // defined below ("+ New timer" row)
 static void open_delete_confirm(void);             // defined below (delete path)
 static void send_delete_timer(int32_t idx);        // defined below (delete path)
-static void remove_timer_at(int idx);              // defined below (delete path)
 static void show_start_confirmation(int idx);      // defined below (auto-return tail)
+static void open_save_type_menu(SaveIntent intent); // defined below
+
+static int32_t dl_subtract_step(int32_t secs) { return secs > 60 ? 60 : 10; }
+static int32_t dl_add_step(int32_t secs) { return secs < 60 ? 10 : 60; }
+
+static void dl_modify_time(bool add) {
+  int32_t step = add ? dl_add_step(s_detail_edit_secs) : dl_subtract_step(s_detail_edit_secs);
+  int32_t next = add ? (s_detail_edit_secs + step) : (s_detail_edit_secs - step);
+  if (next < 10) { next = 10; }
+  s_detail_edit_secs = next;
+  menu_layer_reload_data(s_detail_menu);
+}
 
 static void dl_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
   idle_reset();
   int idx = s_detail_idx;
   if (idx < 0 || idx >= s_count) { return; }
-  dl_rebuild_actions();
-  if (ci->row >= s_detail_act_count) { return; }
-  DetailAction a = s_detail_acts[ci->row];
-  Timer *t = &s_timers[idx];
-  switch (a) {
-    case DACT_PAUSE:
-      tc_pause(t, now_s());
-      persist_all(); rearm_wakeup(); ensure_ticking();
-      reload_ui();
-      if (s_auto_return) { close_to_watchface(); }   // pause is a state change -> honor AutoReturn
-      else { menu_layer_reload_data(s_detail_menu); }
-      break;
-    case DACT_START:                    // start (idle/done) or resume (paused), in place
-      tc_start(t, now_s());
-      if (idx == s_new_timer_idx) {      // draft commit: sync final duration, then it's a real timer
-        send_add_timer(t->duration);
-        s_new_timer_idx = -1;
-      }
-      persist_all(); rearm_wakeup(); ensure_ticking();
-      reload_ui();
-      if (s_auto_return) { show_start_confirmation(idx); }   // flash, then pop to watchface
-      else { menu_layer_reload_data(s_detail_menu); }
-      break;
-    case DACT_SAVE_START: {             // only present when the time was tuned -> never a dup
-      int32_t rem = tc_remaining_now(t, now_s());
-      save_as_new_and_start(rem >= 1 ? rem : t->duration);
-      break;
-    }
-    case DACT_STOP:                     // reset to idle
-      tc_reset(t, now_s());
-      persist_all(); rearm_wakeup(); reload_ui(); select_timer_row(idx);
-      if (s_auto_return) { close_to_watchface(); }
-      else { window_stack_remove(s_detail_window, true); }
-      break;
-    case DACT_PLUS:
-    case DACT_MINUS: {
-      int32_t secs = (a == DACT_PLUS) ? 60 : -60;
-      if (idx == s_new_timer_idx && t->state == TS_IDLE) {
-        // Draft new timer: +/- sets the DURATION (the saved length); remaining tracks
-        // it, so it stays "unchanged" (no Start & Save). RAM-only: do NOT persist/sync.
-        int32_t d = t->duration + secs;
-        if (d < 60) { d = 60; }
-        t->duration = d; t->remaining = d; t->last_used = now_s();
-        reload_ui(); menu_layer_reload_data(s_detail_menu);
-        dl_select_action(a);
+  if (s_detail_style == DSTYLE_LEGACY) {
+    dl_rebuild_actions();
+    if (ci->row >= s_detail_act_count) { return; }
+    DetailAction a = s_detail_acts[ci->row];
+    Timer *t = &s_timers[idx];
+    switch (a) {
+      case DACT_PAUSE:
+        tc_pause(t, now_s());
+        persist_all(); rearm_wakeup(); ensure_ticking();
+        reload_ui();
+        if (s_auto_return) { close_to_watchface(); }
+        else { menu_layer_reload_data(s_detail_menu); }
+        break;
+      case DACT_START:
+        tc_start(t, now_s());
+        ensure_unnamed_star(idx);
+        if (idx == s_new_timer_idx) {
+          send_add_timer(t->duration);
+          s_new_timer_idx = -1;
+        }
+        persist_all(); rearm_wakeup(); ensure_ticking();
+        reload_ui();
+        if (s_auto_return) { show_start_confirmation(idx); }
+        else { menu_layer_reload_data(s_detail_menu); }
+        break;
+      case DACT_SAVE_START: {
+        int32_t rem = tc_remaining_now(t, now_s());
+        start_as_new(rem >= 1 ? rem : t->duration, true);
         break;
       }
-      if (t->state == TS_RUNNING || t->state == TS_PAUSED) {
-        tc_add(t, secs, now_s());
-      } else {                          // idle/done: adjust `remaining` (60s floor), keep template
-        int32_t r = t->remaining + secs;
-        if (r < 60) { r = 60; }
-        t->remaining = r;
-        t->last_used = now_s();
+      case DACT_STOP: {
+        bool was_ephemeral = s_ephemeral[idx];
+        if (was_ephemeral) { remove_timer_at(idx); }
+        else { tc_reset(t, now_s()); }
+        persist_all(); rearm_wakeup(); reload_ui();
+        if (!was_ephemeral) { select_timer_row(idx); }
+        if (!was_ephemeral && s_auto_return) { close_to_watchface(); }
+        else { window_stack_remove(s_detail_window, true); }
+        break;
       }
-      persist_all(); rearm_wakeup(); ensure_ticking();
-      reload_ui(); menu_layer_reload_data(s_detail_menu);
-      dl_select_action(a);              // keep the cursor on the +/- button as the list grows
-      break;
+      case DACT_PLUS:
+      case DACT_MINUS: {
+        int32_t secs = (a == DACT_PLUS) ? 60 : -60;
+        if (idx == s_new_timer_idx && t->state == TS_IDLE) {
+          int32_t d = t->duration + secs;
+          if (d < 60) { d = 60; }
+          t->duration = d; t->remaining = d; t->last_used = now_s();
+          reload_ui(); menu_layer_reload_data(s_detail_menu);
+          break;
+        }
+        if (t->state == TS_RUNNING || t->state == TS_PAUSED) {
+          tc_add(t, secs, now_s());
+        } else {
+          int32_t r = t->remaining + secs;
+          if (r < 60) { r = 60; }
+          t->remaining = r;
+          t->last_used = now_s();
+        }
+        persist_all(); rearm_wakeup(); ensure_ticking();
+        reload_ui(); menu_layer_reload_data(s_detail_menu);
+        break;
+      }
+      case DACT_DELETE:
+        open_delete_confirm();
+        break;
     }
-    case DACT_DELETE:
-      open_delete_confirm();
-      break;
+    return;
   }
+  if (ci->row == 0) { dl_modify_time(true); return; } // short press: +1 minute
+  if (ci->row == 1) {
+    if (s_detail_style == DSTYLE_LONG_NEW) {
+      Timer *t = &s_timers[idx];
+      t->duration = s_detail_edit_secs;
+      t->remaining = s_detail_edit_secs;
+      t->custom = true;
+      s_ephemeral[idx] = true;
+      tc_start(t, now_s());
+      ensure_unnamed_star(idx);
+      s_new_timer_idx = -1;
+      persist_all(); rearm_wakeup(); ensure_ticking(); reload_ui();
+      select_timer_row(idx);
+      if (s_auto_return) { show_start_confirmation(idx); }
+      else { window_stack_remove(s_detail_window, true); }
+    } else {
+      start_as_new(s_detail_edit_secs, false);
+    }
+    return;
+  }
+  if (ci->row == 2) { // Start & save
+    if (s_detail_style == DSTYLE_LONG_NEW) {
+      Timer *t = &s_timers[idx];
+      t->duration = s_detail_edit_secs;
+      t->remaining = s_detail_edit_secs;
+      t->custom = true;
+      s_ephemeral[idx] = false;
+      tc_start(t, now_s());
+      ensure_unnamed_star(idx);
+      s_new_timer_idx = -1;
+      persist_all(); rearm_wakeup(); ensure_ticking(); reload_ui();
+      send_add_timer(s_detail_edit_secs);
+      select_timer_row(idx);
+      if (s_auto_return) { show_start_confirmation(idx); }
+      else { window_stack_remove(s_detail_window, true); }
+    } else {
+      open_save_type_menu(SAVE_INTENT_START_AND_SAVE);
+    }
+    return;
+  }
+  if (ci->row == 3) { // Only save
+    if (s_detail_style == DSTYLE_LONG_NEW) {
+      Timer *t = &s_timers[idx];
+      t->duration = s_detail_edit_secs;
+      t->remaining = s_detail_edit_secs;
+      t->state = TS_IDLE;
+      t->end_time = 0;
+      t->custom = true;
+      s_ephemeral[idx] = false;
+      s_new_timer_idx = -1;
+      persist_all(); rearm_wakeup(); reload_ui();
+      send_add_timer(s_detail_edit_secs);
+      window_stack_remove(s_detail_window, true);
+    } else {
+      open_save_type_menu(SAVE_INTENT_ONLY_SAVE);
+    }
+    return;
+  }
+  if (ci->row == 4 && s_detail_style == DSTYLE_LONG_EXISTING) { open_delete_confirm(); }
+}
+
+static void dl_select_long(MenuLayer *ml, MenuIndex *ci, void *ctx) {
+  if (s_detail_style == DSTYLE_LEGACY) { return; }
+  if (ci->row != 0) { return; } // long press only modifies time
+  idle_reset();
+  dl_modify_time(false);
 }
 
 static void detail_window_load(Window *w) {
@@ -555,6 +729,7 @@ static void detail_window_load(Window *w) {
     .draw_header = dl_draw_header,
     .draw_row = dl_draw_row,
     .select_click = dl_select,
+    .select_long_click = dl_select_long,
   });
   menu_layer_set_normal_colors(s_detail_menu, GColorWhite, GColorBlack);
   menu_layer_set_highlight_colors(s_detail_menu, GColorBlack, GColorWhite);
@@ -564,6 +739,71 @@ static void detail_window_load(Window *w) {
 
 static void detail_window_unload(Window *w) {
   menu_layer_destroy(s_detail_menu); s_detail_menu = NULL;
+}
+
+static uint16_t sv_num_rows(MenuLayer *ml, uint16_t section, void *ctx) { return 2; }
+static int16_t sv_cell_height(MenuLayer *ml, MenuIndex *ci, void *ctx) { return 34; }
+static int16_t sv_header_height(MenuLayer *ml, uint16_t section, void *ctx) { return 32; }
+
+static void sv_draw_header(GContext *gctx, const Layer *cell, uint16_t section, void *ctx) {
+  GRect b = layer_get_bounds(cell);
+  graphics_context_set_text_color(gctx, GColorBlack);
+  graphics_draw_text(gctx, "Save type", fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD),
+    GRect(4, 3, b.size.w - 8, 26), GTextOverflowModeFill, GTextAlignmentCenter, NULL);
+}
+
+static void sv_draw_row(GContext *gctx, const Layer *cell, MenuIndex *ci, void *ctx) {
+  const char *label = (ci->row == 0) ? "As new timer" : "Overwrite current";
+  GRect b = layer_get_bounds(cell);
+  graphics_draw_text(gctx, label, fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD),
+    GRect(6, (b.size.h - 26) / 2, b.size.w - 12, 26),
+    GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
+}
+
+static void sv_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
+  idle_reset();
+  int idx = s_detail_idx;
+  if (idx < 0 || idx >= s_count) { return; }
+  window_stack_remove(s_save_window, false);
+  if (ci->row == 0) {
+    if (s_save_intent == SAVE_INTENT_START_AND_SAVE) { start_as_new(s_detail_edit_secs, true); }
+    else if (s_save_intent == SAVE_INTENT_ONLY_SAVE) { save_as_new_only(s_detail_edit_secs); }
+  } else {
+    if (s_save_intent == SAVE_INTENT_START_AND_SAVE) { apply_overwrite_start(idx, s_detail_edit_secs); }
+    else if (s_save_intent == SAVE_INTENT_ONLY_SAVE) { apply_overwrite_only(idx, s_detail_edit_secs); }
+  }
+}
+
+static void save_window_load(Window *w) {
+  Layer *root = window_get_root_layer(w);
+  s_save_menu = menu_layer_create(layer_get_bounds(root));
+  menu_layer_set_callbacks(s_save_menu, NULL, (MenuLayerCallbacks){
+    .get_num_rows = sv_num_rows,
+    .get_cell_height = sv_cell_height,
+    .get_header_height = sv_header_height,
+    .draw_header = sv_draw_header,
+    .draw_row = sv_draw_row,
+    .select_click = sv_select,
+  });
+  menu_layer_set_normal_colors(s_save_menu, GColorWhite, GColorBlack);
+  menu_layer_set_highlight_colors(s_save_menu, GColorBlack, GColorWhite);
+  menu_layer_set_click_config_onto_window(s_save_menu, w);
+  layer_add_child(root, menu_layer_get_layer(s_save_menu));
+}
+
+static void save_window_unload(Window *w) {
+  menu_layer_destroy(s_save_menu); s_save_menu = NULL;
+}
+
+static void open_save_type_menu(SaveIntent intent) {
+  s_save_intent = intent;
+  if (!s_save_window) {
+    s_save_window = window_create();
+    window_set_window_handlers(s_save_window, (WindowHandlers){
+      .load = save_window_load, .unload = save_window_unload,
+      .appear = idle_appear, .disappear = idle_disappear });
+  }
+  window_stack_push(s_save_window, true);
 }
 
 static void del_update_proc(Layer *layer, GContext *gctx) {
@@ -594,7 +834,7 @@ static void del_window_unload(Window *w) {
 static void del_confirm_select(ClickRecognizerRef rec, void *ctx) {
   int idx = s_detail_idx;
   if (idx >= 0 && idx < s_count) {
-    if (idx == s_new_timer_idx) { s_new_timer_idx = -1; }  // draft: never synced -> no phone delete
+    if (idx == s_new_timer_idx || s_ephemeral[idx]) { s_new_timer_idx = -1; }  // never synced -> no phone delete
     else { send_delete_timer(idx); }
     remove_timer_at(idx);
     persist_all(); rearm_wakeup(); reload_ui();
@@ -627,8 +867,8 @@ static void open_delete_confirm(void) {
 }
 
 // Leaving the detail window: stop the idle timer AND discard an un-started draft
-// new timer (BACK without Start). A committed timer has s_new_timer_idx == -1
-// (cleared in DACT_START), so this never discards a started/real timer.
+// new timer (BACK without Start/Save). A committed timer has s_new_timer_idx == -1,
+// so this never discards a started/saved timer.
 static void detail_disappear(Window *w) {
   idle_cancel();
   if (s_new_timer_idx >= 0 && s_new_timer_idx == s_detail_idx
@@ -639,8 +879,20 @@ static void detail_disappear(Window *w) {
   }
 }
 
-static void open_detail_window(int timer_idx) {
+static void open_detail_window(int timer_idx, DetailStyle style) {
   s_detail_idx = timer_idx;
+  s_detail_style = style;
+  if (timer_idx >= 0 && timer_idx < s_count) {
+    Timer *t = &s_timers[timer_idx];
+    if (style == DSTYLE_LONG_EXISTING && t->state == TS_RUNNING) {
+      s_detail_edit_secs = t->duration;
+    } else {
+      int32_t rem = tc_remaining_now(t, now_s());
+      s_detail_edit_secs = rem >= 1 ? rem : t->duration;
+    }
+    if (style == DSTYLE_LONG_NEW) { s_detail_edit_secs = 60; } // new timer always starts from 1:00
+    if (s_detail_edit_secs < 10) { s_detail_edit_secs = 10; }
+  }
   if (!s_detail_window) {
     s_detail_window = window_create();
     window_set_window_handlers(s_detail_window, (WindowHandlers){
@@ -731,13 +983,20 @@ static void ml_draw_row(GContext *gctx, const Layer *cell, MenuIndex *ci, void *
   char rem[16]; tc_format_fixed(rem, sizeof(rem), tc_remaining_now(t, now_s()));
   graphics_draw_text(gctx, rem, tf, GRect(4, ty, b.size.w - 8, th),
     GTextOverflowModeFill, GTextAlignmentLeft, NULL);
+  // Start the description just after the time text (the fixed format renders a
+  // constant width) with a small gap — much tighter than the old 96px column.
+  GSize tw = graphics_text_layout_get_content_size(rem, tf,
+    GRect(0, 0, b.size.w, th), GTextOverflowModeFill, GTextAlignmentLeft);
+  int name_x = 4 + tw.w + 8;
   if (t->name[0]) {
-    // Start the description just after the time text (the fixed format renders a
-    // constant width) with a small gap — much tighter than the old 96px column.
-    GSize tw = graphics_text_layout_get_content_size(rem, tf,
-      GRect(0, 0, b.size.w, th), GTextOverflowModeFill, GTextAlignmentLeft);
-    int name_x = 4 + tw.w + 8;
     graphics_draw_text(gctx, t->name, nf,
+      GRect(name_x, ty, b.size.w - 4 - name_x, th),
+      GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
+  } else {
+    ensure_unnamed_star(idx);
+    char lbl[24];
+    format_unnamed_running_label(idx, lbl, sizeof(lbl));
+    graphics_draw_text(gctx, lbl, nf,
       GRect(name_x, ty, b.size.w - 4 - name_x, th),
       GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
   }
@@ -818,23 +1077,23 @@ static void ml_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
   // An unstarted (idle) timer has only one useful action — skip the menu, just start.
   if (s_timers[idx].state == TS_IDLE) {
     tc_start(&s_timers[idx], now_s());
+    ensure_unnamed_star(idx);
     persist_all(); rearm_wakeup(); ensure_ticking(); reload_ui();
     select_timer_row(idx);
     if (s_auto_return) { show_start_confirmation(idx); }   // flash, then pop to watchface
     return;
   } else {
-    open_detail_window(idx);
+    open_detail_window(idx, DSTYLE_LEGACY);
   }
 }
 
 // Long SELECT opens the detail window for ANY timer (short SELECT still starts an
-// idle timer directly). This is how an idle/done timer reaches the +/- adjust and
-// the "Save as new & start" action.
+// idle timer directly). The long-press menu contains the edit/save/delete flow.
 static void ml_select_long(MenuLayer *ml, MenuIndex *ci, void *ctx) {
   idle_reset();
-  if (ml_is_new_row(ci->row)) { create_new_timer(); return; }
+  if (ml_is_new_row(ci->row)) { return; }   // no dedicated long-press action for "+ New timer"
   if (s_count == 0) { return; }
-  open_detail_window(s_order[ci->row]);
+  open_detail_window(s_order[ci->row], DSTYLE_LONG_EXISTING);
 }
 
 // ---- AppMessage inbox: a TimerConfig string + SortOrder int -> reconcile ----
@@ -877,12 +1136,32 @@ static void inbox_received(DictionaryIterator *iter, void *ctx) {
     // static, NOT on the stack: two Timer[MAX_TIMERS] arrays are ~2 KB and would
     // overflow the Pebble app stack. The inbox handler runs on the single event
     // loop, so static is safe.
+    static Timer cur[MAX_TIMERS];
     static Timer parsed[MAX_TIMERS];
     static Timer merged[MAX_TIMERS];
+    static bool eph_old[MAX_TIMERS];
+    static bool eph_new[MAX_TIMERS];
+    static int8_t st_old[MAX_TIMERS];
+    static int8_t st_new[MAX_TIMERS];
+    int cn = s_count;
+    memcpy(cur, s_timers, sizeof(Timer) * (size_t)cn);
+    memcpy(eph_old, s_ephemeral, sizeof(bool) * (size_t)cn);
+    memcpy(st_old, s_unnamed_star, sizeof(int8_t) * (size_t)cn);
     int pn = tc_parse_config(cfg->value->cstring, parsed, MAX_TIMERS);
-    int mn = tc_reconcile(s_timers, s_count, parsed, pn, merged);
+    int mn = tc_reconcile(cur, cn, parsed, pn, merged);
     memcpy(s_timers, merged, sizeof(Timer) * (size_t)mn);
     s_count = mn;
+    memset(eph_new, 0, sizeof(eph_new));
+    for (int i = 0; i < MAX_TIMERS; i++) { st_new[i] = -1; }
+    int out = pn;
+    for (int i = pn; i < cn && out < mn; i++) {
+      if (!cur[i].custom) { continue; }
+      eph_new[out++] = eph_old[i];
+      st_new[out - 1] = st_old[i];
+    }
+    memcpy(s_ephemeral, eph_new, sizeof(eph_new));
+    memcpy(s_unnamed_star, st_new, sizeof(st_new));
+    for (int i = 0; i < s_count; i++) { ensure_unnamed_star(i); }
     // A reconcile can renumber s_timers (a grown config may overwrite the draft's
     // slot, or shift a preserved trailing custom row), so abandon draft-tracking:
     // otherwise a stale s_new_timer_idx could point at a real config-backed timer and
@@ -937,11 +1216,28 @@ static void send_delete_timer(int32_t idx) {
   }
 }
 
+// Tell the phone to overwrite timer `idx` with a new duration (`secs`), keeping
+// its current name. Best-effort, like Add/Delete.
+static void send_update_timer(int32_t idx, int32_t secs) {
+  DictionaryIterator *out;
+  if (app_message_outbox_begin(&out) == APP_MSG_OK) {
+    dict_write_int32(out, MESSAGE_KEY_UpdateTimerIndex, idx);
+    dict_write_int32(out, MESSAGE_KEY_UpdateTimerSeconds, secs);
+    app_message_outbox_send();
+  }
+}
+
 // Remove the timer at `idx`, shifting the tail down. Caller persists + re-sorts.
 static void remove_timer_at(int idx) {
   if (idx < 0 || idx >= s_count) { return; }
-  for (int i = idx; i < s_count - 1; i++) { s_timers[i] = s_timers[i + 1]; }
+  for (int i = idx; i < s_count - 1; i++) {
+    s_timers[i] = s_timers[i + 1];
+    s_ephemeral[i] = s_ephemeral[i + 1];
+    s_unnamed_star[i] = s_unnamed_star[i + 1];
+  }
   s_count--;
+  s_ephemeral[s_count] = false;
+  s_unnamed_star[s_count] = -1;
   // Keep the draft-tracking index valid across the shift: clear it if the draft
   // itself was removed, decrement it if a lower row was removed. Prevents
   // s_new_timer_idx from desyncing (e.g. an alarm snooze re-points s_detail_idx
@@ -951,15 +1247,11 @@ static void remove_timer_at(int idx) {
   else if (s_new_timer_idx > idx) { s_new_timer_idx--; }
 }
 
-// Create a NEW unnamed timer of `secs`, started now, appended at the end of the
-// list (so a later config reconcile aligns the phone's appended entry to this
-// running row by position). Persist, send AddTimer, then apply the normal start
-// tail (confirmation + auto-return).
-static void save_as_new_and_start(int32_t secs) {
+static void start_as_new(int32_t secs, bool save_to_phone) {
   if (s_count >= MAX_TIMERS) {
     return;   // List full: nothing to create. (Keep it simple — no new row.)
   }
-  if (secs < 1) { secs = 1; }
+  if (secs < 10) { secs = 10; }
   int idx = s_count;
   Timer *t = &s_timers[idx];
   memset(t, 0, sizeof(*t));
@@ -968,19 +1260,71 @@ static void save_as_new_and_start(int32_t secs) {
   t->remaining = secs;
   t->state = TS_IDLE;
   t->custom = true;
+  s_ephemeral[idx] = !save_to_phone;
+  s_unnamed_star[idx] = -1;
   tc_start(t, now_s());            // -> RUNNING, end_time = now + secs
+  ensure_unnamed_star(idx);
   s_count++;
   persist_all(); rearm_wakeup(); ensure_ticking();
-  send_add_timer(secs);
+  if (save_to_phone) { send_add_timer(secs); }
   reload_ui();
   select_timer_row(idx);
   if (s_auto_return) { show_start_confirmation(idx); }   // flash -> watchface
   else { window_stack_remove(s_detail_window, true); }   // back to the list
 }
 
+static void save_as_new_only(int32_t secs) {
+  if (s_count >= MAX_TIMERS) { return; }
+  if (secs < 10) { secs = 10; }
+  int idx = s_count;
+  Timer *t = &s_timers[idx];
+  memset(t, 0, sizeof(*t));
+  t->name[0] = 0;
+  t->duration = secs;
+  t->remaining = secs;
+  t->state = TS_IDLE;
+  t->custom = true;
+  t->last_used = now_s();
+  s_ephemeral[idx] = false;
+  s_unnamed_star[idx] = -1;
+  s_count++;
+  persist_all(); rearm_wakeup(); reload_ui();
+  send_add_timer(secs);
+  window_stack_remove(s_detail_window, true);
+}
+
+static void apply_overwrite_only(int idx, int32_t secs) {
+  if (idx < 0 || idx >= s_count) { return; }
+  if (secs < 10) { secs = 10; }
+  Timer *t = &s_timers[idx];
+  t->duration = secs;
+  if (t->state == TS_IDLE) { t->remaining = secs; }
+  if (t->state == TS_DONE) { t->remaining = 0; }
+  t->last_used = now_s();
+  s_ephemeral[idx] = false;
+  persist_all(); rearm_wakeup(); reload_ui();
+  send_update_timer(idx, secs);
+  window_stack_remove(s_detail_window, true);
+}
+
+static void apply_overwrite_start(int idx, int32_t secs) {
+  if (idx < 0 || idx >= s_count) { return; }
+  if (secs < 10) { secs = 10; }
+  Timer *t = &s_timers[idx];
+  t->duration = secs;
+  t->remaining = secs;
+  tc_start(t, now_s());
+  ensure_unnamed_star(idx);
+  s_ephemeral[idx] = false;
+  persist_all(); rearm_wakeup(); ensure_ticking(); reload_ui();
+  send_update_timer(idx, secs);
+  if (s_auto_return) { show_start_confirmation(idx); }
+  else { window_stack_remove(s_detail_window, true); }
+}
+
 // "+ New timer" action: create an unnamed IDLE draft timer (default 1:00) held in
-// RAM only (not persisted, not sent to the phone) and open its detail window. The
-// draft is committed on Start (persist + AddTimer) or discarded on BACK/Delete/close.
+// RAM only (not persisted, not sent to the phone) and open its menu. The draft is
+// committed by Start/Save actions, or discarded on BACK.
 static void create_new_timer(void) {
   if (s_count >= MAX_TIMERS) { return; }   // list full: no-op
   int idx = s_count;
@@ -991,10 +1335,12 @@ static void create_new_timer(void) {
   t->state = TS_IDLE;
   t->custom = true;                        // survive a mid-draft config reconcile
   t->last_used = now_s();
+  s_ephemeral[idx] = false;                // draft: unsaved but not a "start as new" ephemeral run
+  s_unnamed_star[idx] = -1;
   s_count++;
   s_new_timer_idx = idx;
   reload_ui();
-  open_detail_window(idx);
+  open_detail_window(idx, DSTYLE_LONG_NEW);
 }
 
 // ---- window ----
@@ -1016,6 +1362,13 @@ static void window_unload(Window *w) { menu_layer_destroy(s_menu); s_menu = NULL
 
 static void init(void) {
   s_count = store_load(s_timers);
+  memset(s_ephemeral, 0, sizeof(s_ephemeral));
+  for (int i = 0; i < MAX_TIMERS; i++) { s_unnamed_star[i] = -1; }
+  uint32_t em = store_load_ephemeral_mask();
+  for (int i = 0; i < s_count && i < 32; i++) {
+    s_ephemeral[i] = (em & (1u << i)) != 0;
+    ensure_unnamed_star(i);
+  }
   s_sort = (SortMode)store_load_sort();
   s_auto_return = store_load_autoreturn();
   s_running_first = store_load_runningfirst();
@@ -1070,6 +1423,7 @@ static void deinit(void) {
   persist_all();
   rearm_wakeup();   // ensure the closed-app wakeup reflects final state
   if (s_confirm_window) { window_destroy(s_confirm_window); }
+  if (s_save_window) { window_destroy(s_save_window); }
   if (s_del_window) { window_destroy(s_del_window); }
   window_destroy(s_window);
 }
