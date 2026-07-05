@@ -1,8 +1,10 @@
 {
   "name": "countdown-timer",
   "author": "Sykerö Software",
-  "version": "1.1.10",
-  "keywords": ["pebble-app"],
+  "version": "1.4.0",
+  "keywords": [
+    "pebble-app"
+  ],
   "private": true,
   "dependencies": {
     "pebble-clay": "^1.0.4"
@@ -12,13 +14,39 @@
     "uuid": "6514c531-5e09-470e-8ffb-ce633f721e64",
     "sdkVersion": "3",
     "enableMultiJS": true,
-    "targetPlatforms": ["aplite", "basalt", "diorite", "emery", "flint"],
+    "targetPlatforms": [
+      "aplite",
+      "basalt",
+      "diorite",
+      "emery",
+      "flint"
+    ],
     "capabilities": [],
-    "watchapp": { "watchface": false },
-    "messageKeys": ["TimerConfig", "SortOrder", "Request", "AutoReturn", "RunningFirst", "AddTimer", "DeleteTimer", "UpdateTimerIndex", "UpdateTimerSeconds", "IdleExitSec", "CfgOpen", "LaunchSync"],
+    "watchapp": {
+      "watchface": false
+    },
+    "messageKeys": [
+      "TimerConfig",
+      "SortOrder",
+      "Request",
+      "AutoReturn",
+      "RunningFirst",
+      "AddTimer",
+      "DeleteTimer",
+      "UpdateTimerIndex",
+      "UpdateTimerSeconds",
+      "IdleExitSec",
+      "CfgOpen",
+      "LaunchSync"
+    ],
     "resources": {
       "media": [
-        { "type": "bitmap", "menuIcon": true, "name": "MENU_ICON", "file": "images/menuicon.png" }
+        {
+          "type": "bitmap",
+          "menuIcon": true,
+          "name": "MENU_ICON",
+          "file": "images/menuicon.png"
+        }
       ]
     }
   },
