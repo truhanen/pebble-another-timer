@@ -13,7 +13,7 @@ const config = [
       { type: 'heading', defaultValue: 'Timers' },
       { type: 'text', defaultValue:
         'Add timers below. On the watch: short Select on a stopped timer starts it; ' +
-        'short Select on a running/paused timer opens quick controls; long Select opens the edit/save menu.' },
+        'short Select on a running/paused timer opens quick controls; long Select opens the duration dial.' },
       { type: 'timerList', messageKey: 'TimerList', defaultValue: [{ name: '', seconds: 0 }] },
     ],
   },
@@ -66,14 +66,22 @@ const config = [
         '• <b>Up / Down</b> — move between timers.<br>' +
         '• <b>Select</b> (short press) — on a stopped timer, starts it right away; ' +
         'on a running or paused timer, opens quick controls.<br>' +
-        '• <b>Select (long press / hold)</b> — opens the edit/save menu for <i>any</i> timer.' },
+        '• <b>Select (long press / hold)</b> — opens the duration dial for <i>any</i> timer.<br>' +
+        '• <b>Touch screen</b> — opens the touch dial; when you finish touch selection, ' +
+        'the chosen duration starts immediately as an unsaved timer.' },
       { type: 'text', defaultValue:
         '<b>Quick controls menu</b> (short Select on running/paused timer)<br>' +
-        '• Start/Pause, +10s/+1 min, and Stop.' },
+        '• Start/Pause, +1 min/-1 min, and Stop.' },
       { type: 'text', defaultValue:
-        '<b>Edit/save menu</b> (long Select)<br>' +
-        '• <b>+1 min / +10s</b> — short press adds 1 minute at 1:00 or above, and 10 seconds below 1:00.<br>' +
-        '• <b>Hold on the same item</b> — subtract 1 minute above 1:00, and 10 seconds at/below 1:00 (down to 0:10).<br>' +
+        '<b>Duration dial</b> (opened first on long press and for New timer)<br>' +
+        '• Three boxes: hours, minutes, and seconds.<br>' +
+        '• Up/Down changes the selected field. Hours clamp at 0..100; minutes/seconds wrap 0..59. Hold repeats.<br>' +
+        '• Select moves right; Select on seconds opens actions. Back moves left; Back on hours cancels editing.<br>' +
+        '• Touch opens the touch dial for direct duration selection.<br>' +
+        '• In touch dial, to enter second-precision mode: rotate anticlockwise past 6 o\'clock, then past 12 o\'clock while at 0h.<br>' +
+        '• On existing timers, long press Select on the dial opens delete confirmation.' },
+      { type: 'text', defaultValue:
+        '<b>Edit/save actions</b> (after confirming duration)<br>' +
         '• <b>Start unsaved</b> — add and start a temporary timer (not saved, disappears after finishing).<br>' +
         '• <b>Start &amp; save</b> / <b>Only save</b> — then choose save type: ' +
         '<b>As new timer</b> or <b>Overwrite current</b>.<br>' +

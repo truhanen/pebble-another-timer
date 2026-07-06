@@ -1,0 +1,35 @@
+# Integer AppMessage values used by `send_emulator_configuration`.
+# Key IDs follow package.json messageKeys numbering (10000 + index).
+
+# SortOrder (0=MRU, 1=Shortest first, 2=Longest first)
+EMULATOR_CFG_SORT_ORDER_KEY := 10001
+EMULATOR_CFG_SORT_ORDER_VAL := 1
+
+# AutoReturn (0=off, 1=on)
+EMULATOR_CFG_AUTORETURN_KEY := 10003
+EMULATOR_CFG_AUTORETURN_VAL := 0
+
+# RunningFirst (0=off, 1=on)
+EMULATOR_CFG_RUNNINGFIRST_KEY := 10004
+EMULATOR_CFG_RUNNINGFIRST_VAL := 1
+
+# IdleExitSec (0=off, else timeout in seconds)
+EMULATOR_CFG_IDLEEXIT_KEY := 10009
+EMULATOR_CFG_IDLEEXIT_VAL := 0
+
+# CfgOpen (0=phone config closed, 1=open; use 0 for emulator config push)
+EMULATOR_CFG_CFGOPEN_KEY := 10010
+EMULATOR_CFG_CFGOPEN_VAL := 0
+
+# LaunchSync (0=off, 1=on)
+EMULATOR_CFG_LAUNCHSYNC_KEY := 10011
+EMULATOR_CFG_LAUNCHSYNC_VAL := 1
+
+# Final `--int` argument list passed to pebble send-app-message.
+EMULATOR_CFG_INT_ARGS := \
+	$(EMULATOR_CFG_SORT_ORDER_KEY)=$(EMULATOR_CFG_SORT_ORDER_VAL) \
+	$(EMULATOR_CFG_AUTORETURN_KEY)=$(EMULATOR_CFG_AUTORETURN_VAL) \
+	$(EMULATOR_CFG_RUNNINGFIRST_KEY)=$(EMULATOR_CFG_RUNNINGFIRST_VAL) \
+	$(EMULATOR_CFG_IDLEEXIT_KEY)=$(EMULATOR_CFG_IDLEEXIT_VAL) \
+	$(EMULATOR_CFG_CFGOPEN_KEY)=$(EMULATOR_CFG_CFGOPEN_VAL) \
+	$(EMULATOR_CFG_LAUNCHSYNC_KEY)=$(EMULATOR_CFG_LAUNCHSYNC_VAL)

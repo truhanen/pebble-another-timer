@@ -59,7 +59,7 @@ function timerListInitialize(this: any, _minified: any, _clayConfig: any): void 
       const s = parseInt((r.querySelector('.tl-s') as HTMLSelectElement).value, 10) || 0;
       // Dropdown offers 0-23h for new picks, but preserve a larger pre-existing
       // value (selOptions keeps it as an extra option) so a save never truncates it.
-      out.push({ name: name, seconds: clamp(h, 0, 99) * 3600 + clamp(m, 0, 59) * 60 + clamp(s, 0, 59) });
+      out.push({ name: name, seconds: clamp(h, 0, 100) * 3600 + clamp(m, 0, 59) * 60 + clamp(s, 0, 59) });
     }
     return out;
   }

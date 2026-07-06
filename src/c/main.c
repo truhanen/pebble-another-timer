@@ -3,10 +3,12 @@
 #include <pebble.h>
 #include "timer_calc.h"
 #include "timer_store.h"
+#include "dial_touch.h"
 #include <string.h>
 
 static Window *s_window;
 static MenuLayer *s_menu;
+static Layer    *s_empty_hint_layer;
 static AppTimer *s_tick;
 
 // Full-screen alarm shown when a timer reaches zero.
@@ -42,15 +44,29 @@ static int64_t s_app_launch_s = 0; // app launch timestamp for launch-sync elaps
 // ---- per-timer detail window: long-press menu workflow ----
 static Window *s_detail_window;
 static MenuLayer *s_detail_menu;
-static int s_detail_idx = -1;   // config index the detail window is showing
+static int16_t s_detail_idx = -1;   // config index the detail window is showing
 static DetailAction s_detail_acts[7];
-static int s_detail_act_count = 0;
-static int s_new_timer_idx = -1;  // index in s_timers of an un-started draft new timer, or -1
+static int8_t s_detail_act_count = 0;
+static int16_t s_new_timer_idx = -1;  // index in s_timers of an un-started draft new timer, or -1
 static int32_t s_detail_edit_secs = 60;
 typedef enum { DSTYLE_LEGACY = 0, DSTYLE_LONG_EXISTING = 1, DSTYLE_LONG_NEW = 2 } DetailStyle;
 static DetailStyle s_detail_style = DSTYLE_LEGACY;
 typedef enum { SAVE_INTENT_NONE = 0, SAVE_INTENT_START_AND_SAVE = 1, SAVE_INTENT_ONLY_SAVE = 2 } SaveIntent;
 static SaveIntent s_save_intent = SAVE_INTENT_NONE;
+
+// ---- time edit dial window (opened before long-press/new confirmation menu) ----
+static Window *s_dial_window;
+static Layer *s_dial_layer;
+static int8_t s_dial_field = 1; // 0=hour, 1=minute, 2=second
+static bool s_dial_advancing = false; // true while transitioning dial -> confirmation
+static AppTimer *s_dial_hold_timer;
+static int8_t s_dial_hold_delta; // +1 (UP) or -1 (DOWN)
+static uint16_t s_dial_hold_steps;
+static uint32_t s_dial_hold_next_due_ms;
+#define DIAL_HMS_FIRST_REPEAT_MS 200
+#define DIAL_HOLD_POLL_MS 20
+#define DIAL_TRI_HW 10
+#define DIAL_TRI_H 12
 
 // ---- save-type submenu: "As new timer" / "Overwrite current" ----
 static Window *s_save_window;
@@ -80,7 +96,9 @@ static int32_t launch_elapsed_s(void) {
 }
 
 static int32_t launch_adjust_start_secs(int32_t base) {
-  return base - launch_elapsed_s();
+  int32_t adjusted = base - launch_elapsed_s();
+  if (adjusted < 1) { adjusted = 1; }
+  return adjusted;
 }
 
 static void format_launch_sync_suffix(char *buf, size_t n) {
@@ -88,6 +106,16 @@ static void format_launch_sync_suffix(char *buf, size_t n) {
   int m = e / 60;
   int s = e % 60;
   snprintf(buf, n, "-%d:%02d", m, s);
+}
+
+static void format_duration_with_launch_sync(int32_t secs, bool include_sync, char *buf, size_t n) {
+  char rem[16];
+  tc_format_remaining(rem, sizeof(rem), secs);
+  snprintf(buf, n, "%s", rem);
+  if (!include_sync || !s_launch_sync) { return; }
+  char sync[16];
+  format_launch_sync_suffix(sync, sizeof(sync));
+  snprintf(buf, n, "%s %s", rem, sync);
 }
 
 // Close the app to the WATCHFACE (not the launcher). exit_reason_set tells
@@ -111,6 +139,13 @@ static void idle_cancel(void) {
 }
 static void idle_fire(void *ctx) {
   s_idle_timer = NULL;
+  Window *top = window_stack_get_top_window();
+  if ((top == s_dial_window || top == s_window) && dial_touch_in_progress()) {
+    if (!s_config_open && s_idle_timeout_sec > 0) {
+      s_idle_timer = app_timer_register(s_idle_timeout_sec * 1000, idle_fire, NULL);
+    }
+    return;
+  }
   close_to_watchface();
 }
 static void idle_reset(void) {
@@ -190,6 +225,7 @@ static void rebuild_order(void) { tc_display_order(s_timers, s_count, s_sort, no
 static void reload_ui(void) {
   rebuild_order();
   if (s_menu) { menu_layer_reload_data(s_menu); }
+  if (s_empty_hint_layer) { layer_mark_dirty(s_empty_hint_layer); }
 }
 
 static int next_unnamed_star(int32_t duration) {
@@ -236,6 +272,10 @@ static void format_unnamed_running_label(int idx, char *buf, size_t n) {
 
 static void ensure_ticking(void);   // defined below; used by start/alarm handlers
 static void open_detail_window(int timer_idx, DetailStyle style);  // defined below; used by alarm + menus
+static void open_dial_window(int timer_idx, DetailStyle style);    // defined below; used by long/new flows
+static void dial_touch_selected(uint8_t hours, uint8_t minutes, uint8_t seconds);
+static void main_touch_selected(uint8_t hours, uint8_t minutes, uint8_t seconds);
+static void open_delete_confirm(void);                              // defined below; delete confirm modal
 static void remove_timer_at(int idx); // defined below; used by alarm stop/delete paths
 static int sweep_expiries(void); // defined below; used by tick/start helpers
 static void trigger_alarm(int idx, int count); // defined below; alarm UI path
@@ -470,6 +510,9 @@ static void tick_cb(void *ctx) {
   if (s_detail_menu && window_stack_get_top_window() == s_detail_window) {
     menu_layer_reload_data(s_detail_menu);   // retick the live time header
   }
+  if (s_dial_layer && window_stack_get_top_window() == s_dial_window) {
+    layer_mark_dirty(s_dial_layer);          // retick the launch-sync suffix in dial header
+  }
   if (fired) { persist_all(); rearm_wakeup(); trigger_alarm(s_last_fired_idx, fired); }
   s_tick = (running || s_launch_sync) ? app_timer_register(1000, tick_cb, NULL) : NULL;
 }
@@ -497,6 +540,296 @@ static void select_timer_row(int idx) {
   }
 }
 
+static int dl_clamp_step(int v, int min, int max, int delta) {
+  int x = v + delta;
+  if (x < min) { x = min; }
+  if (x > max) { x = max; }
+  return x;
+}
+
+static int dl_wrap_step(int v, int min, int max, int delta) {
+  int span = max - min + 1;
+  int x = (v - min + delta) % span;
+  if (x < 0) { x += span; }
+  return min + x;
+}
+
+static void dl_secs_to_hms(int32_t secs, int *h, int *m, int *s) {
+  if (secs < 0) { secs = 0; }
+  if (secs > 363599) { secs = 363599; } // 100:59:59
+  *h = secs / 3600;
+  *m = (secs % 3600) / 60;
+  *s = secs % 60;
+}
+
+static void dl_adjust_field(int delta) {
+  int h, m, s;
+  dl_secs_to_hms(s_detail_edit_secs, &h, &m, &s);
+  if (s_dial_field == 0) { h = dl_clamp_step(h, 0, 100, delta); }
+  else if (s_dial_field == 1) { m = dl_wrap_step(m, 0, 59, delta); }
+  else { s = dl_wrap_step(s, 0, 59, delta); }
+  int32_t next = h * 3600 + m * 60 + s;
+  s_detail_edit_secs = next;
+  if (s_dial_layer) { layer_mark_dirty(s_dial_layer); }
+}
+
+static void dial_adjust_current(int delta) {
+  dl_adjust_field(delta);
+}
+
+static void dial_hold_cancel(void) {
+  if (s_dial_hold_timer) {
+    app_timer_cancel(s_dial_hold_timer);
+    s_dial_hold_timer = NULL;
+  }
+}
+
+static uint32_t dial_now_ms(void) {
+  time_t s_utc = 0;
+  uint16_t ms = 0;
+  time_ms(&s_utc, &ms);
+  return (uint32_t)s_utc * 1000u + (uint32_t)ms;
+}
+
+static uint32_t dial_hold_step_interval_ms(int steps_applied) {
+  (void)steps_applied;
+  return 70;
+}
+
+static void dial_hold_repeat_cb(void *ctx) {
+  s_dial_hold_timer = NULL;
+  uint32_t now_ms = dial_now_ms();
+  int guard = 0;
+  while ((int32_t)(now_ms - s_dial_hold_next_due_ms) >= 0 && guard < 512) {
+    dial_adjust_current(s_dial_hold_delta);
+    s_dial_hold_steps++;
+    s_dial_hold_next_due_ms += dial_hold_step_interval_ms(s_dial_hold_steps);
+    guard++;
+  }
+  s_dial_hold_timer = app_timer_register(DIAL_HOLD_POLL_MS, dial_hold_repeat_cb, NULL);
+}
+
+static void dial_hold_begin_common(int delta) {
+  idle_reset();
+  s_dial_hold_delta = delta;
+  dial_adjust_current(delta); // first step at long-click delay (200ms)
+  s_dial_hold_steps = 1;
+  dial_hold_cancel();
+  s_dial_hold_next_due_ms = dial_now_ms() + DIAL_HMS_FIRST_REPEAT_MS;
+  s_dial_hold_timer = app_timer_register(DIAL_HOLD_POLL_MS, dial_hold_repeat_cb, NULL);
+}
+
+static void dial_hold_end_common(void) {
+  s_dial_hold_steps = 0;
+  dial_hold_cancel();
+}
+
+static void dl_draw_triangle_up_sized(GContext *gctx, int cx, int y, int hw, int hh, GColor c) {
+  graphics_context_set_fill_color(gctx, c);
+  graphics_context_set_stroke_color(gctx, c);
+  for (int dy = 0; dy <= hh; dy++) {
+    int half = (hw * dy) / hh;
+    int yy = y + dy;
+    graphics_draw_line(gctx, GPoint(cx - half, yy), GPoint(cx + half, yy));
+  }
+  graphics_draw_line(gctx, GPoint(cx - hw, y + hh), GPoint(cx, y));
+  graphics_draw_line(gctx, GPoint(cx, y), GPoint(cx + hw, y + hh));
+  graphics_draw_line(gctx, GPoint(cx - hw, y + hh), GPoint(cx + hw, y + hh));
+}
+
+static void dl_draw_triangle_down_sized(GContext *gctx, int cx, int y, int hw, int hh, GColor c) {
+  graphics_context_set_fill_color(gctx, c);
+  graphics_context_set_stroke_color(gctx, c);
+  for (int dy = 0; dy <= hh; dy++) {
+    int half = hw - (hw * dy) / hh;
+    int yy = y + dy;
+    graphics_draw_line(gctx, GPoint(cx - half, yy), GPoint(cx + half, yy));
+  }
+  graphics_draw_line(gctx, GPoint(cx - hw, y), GPoint(cx, y + hh));
+  graphics_draw_line(gctx, GPoint(cx, y + hh), GPoint(cx + hw, y));
+  graphics_draw_line(gctx, GPoint(cx - hw, y), GPoint(cx + hw, y));
+}
+
+static void dial_update_proc(Layer *layer, GContext *gctx) {
+  GRect b = layer_get_bounds(layer);
+  graphics_context_set_fill_color(gctx, GColorWhite);
+  graphics_fill_rect(gctx, b, 0, GCornerNone);
+  graphics_context_set_text_color(gctx, GColorBlack);
+
+  char head_right[36];
+  format_duration_with_launch_sync(s_detail_edit_secs, true, head_right, sizeof(head_right));
+  GFont hf = fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD);
+  char head_left[NAME_LEN + 8];
+  snprintf(head_left, sizeof(head_left), (s_detail_style == DSTYLE_LONG_NEW) ? "Edit" : "Edit duration");
+  if (s_detail_style == DSTYLE_LONG_EXISTING && s_detail_idx >= 0 && s_detail_idx < s_count) {
+    Timer *t = &s_timers[s_detail_idx];
+    if (t->name[0]) {
+      snprintf(head_left, sizeof(head_left), "Edit %s", t->name);
+    } else {
+      ensure_unnamed_star(s_detail_idx);
+      char lbl[24];
+      format_unnamed_running_label(s_detail_idx, lbl, sizeof(lbl));
+      snprintf(head_left, sizeof(head_left), "Edit %s", lbl);
+    }
+  }
+  graphics_draw_text(gctx, head_left, hf, GRect(4, 2, b.size.w - 90, 26),
+    GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
+  graphics_draw_text(gctx, head_right, hf, GRect(4, 2, b.size.w - 8, 26),
+    GTextOverflowModeTrailingEllipsis, GTextAlignmentRight, NULL);
+
+  const int delete_hint_y = 28;
+  const int delete_hint_h = 20;
+  if (s_detail_style == DSTYLE_LONG_EXISTING) {
+    graphics_draw_text(gctx, "Hold select to delete timer",
+      fonts_get_system_font(FONT_KEY_GOTHIC_24),
+      GRect(4, delete_hint_y, b.size.w - 8, delete_hint_h),
+      GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter, NULL);
+  }
+
+  int margin = 8;
+  int gap = 6;
+  int avail_w = b.size.w - margin * 2 - gap * 2;
+  int bw = avail_w / 3;
+  if (bw < 1) { bw = 1; }
+  const int dial_extra_h = 20 + 8 + DIAL_TRI_H; // top gap + bottom gap + bottom triangle height
+  int bh = (b.size.h * 28) / 100; // current baseline dial-box height
+  bh = (bh * 3) / 4;              // reduce by 25%
+  int max_bh = b.size.h - dial_extra_h;
+  if (max_bh < 1) { max_bh = 1; }
+  if (bh > max_bh) { bh = max_bh; }
+  if (bh < 1) { bh = 1; }
+  int dial_total_h = bh + dial_extra_h;
+  int dial_top_y = (b.size.h - dial_total_h) / 2;
+  int by = dial_top_y + 20;
+
+  int h, m, s;
+  dl_secs_to_hms(s_detail_edit_secs, &h, &m, &s);
+
+  for (int i = 0; i < 3; i++) {
+    GColor text_c = GColorBlack;
+    int x = margin + i * (bw + gap);
+
+    GRect box = GRect(x, by, bw, bh);
+    bool selected = (i == s_dial_field);
+    GColor border_c = selected ? GColorBlack : PBL_IF_COLOR_ELSE(GColorLightGray, GColorBlack);
+    GColor tri_c = selected ? GColorBlack : PBL_IF_COLOR_ELSE(GColorLightGray, GColorBlack);
+    int cx = x + bw / 2;
+    int up_y = by - 20;
+    int down_y = by + bh + 8;
+
+    graphics_context_set_stroke_color(gctx, border_c);
+    graphics_context_set_stroke_width(gctx, 3);
+    graphics_draw_rect(gctx, box);
+
+    char txt[4];
+    int v = (i == 0) ? h : ((i == 1) ? m : s);
+    if (i == 0) { snprintf(txt, sizeof(txt), "%d", v); }
+    else { snprintf(txt, sizeof(txt), "%02d", v); }
+    graphics_context_set_text_color(gctx, text_c);
+    const int text_h = 30;
+    graphics_draw_text(gctx, txt, fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD),
+      GRect(x + 2, by + (bh - text_h) / 2, bw - 4, text_h),
+      GTextOverflowModeFill, GTextAlignmentCenter, NULL);
+
+    dl_draw_triangle_up_sized(gctx, cx, up_y, DIAL_TRI_HW, DIAL_TRI_H, tri_c);
+    dl_draw_triangle_down_sized(gctx, cx, down_y, DIAL_TRI_HW, DIAL_TRI_H, tri_c);
+  }
+
+  const int hint_h = 26;
+  if (b.size.h >= hint_h) {
+    const int hint_y = b.size.h - hint_h - 5;
+    graphics_context_set_text_color(gctx, GColorBlack);
+    graphics_draw_text(gctx, "Touch opens touch dial",
+      fonts_get_system_font(FONT_KEY_GOTHIC_24),
+      GRect(4, hint_y, b.size.w - 8, hint_h),
+      GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter, NULL);
+  }
+}
+
+static void dial_select(ClickRecognizerRef rec, void *ctx) {
+  idle_reset();
+  dial_touch_enable(true);
+  if (s_dial_field < 2) {
+    s_dial_field++;
+    if (s_dial_layer) { layer_mark_dirty(s_dial_layer); }
+    return;
+  }
+  s_dial_advancing = true;
+  open_detail_window(s_detail_idx, s_detail_style);
+  if (window_stack_contains_window(s_dial_window)) {
+    window_stack_remove(s_dial_window, false);
+  }
+}
+
+static void dial_back(ClickRecognizerRef rec, void *ctx) {
+  idle_reset();
+  dial_touch_enable(true);
+  if (s_dial_field > 0) {
+    s_dial_field--;
+    if (s_dial_layer) { layer_mark_dirty(s_dial_layer); }
+    return;
+  }
+  if (window_stack_contains_window(s_dial_window)) {
+    window_stack_remove(s_dial_window, true);
+  }
+}
+
+static void dial_up(ClickRecognizerRef rec, void *ctx) {
+  idle_reset();
+  dial_touch_enable(true);
+  dial_adjust_current(+1);
+}
+
+static void dial_down(ClickRecognizerRef rec, void *ctx) {
+  idle_reset();
+  dial_touch_enable(true);
+  dial_adjust_current(-1);
+}
+
+static void dial_up_long_begin(ClickRecognizerRef rec, void *ctx) {
+  dial_hold_begin_common(+1);
+}
+
+static void dial_up_long_end(ClickRecognizerRef rec, void *ctx) {
+  dial_hold_end_common();
+}
+
+static void dial_down_long_begin(ClickRecognizerRef rec, void *ctx) {
+  dial_hold_begin_common(-1);
+}
+
+static void dial_down_long_end(ClickRecognizerRef rec, void *ctx) {
+  dial_hold_end_common();
+}
+
+static void dial_select_long(ClickRecognizerRef rec, void *ctx) {
+  if (s_detail_style != DSTYLE_LONG_EXISTING) { return; }
+  idle_reset();
+  open_delete_confirm();
+}
+
+static void dial_click_config(void *ctx) {
+  window_single_click_subscribe(BUTTON_ID_SELECT, dial_select);
+  window_single_click_subscribe(BUTTON_ID_BACK, dial_back);
+  window_single_click_subscribe(BUTTON_ID_UP, dial_up);
+  window_single_click_subscribe(BUTTON_ID_DOWN, dial_down);
+  window_long_click_subscribe(BUTTON_ID_SELECT, 700, dial_select_long, NULL);
+  window_long_click_subscribe(BUTTON_ID_UP, 200, dial_up_long_begin, dial_up_long_end);
+  window_long_click_subscribe(BUTTON_ID_DOWN, 200, dial_down_long_begin, dial_down_long_end);
+}
+
+static void dial_window_load(Window *w) {
+  Layer *root = window_get_root_layer(w);
+  s_dial_layer = layer_create(layer_get_bounds(root));
+  layer_set_update_proc(s_dial_layer, dial_update_proc);
+  layer_add_child(root, s_dial_layer);
+}
+
+static void dial_window_unload(Window *w) {
+  dial_hold_cancel();
+  if (s_dial_layer) { layer_destroy(s_dial_layer); s_dial_layer = NULL; }
+}
+
 static void dl_rebuild_actions(void) {
   if (s_detail_idx < 0 || s_detail_idx >= s_count) { s_detail_act_count = 0; return; }
   Timer *t = &s_timers[s_detail_idx];
@@ -521,7 +854,7 @@ static uint16_t dl_num_rows(MenuLayer *ml, uint16_t section, void *ctx) {
     dl_rebuild_actions();
     return (uint16_t)s_detail_act_count;
   }
-  return (s_detail_style == DSTYLE_LONG_NEW) ? 4 : 5;
+  return (s_detail_style == DSTYLE_LONG_NEW) ? 3 : 4;
 }
 static int16_t dl_cell_height(MenuLayer *ml, MenuIndex *ci, void *ctx) { return 34; }
 static int16_t dl_header_height(MenuLayer *ml, uint16_t section, void *ctx) { return 32; }
@@ -531,14 +864,8 @@ static void dl_draw_header(GContext *gctx, const Layer *cell, uint16_t section, 
   if (s_detail_idx < 0 || s_detail_idx >= s_count) { return; }
   Timer *t = &s_timers[s_detail_idx];
   int32_t shown = (s_detail_style == DSTYLE_LEGACY) ? tc_remaining_now(t, now_s()) : s_detail_edit_secs;
-  char rem[16]; tc_format_remaining(rem, sizeof(rem), shown);
   char rem_head[36];
-  snprintf(rem_head, sizeof(rem_head), "%s", rem);
-  if (s_launch_sync && s_detail_style != DSTYLE_LEGACY) {
-    char sync[16];
-    format_launch_sync_suffix(sync, sizeof(sync));
-    snprintf(rem_head, sizeof(rem_head), "%s %s", rem, sync);
-  }
+  format_duration_with_launch_sync(shown, s_detail_style != DSTYLE_LEGACY, rem_head, sizeof(rem_head));
   char head[NAME_LEN + 8];
   GRect b = layer_get_bounds(cell);
   GFont f = fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD);
@@ -579,16 +906,10 @@ static void dl_draw_row(GContext *gctx, const Layer *cell, MenuIndex *ci, void *
     if (ci->row >= s_detail_act_count) { return; }
     label = dl_legacy_action_label(s_detail_acts[ci->row]);
   } else {
-    if (ci->row == 0) {
-      if (s_detail_edit_secs == 10) { label = "+10s"; }
-      else if (s_detail_edit_secs < 60) { label = "+10s (hold for -10)"; }
-      else if (s_detail_edit_secs == 60) { label = "+1 min (hold for -10s)"; }
-      else { label = "+1 min (hold for -1)"; }
-    }
-    else if (ci->row == 1) { label = "Start unsaved"; }
-    else if (ci->row == 2) { label = "Start & save"; }
-    else if (ci->row == 3) { label = "Only save"; }
-    else if (ci->row == 4 && s_detail_style == DSTYLE_LONG_EXISTING) { label = "Delete timer"; }
+    if (ci->row == 0) { label = "Start unsaved"; }
+    else if (ci->row == 1) { label = "Start & save"; }
+    else if (ci->row == 2) { label = "Only save"; }
+    else if (ci->row == 3 && s_detail_style == DSTYLE_LONG_EXISTING) { label = "Delete timer"; }
     else { return; }
   }
   GRect b = layer_get_bounds(cell);
@@ -609,17 +930,6 @@ static void open_delete_confirm(void);             // defined below (delete path
 static void send_delete_timer(int32_t idx);        // defined below (delete path)
 static void show_start_confirmation(int idx);      // defined below (auto-return tail)
 static void open_save_type_menu(SaveIntent intent); // defined below
-
-static int32_t dl_subtract_step(int32_t secs) { return secs > 60 ? 60 : 10; }
-static int32_t dl_add_step(int32_t secs) { return secs < 60 ? 10 : 60; }
-
-static void dl_modify_time(bool add) {
-  int32_t step = add ? dl_add_step(s_detail_edit_secs) : dl_subtract_step(s_detail_edit_secs);
-  int32_t next = add ? (s_detail_edit_secs + step) : (s_detail_edit_secs - step);
-  if (next < 10) { next = 10; }
-  s_detail_edit_secs = next;
-  menu_layer_reload_data(s_detail_menu);
-}
 
 static void dl_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
   idle_reset();
@@ -697,8 +1007,7 @@ static void dl_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
     }
     return;
   }
-  if (ci->row == 0) { dl_modify_time(true); return; } // short press: +1 minute
-  if (ci->row == 1) {
+  if (ci->row == 0) {
     if (s_detail_style == DSTYLE_LONG_NEW) {
       Timer *t = &s_timers[idx];
       t->duration = s_detail_edit_secs;
@@ -718,7 +1027,7 @@ static void dl_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
     }
     return;
   }
-  if (ci->row == 2) { // Start & save
+  if (ci->row == 1) { // Start & save
     if (s_detail_style == DSTYLE_LONG_NEW) {
       Timer *t = &s_timers[idx];
       t->duration = s_detail_edit_secs;
@@ -739,7 +1048,7 @@ static void dl_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
     }
     return;
   }
-  if (ci->row == 3) { // Only save
+  if (ci->row == 2) { // Only save
     if (s_detail_style == DSTYLE_LONG_NEW) {
       Timer *t = &s_timers[idx];
       t->duration = s_detail_edit_secs;
@@ -757,14 +1066,7 @@ static void dl_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
     }
     return;
   }
-  if (ci->row == 4 && s_detail_style == DSTYLE_LONG_EXISTING) { open_delete_confirm(); }
-}
-
-static void dl_select_long(MenuLayer *ml, MenuIndex *ci, void *ctx) {
-  if (s_detail_style == DSTYLE_LEGACY) { return; }
-  if (ci->row != 0) { return; } // long press only modifies time
-  idle_reset();
-  dl_modify_time(false);
+  if (ci->row == 3 && s_detail_style == DSTYLE_LONG_EXISTING) { open_delete_confirm(); }
 }
 
 static void detail_window_load(Window *w) {
@@ -777,7 +1079,6 @@ static void detail_window_load(Window *w) {
     .draw_header = dl_draw_header,
     .draw_row = dl_draw_row,
     .select_click = dl_select,
-    .select_long_click = dl_select_long,
   });
   menu_layer_set_normal_colors(s_detail_menu, GColorWhite, GColorBlack);
   menu_layer_set_highlight_colors(s_detail_menu, GColorBlack, GColorWhite);
@@ -889,6 +1190,9 @@ static void del_confirm_select(ClickRecognizerRef rec, void *ctx) {
   }
   s_detail_idx = -1;
   window_stack_remove(s_del_window, false);
+  if (s_dial_window && window_stack_contains_window(s_dial_window)) {
+    window_stack_remove(s_dial_window, false);
+  }
   window_stack_remove(s_detail_window, true);
 }
 
@@ -927,19 +1231,38 @@ static void detail_disappear(Window *w) {
   }
 }
 
+static void dial_appear(Window *w) {
+  idle_appear(w);
+  dial_touch_create(window_get_root_layer(w), dial_touch_selected);
+  dial_touch_enable(true);
+}
+
+static void dial_disappear(Window *w) {
+  idle_cancel();
+  dial_touch_enable(false);
+  dial_touch_destroy();
+  dial_hold_cancel();
+  bool advancing = s_dial_advancing;
+  s_dial_advancing = false;
+  if (advancing) { return; }
+  if (s_new_timer_idx >= 0 && s_new_timer_idx == s_detail_idx
+      && s_new_timer_idx < s_count && s_timers[s_new_timer_idx].state == TS_IDLE) {
+    remove_timer_at(s_new_timer_idx);
+    s_new_timer_idx = -1;
+    reload_ui();
+  }
+}
+
 static void open_detail_window(int timer_idx, DetailStyle style) {
   s_detail_idx = timer_idx;
   s_detail_style = style;
   if (timer_idx >= 0 && timer_idx < s_count) {
     Timer *t = &s_timers[timer_idx];
-    if (style == DSTYLE_LONG_EXISTING && t->state == TS_RUNNING) {
-      s_detail_edit_secs = t->duration;
-    } else {
+    if (style == DSTYLE_LEGACY) {
       int32_t rem = tc_remaining_now(t, now_s());
       s_detail_edit_secs = rem >= 1 ? rem : t->duration;
     }
-    if (style == DSTYLE_LONG_NEW) { s_detail_edit_secs = 60; } // new timer always starts from 1:00
-    if (s_detail_edit_secs < 10) { s_detail_edit_secs = 10; }
+    if (s_detail_edit_secs < 0) { s_detail_edit_secs = 0; }
   }
   if (!s_detail_window) {
     s_detail_window = window_create();
@@ -956,21 +1279,62 @@ static void open_detail_window(int timer_idx, DetailStyle style) {
   }
 }
 
+static void open_dial_window(int timer_idx, DetailStyle style) {
+  s_detail_idx = timer_idx;
+  s_detail_style = style;
+  s_dial_field = 1; // minute first on all platforms
+  if (timer_idx >= 0 && timer_idx < s_count) {
+    Timer *t = &s_timers[timer_idx];
+    if (style == DSTYLE_LONG_NEW) { s_detail_edit_secs = 60; }
+    else { s_detail_edit_secs = t->duration; } // existing long-press edits duration
+    if (s_detail_edit_secs < 0) { s_detail_edit_secs = 0; }
+  }
+  if (!s_dial_window) {
+    s_dial_window = window_create();
+    window_set_window_handlers(s_dial_window, (WindowHandlers){
+      .load = dial_window_load, .unload = dial_window_unload,
+      .appear = dial_appear, .disappear = dial_disappear });
+    window_set_click_config_provider(s_dial_window, dial_click_config);
+  }
+  if (window_stack_contains_window(s_dial_window)) {
+    if (s_dial_layer) { layer_mark_dirty(s_dial_layer); }
+  } else {
+    window_stack_push(s_dial_window, true);
+  }
+}
+
+static void dial_touch_selected(uint8_t hours, uint8_t minutes, uint8_t seconds) {
+  int h = (int)hours;
+  int m = (int)minutes;
+  int s = (int)seconds;
+  if (h > 100) { h = 100; }
+  m = ((m % 60) + 60) % 60;
+  s = ((s % 60) + 60) % 60;
+  s_detail_edit_secs = h * 3600 + m * 60 + s;
+  if (s_dial_layer) { layer_mark_dirty(s_dial_layer); }
+}
+
+static void main_touch_selected(uint8_t hours, uint8_t minutes, uint8_t seconds) {
+  int h = (int)hours;
+  int m = (int)minutes;
+  int s = (int)seconds;
+  if (h > 100) { h = 100; }
+  m = ((m % 60) + 60) % 60;
+  s = ((s % 60) + 60) % 60;
+  int32_t secs = h * 3600 + m * 60 + s;
+  start_as_new(secs, false);
+}
+
 // ---- MenuLayer callbacks ----
-// The "+ New timer" action row is always the LAST row. With an empty list the
-// two-line hint occupies row 0 and "New timer" is row 1.
 static bool ml_is_new_row(uint16_t row) {
-  return row == (s_count == 0 ? 1 : (uint16_t)s_count);
+  return row == (uint16_t)s_count;
 }
 static uint16_t ml_num_rows(MenuLayer *ml, uint16_t section, void *ctx) {
-  // timers + trailing "New timer"; empty list: hint row + "New timer".
-  return s_count == 0 ? 2 : s_count + 1;
+  // timers + trailing "New timer"
+  return s_count + 1;
 }
-// Timer rows are single-line (32px); the empty-state row uses menu_cell_basic_draw
-// (title + subtitle), which needs the taller 44px to render both lines without clipping.
 static int16_t ml_cell_height(MenuLayer *ml, MenuIndex *ci, void *ctx) {
-  if (s_count == 0 && ci->row == 0) { return 44; }   // two-line empty-state hint
-  return 32;                                          // timer rows + "New timer" row
+  return 32; // timer rows + "New timer" row
 }
 
 static void ml_draw_row(GContext *gctx, const Layer *cell, MenuIndex *ci, void *ctx) {
@@ -984,10 +1348,6 @@ static void ml_draw_row(GContext *gctx, const Layer *cell, MenuIndex *ci, void *
     graphics_draw_text(gctx, "+ New timer", fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD),
       GRect(4, (b.size.h - 26) / 2, b.size.w - 8, 26),
       GTextOverflowModeFill, GTextAlignmentCenter, NULL);
-    return;
-  }
-  if (s_count == 0) {
-    menu_cell_basic_draw(gctx, cell, "No timers", "Configure on your phone", NULL);
     return;
   }
   int idx = s_order[ci->row];
@@ -1131,7 +1491,6 @@ static void show_start_confirmation(int idx) {
 static void ml_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
   idle_reset();
   if (ml_is_new_row(ci->row)) { create_new_timer(); return; }
-  if (s_count == 0) { return; }
   int idx = s_order[ci->row];
   // An unstarted (idle) timer has only one useful action — skip the menu, just start.
   if (s_timers[idx].state == TS_IDLE) {
@@ -1155,7 +1514,7 @@ static void ml_select_long(MenuLayer *ml, MenuIndex *ci, void *ctx) {
   idle_reset();
   if (ml_is_new_row(ci->row)) { return; }   // no dedicated long-press action for "+ New timer"
   if (s_count == 0) { return; }
-  open_detail_window(s_order[ci->row], DSTYLE_LONG_EXISTING);
+  open_dial_window(s_order[ci->row], DSTYLE_LONG_EXISTING);
 }
 
 // ---- AppMessage inbox: a TimerConfig string + SortOrder int -> reconcile ----
@@ -1209,33 +1568,39 @@ static void inbox_received(DictionaryIterator *iter, void *ctx) {
     static Timer merged[MAX_TIMERS];
     static bool eph_old[MAX_TIMERS];
     static bool eph_new[MAX_TIMERS];
+    static bool draft_old[MAX_TIMERS];
+    static bool draft_new[MAX_TIMERS];
     static int8_t st_old[MAX_TIMERS];
     static int8_t st_new[MAX_TIMERS];
     int cn = s_count;
     memcpy(cur, s_timers, sizeof(Timer) * (size_t)cn);
     memcpy(eph_old, s_ephemeral, sizeof(bool) * (size_t)cn);
+    memset(draft_old, 0, sizeof(draft_old));
+    if (s_new_timer_idx >= 0 && s_new_timer_idx < cn) { draft_old[s_new_timer_idx] = true; }
     memcpy(st_old, s_unnamed_star, sizeof(int8_t) * (size_t)cn);
     int pn = tc_parse_config(cfg->value->cstring, parsed, MAX_TIMERS);
     int mn = tc_reconcile(cur, cn, parsed, pn, merged);
     memcpy(s_timers, merged, sizeof(Timer) * (size_t)mn);
     s_count = mn;
     memset(eph_new, 0, sizeof(eph_new));
+    memset(draft_new, 0, sizeof(draft_new));
     for (int i = 0; i < MAX_TIMERS; i++) { st_new[i] = -1; }
     int out = pn;
     for (int i = pn; i < cn && out < mn; i++) {
       if (!cur[i].custom) { continue; }
       eph_new[out++] = eph_old[i];
+      draft_new[out - 1] = draft_old[i];
       st_new[out - 1] = st_old[i];
     }
     memcpy(s_ephemeral, eph_new, sizeof(eph_new));
     memcpy(s_unnamed_star, st_new, sizeof(st_new));
     for (int i = 0; i < s_count; i++) { ensure_unnamed_star(i); }
-    // A reconcile can renumber s_timers (a grown config may overwrite the draft's
-    // slot, or shift a preserved trailing custom row), so abandon draft-tracking:
-    // otherwise a stale s_new_timer_idx could point at a real config-backed timer and
-    // let BACK delete it or Start duplicate it. The draft row itself is still
-    // preserved by tc_reconcile (custom trailing row) — only the draft flag is dropped.
+    // Rebuild draft-tracking after reconcile index remaps so BACK still discards
+    // the unsaved draft timer instead of persisting it.
     s_new_timer_idx = -1;
+    for (int i = 0; i < s_count; i++) {
+      if (draft_new[i]) { s_new_timer_idx = i; break; }
+    }
     sweep_expiries();   // mark stale expiries DONE; no alarm for a config reconcile
     persist_all(); rearm_wakeup(); ensure_ticking();
   }
@@ -1319,7 +1684,7 @@ static void start_as_new(int32_t secs, bool save_to_phone) {
   if (s_count >= MAX_TIMERS) {
     return;   // List full: nothing to create. (Keep it simple — no new row.)
   }
-  if (secs < 10) { secs = 10; }
+  if (secs < 0) { secs = 0; }
   int idx = s_count;
   Timer *t = &s_timers[idx];
   memset(t, 0, sizeof(*t));
@@ -1338,12 +1703,14 @@ static void start_as_new(int32_t secs, bool save_to_phone) {
   if (fired) { return; }
   select_timer_row(idx);
   if (s_auto_return) { show_start_confirmation(idx); }   // flash -> watchface
-  else { window_stack_remove(s_detail_window, true); }   // back to the list
+  else if (s_detail_window && window_stack_contains_window(s_detail_window)) {
+    window_stack_remove(s_detail_window, true);           // back to the list
+  }
 }
 
 static void save_as_new_only(int32_t secs) {
   if (s_count >= MAX_TIMERS) { return; }
-  if (secs < 10) { secs = 10; }
+  if (secs < 0) { secs = 0; }
   int idx = s_count;
   Timer *t = &s_timers[idx];
   memset(t, 0, sizeof(*t));
@@ -1363,7 +1730,7 @@ static void save_as_new_only(int32_t secs) {
 
 static void apply_overwrite_only(int idx, int32_t secs) {
   if (idx < 0 || idx >= s_count) { return; }
-  if (secs < 10) { secs = 10; }
+  if (secs < 0) { secs = 0; }
   Timer *t = &s_timers[idx];
   t->duration = secs;
   if (t->state == TS_IDLE) { t->remaining = secs; }
@@ -1377,7 +1744,7 @@ static void apply_overwrite_only(int idx, int32_t secs) {
 
 static void apply_overwrite_start(int idx, int32_t secs) {
   if (idx < 0 || idx >= s_count) { return; }
-  if (secs < 10) { secs = 10; }
+  if (secs < 0) { secs = 0; }
   Timer *t = &s_timers[idx];
   t->duration = secs;
   t->remaining = secs;
@@ -1392,8 +1759,8 @@ static void apply_overwrite_start(int idx, int32_t secs) {
 }
 
 // "+ New timer" action: create an unnamed IDLE draft timer (default 1:00) held in
-// RAM only (not persisted, not sent to the phone) and open its menu. The draft is
-// committed by Start/Save actions, or discarded on BACK.
+// RAM only (not persisted, not sent to the phone) and open the time dial first.
+// The draft is committed by Start/Save actions, or discarded on BACK.
 static void create_new_timer(void) {
   if (s_count >= MAX_TIMERS) { return; }   // list full: no-op
   int idx = s_count;
@@ -1409,7 +1776,30 @@ static void create_new_timer(void) {
   s_count++;
   s_new_timer_idx = idx;
   reload_ui();
-  open_detail_window(idx, DSTYLE_LONG_NEW);
+  open_dial_window(idx, DSTYLE_LONG_NEW);
+}
+
+static void empty_hint_update_proc(Layer *layer, GContext *gctx) {
+  if (s_count != 0) { return; }
+  GRect b = layer_get_bounds(layer);
+  if (b.size.h <= 32) { return; }
+  const GFont f = fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD);
+  const char *msg =
+    "Configure timers by\n"
+    "- \"+ New timer\",\n"
+    "- the phone, or\n"
+    "- touch";
+  GRect area = GRect(8, 32, b.size.w - 16, b.size.h - 32);
+  GSize sz = graphics_text_layout_get_content_size(
+    msg, f, GRect(0, 0, area.size.w, 200), GTextOverflowModeWordWrap, GTextAlignmentLeft);
+  int w = sz.w;
+  if (w > area.size.w) { w = area.size.w; }
+  int x = area.origin.x + (area.size.w - w) / 2;
+  int y = area.origin.y + (area.size.h - sz.h) / 2;
+  if (y < area.origin.y) { y = area.origin.y; }
+  GRect hint = GRect(x, y, w, sz.h);
+  graphics_context_set_text_color(gctx, GColorBlack);
+  graphics_draw_text(gctx, msg, f, hint, GTextOverflowModeWordWrap, GTextAlignmentLeft, NULL);
 }
 
 // ---- window ----
@@ -1426,8 +1816,27 @@ static void window_load(Window *w) {
   });
   menu_layer_set_click_config_onto_window(s_menu, w);
   layer_add_child(root, menu_layer_get_layer(s_menu));
+  s_empty_hint_layer = layer_create(bounds);
+  layer_set_update_proc(s_empty_hint_layer, empty_hint_update_proc);
+  layer_add_child(root, s_empty_hint_layer);
+  menu_layer_set_selected_index(s_menu, (MenuIndex){ .section = 0, .row = (s_count == 0 ? 0 : 0) }, MenuRowAlignTop, false);
 }
-static void window_unload(Window *w) { menu_layer_destroy(s_menu); s_menu = NULL; }
+static void window_unload(Window *w) {
+  if (s_empty_hint_layer) { layer_destroy(s_empty_hint_layer); s_empty_hint_layer = NULL; }
+  menu_layer_destroy(s_menu); s_menu = NULL;
+}
+
+static void main_appear(Window *w) {
+  idle_appear(w);
+  dial_touch_create(window_get_root_layer(w), main_touch_selected);
+  dial_touch_enable(true);
+}
+
+static void main_disappear(Window *w) {
+  idle_disappear(w);
+  dial_touch_enable(false);
+  dial_touch_destroy();
+}
 
 static void init(void) {
   s_app_launch_s = now_s();
@@ -1469,7 +1878,7 @@ static void init(void) {
 
   s_window = window_create();
   window_set_window_handlers(s_window, (WindowHandlers){ .load = window_load, .unload = window_unload,
-    .appear = idle_appear, .disappear = idle_disappear });
+    .appear = main_appear, .disappear = main_disappear });
   window_stack_push(s_window, true);
   rebuild_order();
   ensure_ticking();
@@ -1496,6 +1905,8 @@ static void deinit(void) {
   if (s_confirm_window) { window_destroy(s_confirm_window); }
   if (s_save_window) { window_destroy(s_save_window); }
   if (s_del_window) { window_destroy(s_del_window); }
+  if (s_dial_window) { window_destroy(s_dial_window); }
+  if (s_detail_window) { window_destroy(s_detail_window); }
   window_destroy(s_window);
 }
 
