@@ -253,12 +253,14 @@ static void format_unnamed_running_label(int idx, char *buf, size_t n) {
   if (d >= 3600) {
     int h = d / 3600;
     int m = (d % 3600) / 60;
-    int s = d % 60;
-    snprintf(buf, n, "%d:%02d:%02d", h, m, s); // h:mm:ss (no leading zero hour)
+    if (m > 0) { snprintf(buf, n, "%dh%dm", h, m); }
+    else { snprintf(buf, n, "%dh", h); }
   } else {
     int m = d / 60;
     int s = d % 60;
-    snprintf(buf, n, "%d:%02d", m, s); // m:ss (no leading zero minute)
+    if (m > 0 && s > 0) { snprintf(buf, n, "%dm%ds", m, s); }
+    else if (m > 0) { snprintf(buf, n, "%dm", m); }
+    else { snprintf(buf, n, "%ds", s); }
   }
   int stars = s_unnamed_star[idx];
   while (stars > 0) {
