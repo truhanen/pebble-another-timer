@@ -220,7 +220,28 @@ static void persist_all(void) {
   store_save_ephemeral_mask(mask);
 }
 
-static void rebuild_order(void) { tc_display_order(s_timers, s_count, s_sort, now_s(), s_order, s_running_first); }
+static void rebuild_order(void) {
+  tc_display_order(s_timers, s_count, s_sort, now_s(), s_order, s_running_first);
+  // For unnamed timers with identical durations, keep creation order (fewer '*' first).
+  for (int i = 1; i < s_count; i++) {
+    int key = s_order[i];
+    if (s_timers[key].name[0] != 0) { continue; }
+    int key_d = s_timers[key].duration;
+    int key_s = s_unnamed_star[key];
+    if (key_s < 0) { continue; }
+    int j = i - 1;
+    while (j >= 0) {
+      int cur = s_order[j];
+      if (s_timers[cur].name[0] != 0) { break; }
+      if (s_timers[cur].duration != key_d) { break; }
+      int cur_s = s_unnamed_star[cur];
+      if (cur_s < 0 || cur_s <= key_s) { break; }
+      s_order[j + 1] = cur;
+      j--;
+    }
+    s_order[j + 1] = key;
+  }
+}
 
 static void reload_ui(void) {
   rebuild_order();
@@ -238,6 +259,17 @@ static int next_unnamed_star(int32_t duration) {
   return m + 1;
 }
 
+static int next_unnamed_star_excluding(int32_t duration, int exclude_idx) {
+  int m = -1;
+  for (int i = 0; i < s_count; i++) {
+    if (i == exclude_idx) { continue; }
+    if (s_timers[i].name[0] != 0) { continue; }
+    if (s_timers[i].duration != duration) { continue; }
+    if (s_unnamed_star[i] > m) { m = s_unnamed_star[i]; }
+  }
+  return m + 1;
+}
+
 static void ensure_unnamed_star(int idx) {
   if (idx < 0 || idx >= s_count) { return; }
   Timer *t = &s_timers[idx];
@@ -246,9 +278,14 @@ static void ensure_unnamed_star(int idx) {
   s_unnamed_star[idx] = next_unnamed_star(t->duration);
 }
 
-static void format_unnamed_running_label(int idx, char *buf, size_t n) {
-  Timer *t = &s_timers[idx];
-  int32_t d = t->duration;
+static void assign_unnamed_star_for_duration(int idx, int32_t duration) {
+  if (idx < 0 || idx >= s_count) { return; }
+  if (s_timers[idx].name[0] != 0) { s_unnamed_star[idx] = -1; return; }
+  s_unnamed_star[idx] = next_unnamed_star_excluding(duration, idx);
+}
+
+static void format_unnamed_label_for_duration(int32_t duration, int stars, char *buf, size_t n) {
+  int32_t d = duration;
   if (d < 0) { d = 0; }
   if (d >= 3600) {
     int h = d / 3600;
@@ -262,7 +299,6 @@ static void format_unnamed_running_label(int idx, char *buf, size_t n) {
     else if (m > 0) { snprintf(buf, n, "%dm", m); }
     else { snprintf(buf, n, "%ds", s); }
   }
-  int stars = s_unnamed_star[idx];
   while (stars > 0) {
     size_t len = strlen(buf);
     if (len + 1 >= n) { break; }
@@ -270,6 +306,11 @@ static void format_unnamed_running_label(int idx, char *buf, size_t n) {
     buf[len + 1] = '\0';
     stars--;
   }
+}
+
+static void format_unnamed_running_label(int idx, char *buf, size_t n) {
+  Timer *t = &s_timers[idx];
+  format_unnamed_label_for_duration(t->duration, s_unnamed_star[idx], buf, n);
 }
 
 static void ensure_ticking(void);   // defined below; used by start/alarm handlers
@@ -886,6 +927,16 @@ static void dl_draw_header(GContext *gctx, const Layer *cell, uint16_t section, 
       GTextOverflowModeTrailingEllipsis, GTextAlignmentRight, NULL);
     return;
   }
+  if (s_detail_style == DSTYLE_LONG_NEW && t->name[0] == 0) {
+    char lbl[24];
+    int stars = next_unnamed_star_excluding(s_detail_edit_secs, s_detail_idx);
+    format_unnamed_label_for_duration(s_detail_edit_secs, stars, lbl, sizeof(lbl));
+    graphics_draw_text(gctx, lbl, f, GRect(4, 3, b.size.w - 92, 26),
+      GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
+    graphics_draw_text(gctx, rem_head, f, GRect(4, 3, b.size.w - 8, 26),
+      GTextOverflowModeTrailingEllipsis, GTextAlignmentRight, NULL);
+    return;
+  }
   if (t->name[0]) {
     graphics_draw_text(gctx, t->name, f, GRect(4, 3, b.size.w - 92, 26),
       GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
@@ -1017,7 +1068,7 @@ static void dl_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
       t->custom = true;
       s_ephemeral[idx] = true;
       start_with_secs(t, launch_adjust_start_secs(s_detail_edit_secs));
-      ensure_unnamed_star(idx);
+      assign_unnamed_star_for_duration(idx, t->duration);
       s_new_timer_idx = -1;
       bool fired = finish_start_tail();
       if (fired) { return; }
@@ -1037,7 +1088,7 @@ static void dl_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
       t->custom = true;
       s_ephemeral[idx] = false;
       start_with_secs(t, launch_adjust_start_secs(s_detail_edit_secs));
-      ensure_unnamed_star(idx);
+      assign_unnamed_star_for_duration(idx, t->duration);
       s_new_timer_idx = -1;
       bool fired = finish_start_tail();
       send_add_timer(s_detail_edit_secs);
@@ -1059,6 +1110,7 @@ static void dl_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
       t->end_time = 0;
       t->custom = true;
       s_ephemeral[idx] = false;
+      assign_unnamed_star_for_duration(idx, t->duration);
       s_new_timer_idx = -1;
       persist_all(); rearm_wakeup(); reload_ui();
       send_add_timer(s_detail_edit_secs);
@@ -1697,9 +1749,9 @@ static void start_as_new(int32_t secs, bool save_to_phone) {
   t->custom = true;
   s_ephemeral[idx] = !save_to_phone;
   s_unnamed_star[idx] = -1;
-  start_with_secs(t, launch_adjust_start_secs(secs));
-  ensure_unnamed_star(idx);
   s_count++;
+  assign_unnamed_star_for_duration(idx, t->duration);
+  start_with_secs(t, launch_adjust_start_secs(secs));
   bool fired = finish_start_tail();
   if (save_to_phone) { send_add_timer(secs); }
   if (fired) { return; }
@@ -1725,6 +1777,7 @@ static void save_as_new_only(int32_t secs) {
   s_ephemeral[idx] = false;
   s_unnamed_star[idx] = -1;
   s_count++;
+  assign_unnamed_star_for_duration(idx, t->duration);
   persist_all(); rearm_wakeup(); reload_ui();
   send_add_timer(secs);
   window_stack_remove(s_detail_window, true);
@@ -1738,6 +1791,7 @@ static void apply_overwrite_only(int idx, int32_t secs) {
   if (t->state == TS_IDLE) { t->remaining = secs; }
   if (t->state == TS_DONE) { t->remaining = 0; }
   t->last_used = now_s();
+  assign_unnamed_star_for_duration(idx, t->duration);
   s_ephemeral[idx] = false;
   persist_all(); rearm_wakeup(); reload_ui();
   send_update_timer(idx, secs);
@@ -1751,7 +1805,7 @@ static void apply_overwrite_start(int idx, int32_t secs) {
   t->duration = secs;
   t->remaining = secs;
   start_with_secs(t, launch_adjust_start_secs(secs));
-  ensure_unnamed_star(idx);
+  assign_unnamed_star_for_duration(idx, t->duration);
   s_ephemeral[idx] = false;
   bool fired = finish_start_tail();
   send_update_timer(idx, secs);
