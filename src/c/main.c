@@ -9,6 +9,8 @@
 static Window *s_window;
 static MenuLayer *s_menu;
 static Layer    *s_empty_hint_layer;
+static int16_t   s_menu_selected_timer_idx = -1; // logical timer index selected in list (-1 => + New timer)
+static bool      s_menu_internal_selection = false; // guards re-entrant selection callback during reselect
 static AppTimer *s_tick;
 
 // Full-screen alarm shown when a timer reaches zero.
@@ -99,6 +101,23 @@ static int32_t launch_adjust_start_secs(int32_t base) {
   int32_t adjusted = base - launch_elapsed_s();
   if (adjusted < 1) { adjusted = 1; }
   return adjusted;
+}
+
+static bool launch_sync_applies_for_timer(const Timer *t) {
+  if (!s_launch_sync || s_app_launch_s <= 0) { return false; }
+  if (!t) { return true; }
+  // If this paused timer was paused during the current app run, don't apply
+  // launch-sync again until the app has been relaunched.
+  if (t->state == TS_PAUSED && t->last_used >= s_app_launch_s) { return false; }
+  return true;
+}
+
+static int32_t launch_adjust_start_secs_for_timer(const Timer *t, int32_t base) {
+  if (!launch_sync_applies_for_timer(t)) {
+    if (base < 1) { base = 1; }
+    return base;
+  }
+  return launch_adjust_start_secs(base);
 }
 
 static void format_launch_sync_suffix(char *buf, size_t n) {
@@ -322,6 +341,8 @@ static void open_delete_confirm(void);                              // defined b
 static void remove_timer_at(int idx); // defined below; used by alarm stop/delete paths
 static int sweep_expiries(void); // defined below; used by tick/start helpers
 static void trigger_alarm(int idx, int count); // defined below; alarm UI path
+static int ml_row_for_timer_primary(int timer_idx, int selected_idx); // defined below; list row mapping
+static int ml_row_for_new(int selected_idx); // defined below; list row mapping for trailing + New timer row
 
 static void start_with_secs(Timer *t, int32_t secs) {
   tc_extend(t, secs, now_s());  // secs may be <=0 (immediate expiry on next sweep/check)
@@ -574,13 +595,11 @@ static void ensure_ticking(void) {
 // LIST cursor to follow it to its new row so the user needn't scroll to it.
 static void select_timer_row(int idx) {
   if (!s_menu) { return; }
-  for (int row = 0; row < s_count; row++) {
-    if (s_order[row] == idx) {
-      menu_layer_set_selected_index(s_menu, (MenuIndex){ .section = 0, .row = (uint16_t)row },
-                                    MenuRowAlignTop, false);
-      return;
-    }
-  }
+  s_menu_selected_timer_idx = (int16_t)idx;
+  int row = ml_row_for_timer_primary(idx, s_menu_selected_timer_idx);
+  if (row < 0) { return; }
+  menu_layer_set_selected_index(s_menu, (MenuIndex){ .section = 0, .row = (uint16_t)row },
+                                MenuRowAlignTop, false);
 }
 
 static int dl_clamp_step(int v, int min, int max, int delta) {
@@ -883,7 +902,11 @@ static const char *dl_legacy_action_label(DetailAction a) {
   switch (a) {
     case DACT_STOP:       return "Stop";
     case DACT_PAUSE:      return "Pause";
-    case DACT_START:      return "Start";
+    case DACT_START:
+      if (s_detail_idx >= 0 && s_detail_idx < s_count && s_timers[s_detail_idx].state == TS_PAUSED) {
+        return "Continue";
+      }
+      return "Start";
     case DACT_SAVE_START: return "Run & save";
     case DACT_PLUS:       return "+1 min";
     case DACT_MINUS:      return "-1 min";
@@ -998,14 +1021,15 @@ static void dl_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
         tc_pause(t, now_s());
         persist_all(); rearm_wakeup(); ensure_ticking();
         reload_ui();
-        if (s_auto_return) { close_to_watchface(); }
-        else { menu_layer_reload_data(s_detail_menu); }
+        select_timer_row(idx);
+        window_stack_remove(s_detail_window, true);
         break;
       case DACT_START:
         {
+        bool was_paused = (t->state == TS_PAUSED);
         int32_t base = t->remaining;
         if (base < 1) { base = t->duration; }
-        start_with_secs(t, launch_adjust_start_secs(base));
+        start_with_secs(t, launch_adjust_start_secs_for_timer(t, base));
         ensure_unnamed_star(idx);
         if (idx == s_new_timer_idx) {
           send_add_timer(t->duration);
@@ -1013,7 +1037,8 @@ static void dl_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
         }
         bool fired = finish_start_tail();
         if (fired) { break; }
-        if (s_auto_return) { show_start_confirmation(idx); }
+        if (was_paused) { window_stack_remove(s_detail_window, true); }
+        else if (s_auto_return) { show_start_confirmation(idx); }
         else { menu_layer_reload_data(s_detail_menu); }
         break;
         }
@@ -1380,22 +1405,129 @@ static void main_touch_selected(uint8_t hours, uint8_t minutes, uint8_t seconds)
 }
 
 // ---- MenuLayer callbacks ----
-static bool ml_is_new_row(uint16_t row) {
-  return row == (uint16_t)s_count;
+typedef enum {
+  ML_ROW_TIMER_PRIMARY = 0,
+  ML_ROW_TIMER_DETAIL,
+  ML_ROW_NEW
+} MlRowKind;
+
+typedef struct {
+  MlRowKind kind;
+  int timer_idx; // valid for TIMER_* rows
+} MlRowInfo;
+
+static bool ml_timer_shows_detail(int idx, int selected_idx) {
+  if (idx < 0 || idx >= s_count) { return false; }
+  TimerState st = s_timers[idx].state;
+  if (st == TS_RUNNING || st == TS_PAUSED) { return true; }
+  return idx == selected_idx; // selected stopped timer
 }
+
+static bool ml_row_info_for(uint16_t row, int selected_idx, MlRowInfo *out) {
+  uint16_t v = 0;
+  for (int i = 0; i < s_count; i++) {
+    int idx = s_order[i];
+    if (v == row) { out->kind = ML_ROW_TIMER_PRIMARY; out->timer_idx = idx; return true; }
+    v++;
+    if (ml_timer_shows_detail(idx, selected_idx)) {
+      if (v == row) { out->kind = ML_ROW_TIMER_DETAIL; out->timer_idx = idx; return true; }
+      v++;
+    }
+  }
+  if (v == row) { out->kind = ML_ROW_NEW; out->timer_idx = -1; return true; }
+  return false;
+}
+
+static int ml_row_for_timer_primary(int timer_idx, int selected_idx) {
+  int v = 0;
+  for (int i = 0; i < s_count; i++) {
+    int idx = s_order[i];
+    if (idx == timer_idx) { return v; }
+    v++;
+    if (ml_timer_shows_detail(idx, selected_idx)) { v++; }
+  }
+  return -1;
+}
+
+static int ml_order_pos_for_timer(int timer_idx) {
+  for (int i = 0; i < s_count; i++) {
+    if (s_order[i] == timer_idx) { return i; }
+  }
+  return -1;
+}
+
+static int ml_row_for_new(int selected_idx) {
+  int v = 0;
+  for (int i = 0; i < s_count; i++) {
+    int idx = s_order[i];
+    v++;
+    if (ml_timer_shows_detail(idx, selected_idx)) { v++; }
+  }
+  return v;
+}
+
+static void ml_row_colors(const Timer *t, bool selected, GColor *bg, GColor *fg) {
+  if (selected) {
+    *fg = GColorWhite;
+    switch (t->state) {
+      case TS_RUNNING: *bg = PBL_IF_COLOR_ELSE(GColorDarkGreen, GColorBlack); break;
+      case TS_PAUSED:  *bg = PBL_IF_COLOR_ELSE(GColorArmyGreen, GColorBlack); break;
+      case TS_DONE:    *bg = PBL_IF_COLOR_ELSE(GColorDarkCandyAppleRed, GColorBlack); break;
+      default:         *bg = GColorBlack; break;   // TS_IDLE
+    }
+  } else {
+    *fg = GColorBlack;
+    switch (t->state) {
+      case TS_RUNNING: *bg = PBL_IF_COLOR_ELSE(GColorMediumSpringGreen, GColorWhite); break;
+      case TS_PAUSED:  *bg = PBL_IF_COLOR_ELSE(GColorYellow, GColorWhite); break;
+      case TS_DONE:    *bg = PBL_IF_COLOR_ELSE(GColorSunsetOrange, GColorWhite); break;
+      default:         *bg = GColorWhite; break;   // TS_IDLE
+    }
+  }
+}
+
+static void ml_draw_state_icon(GContext *gctx, int x, int y, TimerState st, GColor color) {
+  graphics_context_set_fill_color(gctx, color);
+  if (st == TS_PAUSED) {
+    graphics_fill_rect(gctx, GRect(x, y, 3, 12), 0, GCornerNone);
+    graphics_fill_rect(gctx, GRect(x + 5, y, 3, 12), 0, GCornerNone);
+    return;
+  }
+  if (st == TS_RUNNING) {
+    const int h = 12;
+    const int w = 10;
+    for (int row = 0; row < h; row++) {
+      int d = (row <= (h / 2)) ? ((h / 2) - row) : (row - (h / 2));
+      int span = w - (d * w) / (h / 2 + 1);
+      if (span < 1) { span = 1; }
+      graphics_fill_rect(gctx, GRect(x, y + row, span, 1), 0, GCornerNone);
+    }
+    return;
+  }
+  // Stopped: simple square.
+  graphics_fill_rect(gctx, GRect(x, y + 1, 10, 10), 0, GCornerNone);
+}
+
 static uint16_t ml_num_rows(MenuLayer *ml, uint16_t section, void *ctx) {
-  // timers + trailing "New timer"
-  return s_count + 1;
+  uint16_t rows = (uint16_t)(s_count + 1); // primary rows + trailing "New timer"
+  for (int i = 0; i < s_count; i++) {
+    if (ml_timer_shows_detail(s_order[i], s_menu_selected_timer_idx)) { rows++; }
+  }
+  return rows;
 }
+
 static int16_t ml_cell_height(MenuLayer *ml, MenuIndex *ci, void *ctx) {
-  return 32; // timer rows + "New timer" row
+  MlRowInfo info;
+  if (!ml_row_info_for(ci->row, s_menu_selected_timer_idx, &info)) { return 32; }
+  return (info.kind == ML_ROW_TIMER_DETAIL) ? 28 : 32;
 }
 
 static void ml_draw_row(GContext *gctx, const Layer *cell, MenuIndex *ci, void *ctx) {
-  if (ml_is_new_row(ci->row)) {
+  MlRowInfo info;
+  if (!ml_row_info_for(ci->row, s_menu_selected_timer_idx, &info)) { return; }
+  if (info.kind == ML_ROW_NEW) {
     GRect b = layer_get_bounds(cell);
-    MenuIndex sel = menu_layer_get_selected_index(s_menu);
-    bool selected = (menu_index_compare(&sel, ci) == 0);
+    bool selected = (s_menu_selected_timer_idx == -1);
     graphics_context_set_fill_color(gctx, selected ? GColorBlack : GColorWhite);
     graphics_fill_rect(gctx, b, 0, GCornerNone);
     graphics_context_set_text_color(gctx, selected ? GColorWhite : GColorBlack);
@@ -1404,36 +1536,54 @@ static void ml_draw_row(GContext *gctx, const Layer *cell, MenuIndex *ci, void *
       GTextOverflowModeFill, GTextAlignmentCenter, NULL);
     return;
   }
-  int idx = s_order[ci->row];
-  Timer *t = &s_timers[idx];
+  Timer *t = &s_timers[info.timer_idx];
   // Tint each row by state so running/paused/done stand out at a glance (color
   // displays only; b&w falls back to the standard white/black look). The selected
   // row uses a DARK shade of the same hue + white text so it still reads as the
   // cursor AND keeps its state colour; idle selected stays the plain black highlight.
-  MenuIndex sel = menu_layer_get_selected_index(s_menu);
-  bool selected = (menu_index_compare(&sel, ci) == 0);
+  bool selected = (s_menu_selected_timer_idx == info.timer_idx);
   GColor bg, fg;
-  if (selected) {
-    fg = GColorWhite;
-    switch (t->state) {
-      case TS_RUNNING: bg = PBL_IF_COLOR_ELSE(GColorDarkGreen, GColorBlack); break;
-      case TS_PAUSED:  bg = PBL_IF_COLOR_ELSE(GColorArmyGreen, GColorBlack); break;
-      case TS_DONE:    bg = PBL_IF_COLOR_ELSE(GColorDarkCandyAppleRed, GColorBlack); break;
-      default:         bg = GColorBlack; break;   // TS_IDLE -> standard highlight
-    }
-  } else {
-    fg = GColorBlack;
-    switch (t->state) {
-      case TS_RUNNING: bg = PBL_IF_COLOR_ELSE(GColorMediumSpringGreen, GColorWhite); break;
-      case TS_PAUSED:  bg = PBL_IF_COLOR_ELSE(GColorYellow, GColorWhite); break;
-      case TS_DONE:    bg = PBL_IF_COLOR_ELSE(GColorSunsetOrange, GColorWhite); break;
-      default:         bg = GColorWhite; break;   // TS_IDLE
-    }
-  }
+  ml_row_colors(t, selected, &bg, &fg);
   graphics_context_set_fill_color(gctx, bg);
   graphics_fill_rect(gctx, layer_get_bounds(cell), 0, GCornerNone);
   graphics_context_set_text_color(gctx, fg);
   GRect b = layer_get_bounds(cell);
+  if (info.kind == ML_ROW_TIMER_DETAIL) {
+    bool small = (b.size.w <= 144);
+    bool running = (t->state == TS_RUNNING);
+    bool stopped = (t->state != TS_RUNNING && t->state != TS_PAUSED);
+    GFont f = fonts_get_system_font(
+      small
+        ? (running ? FONT_KEY_GOTHIC_18_BOLD : FONT_KEY_GOTHIC_18)
+        : (running ? FONT_KEY_GOTHIC_24_BOLD : FONT_KEY_GOTHIC_24)
+    );
+    int th = small ? 22 : 28;
+    int ty = (b.size.h - th) / 2 - 3;
+    char rem[24];
+    int32_t detail_secs = stopped ? t->duration : tc_remaining_now(t, now_s());
+    tc_format_fixed(rem, sizeof(rem), detail_secs);
+    char rem_display[56];
+    snprintf(rem_display, sizeof(rem_display), "%s", rem);
+    if (!running && launch_sync_applies_for_timer(t)) {
+      char sync[16];
+      format_launch_sync_suffix(sync, sizeof(sync));
+      size_t len = strlen(rem_display);
+      if (len + 1 < sizeof(rem_display)) {
+        rem_display[len++] = ' ';
+        rem_display[len] = '\0';
+      }
+      strncat(rem_display, sync, sizeof(rem_display) - strlen(rem_display) - 1);
+    }
+    size_t len = strlen(rem_display);
+    if (len + 1 < sizeof(rem_display)) {
+      rem_display[len++] = ' ';
+      rem_display[len] = '\0';
+    }
+    strncat(rem_display, "remaining", sizeof(rem_display) - strlen(rem_display) - 1);
+    graphics_draw_text(gctx, rem_display, f, GRect(4, ty, b.size.w - 8, th),
+      GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
+    return;
+  }
   // Single line: fixed-width HH:MM:SS time first (bold) so the column aligns and is
   // easy to compare, then the description. State is conveyed by the row tint. On
   // smaller (144px) displays use a smaller font so the description fits.
@@ -1442,33 +1592,28 @@ static void ml_draw_row(GContext *gctx, const Layer *cell, MenuIndex *ci, void *
   GFont nf = fonts_get_system_font(small ? FONT_KEY_GOTHIC_18 : FONT_KEY_GOTHIC_24);
   int th = small ? 22 : 28;
   int ty = (b.size.h - th) / 2;
-  char rem[16]; tc_format_fixed(rem, sizeof(rem), tc_remaining_now(t, now_s()));
-  graphics_draw_text(gctx, rem, tf, GRect(4, ty, b.size.w - 8, th),
+  int icon_x = 4;
+  int icon_y = ty + (th - 12) / 2 + 3;
+  ml_draw_state_icon(gctx, icon_x, icon_y, t->state, fg);
+  int time_x = icon_x + 16;
+  bool show_full_duration = (t->state == TS_RUNNING) || (selected && t->state == TS_PAUSED);
+  int32_t primary_secs = show_full_duration ? t->duration : tc_remaining_now(t, now_s());
+  char rem[16]; tc_format_fixed(rem, sizeof(rem), primary_secs);
+  graphics_draw_text(gctx, rem, tf, GRect(time_x, ty, b.size.w - time_x - 4, th),
     GTextOverflowModeFill, GTextAlignmentLeft, NULL);
   // Start the description just after the time text (the fixed format renders a
   // constant width) with a small gap — much tighter than the old 96px column.
   GSize tw = graphics_text_layout_get_content_size(rem, tf,
     GRect(0, 0, b.size.w, th), GTextOverflowModeFill, GTextAlignmentLeft);
-  int desc_x = 4 + tw.w + 8;
-  char sync[16]; sync[0] = '\0';
-  bool show_sync = selected && s_launch_sync && t->state != TS_RUNNING;
-  if (show_sync) { format_launch_sync_suffix(sync, sizeof(sync)); }
-  if (show_sync) {
-    graphics_draw_text(gctx, sync, nf,
-      GRect(desc_x, ty, b.size.w - 4 - desc_x, th),
-      GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
-    GSize sw = graphics_text_layout_get_content_size(sync, nf,
-      GRect(0, 0, b.size.w, th), GTextOverflowModeFill, GTextAlignmentLeft);
-    desc_x += sw.w + 6;
-  }
+  int desc_x = time_x + tw.w + 4;
   if (t->name[0]) {
     graphics_draw_text(gctx, t->name, nf,
       GRect(desc_x, ty, b.size.w - 4 - desc_x, th),
       GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
   } else {
-    ensure_unnamed_star(idx);
+    ensure_unnamed_star(info.timer_idx);
     char lbl[24];
-    format_unnamed_running_label(idx, lbl, sizeof(lbl));
+    format_unnamed_running_label(info.timer_idx, lbl, sizeof(lbl));
     graphics_draw_text(gctx, lbl, nf,
       GRect(desc_x, ty, b.size.w - 4 - desc_x, th),
       GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
@@ -1542,10 +1687,25 @@ static void show_start_confirmation(int idx) {
   s_confirm_timer = app_timer_register(1100, confirm_timer_cb, NULL);
 }
 
+static bool ml_resolve_selected_target(uint16_t row, int *out_idx, bool *out_new_row) {
+  MlRowInfo info;
+  if (!ml_row_info_for(row, s_menu_selected_timer_idx, &info)) { return false; }
+  if (info.kind == ML_ROW_NEW) {
+    if (out_new_row) { *out_new_row = true; }
+    if (out_idx) { *out_idx = -1; }
+    return true;
+  }
+  if (out_new_row) { *out_new_row = false; }
+  if (out_idx) { *out_idx = info.timer_idx; }
+  return true;
+}
+
 static void ml_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
   idle_reset();
-  if (ml_is_new_row(ci->row)) { create_new_timer(); return; }
-  int idx = s_order[ci->row];
+  int idx = -1;
+  bool is_new = false;
+  if (!ml_resolve_selected_target(ci->row, &idx, &is_new)) { return; }
+  if (is_new) { create_new_timer(); return; }
   // An unstarted (idle) timer has only one useful action — skip the menu, just start.
   if (s_timers[idx].state == TS_IDLE) {
     int32_t base = s_timers[idx].remaining;
@@ -1566,9 +1726,63 @@ static void ml_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
 // idle timer directly). The long-press menu contains the edit/save/delete flow.
 static void ml_select_long(MenuLayer *ml, MenuIndex *ci, void *ctx) {
   idle_reset();
-  if (ml_is_new_row(ci->row)) { return; }   // no dedicated long-press action for "+ New timer"
-  if (s_count == 0) { return; }
-  open_dial_window(s_order[ci->row], DSTYLE_LONG_EXISTING);
+  int idx = -1;
+  bool is_new = false;
+  if (!ml_resolve_selected_target(ci->row, &idx, &is_new) || is_new) { return; }
+  open_dial_window(idx, DSTYLE_LONG_EXISTING);
+}
+
+static void ml_selection_changed(MenuLayer *ml, MenuIndex new_i, MenuIndex old_i, void *ctx) {
+  (void)old_i;
+  if (s_menu_internal_selection) { return; }
+  MlRowInfo new_info;
+  if (!ml_row_info_for(new_i.row, s_menu_selected_timer_idx, &new_info)) { return; }
+
+  int16_t prev_selected = s_menu_selected_timer_idx;
+
+  int16_t next_selected = -1;
+  bool moving_down = (new_i.row > old_i.row);
+  bool moving_up = (new_i.row < old_i.row);
+
+  if (new_info.kind == ML_ROW_NEW) {
+    next_selected = -1;
+  } else if (new_info.kind == ML_ROW_TIMER_DETAIL && new_info.timer_idx == prev_selected) {
+    // Skip selecting the detail row itself: jump to adjacent logical item.
+    int pos = ml_order_pos_for_timer(prev_selected);
+    if (moving_down) {
+      if (pos >= 0 && pos + 1 < s_count) { next_selected = (int16_t)s_order[pos + 1]; }
+      else { next_selected = -1; }
+    } else if (moving_up) {
+      if (pos > 0) { next_selected = (int16_t)s_order[pos - 1]; }
+      else { next_selected = (int16_t)prev_selected; }
+    } else {
+      next_selected = (int16_t)new_info.timer_idx;
+    }
+  } else {
+    next_selected = (int16_t)new_info.timer_idx;
+  }
+
+  s_menu_selected_timer_idx = next_selected;
+  int target_row = (s_menu_selected_timer_idx == -1)
+    ? ml_row_for_new(s_menu_selected_timer_idx)
+    : ml_row_for_timer_primary(s_menu_selected_timer_idx, s_menu_selected_timer_idx);
+  bool logical_changed = (s_menu_selected_timer_idx != prev_selected);
+  bool cursor_needs_reanchor = (target_row >= 0 && (int)new_i.row != target_row);
+  if (!logical_changed && !cursor_needs_reanchor) {
+    if (s_empty_hint_layer) { layer_mark_dirty(s_empty_hint_layer); }
+    return;
+  }
+  if (s_menu) {
+    s_menu_internal_selection = true;
+    if (target_row >= 0) {
+      menu_layer_set_selected_index(s_menu, (MenuIndex){ .section = 0, .row = (uint16_t)target_row }, MenuRowAlignTop, false);
+    }
+    if (logical_changed) {
+      menu_layer_reload_data(s_menu);
+    }
+    s_menu_internal_selection = false;
+  }
+  if (s_empty_hint_layer) { layer_mark_dirty(s_empty_hint_layer); }
 }
 
 // ---- AppMessage inbox: a TimerConfig string + SortOrder int -> reconcile ----
@@ -1732,6 +1946,8 @@ static void remove_timer_at(int idx) {
   // s_new_timer_idx pointing at the wrong row).
   if (idx == s_new_timer_idx) { s_new_timer_idx = -1; }
   else if (s_new_timer_idx > idx) { s_new_timer_idx--; }
+  if (idx == s_menu_selected_timer_idx) { s_menu_selected_timer_idx = -1; }
+  else if (s_menu_selected_timer_idx > idx) { s_menu_selected_timer_idx--; }
 }
 
 static void start_as_new(int32_t secs, bool save_to_phone) {
@@ -1751,7 +1967,7 @@ static void start_as_new(int32_t secs, bool save_to_phone) {
   s_unnamed_star[idx] = -1;
   s_count++;
   assign_unnamed_star_for_duration(idx, t->duration);
-  start_with_secs(t, launch_adjust_start_secs(secs));
+  start_with_secs(t, launch_adjust_start_secs_for_timer(t, secs));
   bool fired = finish_start_tail();
   if (save_to_phone) { send_add_timer(secs); }
   if (fired) { return; }
@@ -1804,7 +2020,7 @@ static void apply_overwrite_start(int idx, int32_t secs) {
   Timer *t = &s_timers[idx];
   t->duration = secs;
   t->remaining = secs;
-  start_with_secs(t, launch_adjust_start_secs(secs));
+  start_with_secs(t, launch_adjust_start_secs_for_timer(t, secs));
   assign_unnamed_star_for_duration(idx, t->duration);
   s_ephemeral[idx] = false;
   bool fired = finish_start_tail();
@@ -1860,6 +2076,7 @@ static void empty_hint_update_proc(Layer *layer, GContext *gctx) {
 
 // ---- window ----
 static void window_load(Window *w) {
+  rebuild_order();
   Layer *root = window_get_root_layer(w);
   GRect bounds = layer_get_bounds(root);
   s_menu = menu_layer_create(bounds);
@@ -1869,13 +2086,17 @@ static void window_load(Window *w) {
     .draw_row = ml_draw_row,
     .select_click = ml_select,
     .select_long_click = ml_select_long,
+    .selection_changed = ml_selection_changed,
   });
   menu_layer_set_click_config_onto_window(s_menu, w);
   layer_add_child(root, menu_layer_get_layer(s_menu));
   s_empty_hint_layer = layer_create(bounds);
   layer_set_update_proc(s_empty_hint_layer, empty_hint_update_proc);
   layer_add_child(root, s_empty_hint_layer);
-  menu_layer_set_selected_index(s_menu, (MenuIndex){ .section = 0, .row = (s_count == 0 ? 0 : 0) }, MenuRowAlignTop, false);
+  s_menu_selected_timer_idx = (s_count > 0) ? s_order[0] : -1;
+  s_menu_internal_selection = true;
+  menu_layer_set_selected_index(s_menu, (MenuIndex){ .section = 0, .row = 0 }, MenuRowAlignTop, false);
+  s_menu_internal_selection = false;
 }
 static void window_unload(Window *w) {
   if (s_empty_hint_layer) { layer_destroy(s_empty_hint_layer); s_empty_hint_layer = NULL; }
