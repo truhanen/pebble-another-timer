@@ -884,7 +884,7 @@ static const char *dl_legacy_action_label(DetailAction a) {
     case DACT_STOP:       return "Stop";
     case DACT_PAUSE:      return "Pause";
     case DACT_START:      return "Start";
-    case DACT_SAVE_START: return "Start & Save";
+    case DACT_SAVE_START: return "Run & save";
     case DACT_PLUS:       return "+1 min";
     case DACT_MINUS:      return "-1 min";
     case DACT_DELETE:     return "Delete";
@@ -959,8 +959,8 @@ static void dl_draw_row(GContext *gctx, const Layer *cell, MenuIndex *ci, void *
     if (ci->row >= s_detail_act_count) { return; }
     label = dl_legacy_action_label(s_detail_acts[ci->row]);
   } else {
-    if (ci->row == 0) { label = "Start unsaved"; }
-    else if (ci->row == 1) { label = "Start & save"; }
+    if (ci->row == 0) { label = "Run"; }
+    else if (ci->row == 1) { label = "Run & save"; }
     else if (ci->row == 2) { label = "Only save"; }
     else if (ci->row == 3 && s_detail_style == DSTYLE_LONG_EXISTING) { label = "Delete timer"; }
     else { return; }
