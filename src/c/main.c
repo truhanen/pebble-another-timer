@@ -324,6 +324,7 @@ static int ml_row_for_new(int selected_idx); // defined below; list row mapping 
 static bool ml_block_for_selection(int selected_idx, int *out_y, int *out_h); // defined below; highlight block
 static bool ml_current_highlight_rect(int *out_y, int *out_h); // defined below; animated/static rect
 static void ml_start_animation(int from_y, int from_h, int to_y, int to_h); // defined below
+static void ml_scroll_item_bounds_into_view(int item_y, int item_h); // defined below
 
 static void start_with_secs(Timer *t, int32_t secs) {
   tc_extend(t, secs, now_s());  // secs may be <=0 (immediate expiry on next sweep/check)
@@ -583,21 +584,21 @@ static void select_timer_row(int idx) {
   s_menu_selected_timer_idx = (int16_t)idx;
   int row = ml_row_for_timer_primary(idx, s_menu_selected_timer_idx);
   if (row < 0) { return; }
+  int to_y = 0, to_h = 0;
+  if (!ml_block_for_selection(s_menu_selected_timer_idx, &to_y, &to_h)) { return; }
   s_menu_internal_selection = true;
   menu_layer_set_selected_index(s_menu, (MenuIndex){ .section = 0, .row = (uint16_t)row },
                                 MenuRowAlignNone, false);
   s_menu_internal_selection = false;
-  int to_y = 0, to_h = 0;
-  if (ml_block_for_selection(s_menu_selected_timer_idx, &to_y, &to_h)) {
-    bool can_animate = (window_stack_get_top_window() == s_window);
-    if (can_animate && has_from) { ml_start_animation(from_y, from_h, to_y, to_h); }
-    else {
-      s_menu_visual_y = (int16_t)to_y;
-      s_menu_visual_h = (int16_t)to_h;
-      s_menu_visual_valid = true;
-    }
+  bool can_animate = (window_stack_get_top_window() == s_window);
+  if (can_animate && has_from) { ml_start_animation(from_y, from_h, to_y, to_h); }
+  else {
+    s_menu_visual_y = (int16_t)to_y;
+    s_menu_visual_h = (int16_t)to_h;
+    s_menu_visual_valid = true;
   }
   menu_layer_reload_data(s_menu);
+  ml_scroll_item_bounds_into_view(to_y, to_h);
 }
 
 static int dl_clamp_step(int v, int min, int max, int delta) {
@@ -1555,6 +1556,28 @@ static void ml_start_animation(int from_y, int from_h, int to_y, int to_h) {
   s_menu_anim_timer = app_timer_register(ML_ANIM_STEP_MS, ml_anim_step, NULL);
 }
 
+static void ml_scroll_item_bounds_into_view(int item_y, int item_h) {
+  if (!s_menu) { return; }
+  ScrollLayer *sl = menu_layer_get_scroll_layer(s_menu);
+  if (!sl) { return; }
+  GPoint off = scroll_layer_get_content_offset(sl);
+  GRect vb = layer_get_bounds(menu_layer_get_layer(s_menu));
+  int vis_top = -off.y;
+  int vis_bottom = vis_top + vb.size.h;
+  int item_bottom = item_y + item_h;
+  int target_top = vis_top;
+  if (item_y < vis_top) { target_top = item_y; }
+  else if (item_bottom > vis_bottom) { target_top = item_bottom - vb.size.h; }
+  else { return; }
+  GSize cs = scroll_layer_get_content_size(sl);
+  int max_top = cs.h - vb.size.h;
+  if (max_top < 0) { max_top = 0; }
+  if (target_top < 0) { target_top = 0; }
+  if (target_top > max_top) { target_top = max_top; }
+  if (target_top == vis_top) { return; }
+  scroll_layer_set_content_offset(sl, GPoint(0, -target_top), false);
+}
+
 static void ml_row_colors(const Timer *t, bool selected, GColor *bg, GColor *fg) {
   if (selected) {
     *fg = GColorWhite;
@@ -1899,20 +1922,24 @@ static void ml_selection_changed(MenuLayer *ml, MenuIndex new_i, MenuIndex old_i
   }
   if (s_menu) {
     s_menu_internal_selection = true;
+    int to_y = 0, to_h = 0;
+    if (target_row >= 0) { ml_block_for_selection(next_selected, &to_y, &to_h); }
     if (target_row >= 0) {
       menu_layer_set_selected_index(s_menu, (MenuIndex){ .section = 0, .row = (uint16_t)target_row }, MenuRowAlignNone, false);
     }
     s_menu_internal_selection = false;
-    int to_y = 0, to_h = 0;
-    if (ml_block_for_selection(next_selected, &to_y, &to_h)) {
+    if (target_row >= 0 && ml_block_for_selection(next_selected, &to_y, &to_h)) {
       if (has_from) { ml_start_animation(from_y, from_h, to_y, to_h); }
       else {
         s_menu_visual_y = (int16_t)to_y;
         s_menu_visual_h = (int16_t)to_h;
         s_menu_visual_valid = true;
       }
+      menu_layer_reload_data(s_menu);
+      ml_scroll_item_bounds_into_view(to_y, to_h);
+    } else {
+      menu_layer_reload_data(s_menu);
     }
-    menu_layer_reload_data(s_menu);
   }
   if (s_empty_hint_layer) { layer_mark_dirty(s_empty_hint_layer); }
 }
