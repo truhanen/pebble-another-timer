@@ -40,7 +40,7 @@ static int64_t   s_alarm_buzz_start_s;
 
 static Timer s_timers[MAX_TIMERS];
 static bool s_ephemeral[MAX_TIMERS];  // true => watch-local "start as new" timer, never phone-synced
-static int8_t s_unnamed_star[MAX_TIMERS]; // unnamed RUNNING timers: duplicate suffix level (0="",1="*",...)
+static int8_t s_unnamed_star[MAX_TIMERS]; // unnamed timers: per-duration creation-order rank for stable sorting
 static int s_count = 0;
 static int s_order[MAX_TIMERS];   // display order, rebuilt on reload per s_sort
 static SortMode s_sort = SORT_MRU;
@@ -308,35 +308,6 @@ static void assign_unnamed_star_for_duration(int idx, int32_t duration) {
   if (idx < 0 || idx >= s_count) { return; }
   if (s_timers[idx].name[0] != 0) { s_unnamed_star[idx] = -1; return; }
   s_unnamed_star[idx] = next_unnamed_star_excluding(duration, idx);
-}
-
-static void format_unnamed_label_for_duration(int32_t duration, int stars, char *buf, size_t n) {
-  int32_t d = duration;
-  if (d < 0) { d = 0; }
-  if (d >= 3600) {
-    int h = d / 3600;
-    int m = (d % 3600) / 60;
-    if (m > 0) { snprintf(buf, n, "%dh%dm", h, m); }
-    else { snprintf(buf, n, "%dh", h); }
-  } else {
-    int m = d / 60;
-    int s = d % 60;
-    if (m > 0 && s > 0) { snprintf(buf, n, "%dm%ds", m, s); }
-    else if (m > 0) { snprintf(buf, n, "%dm", m); }
-    else { snprintf(buf, n, "%ds", s); }
-  }
-  while (stars > 0) {
-    size_t len = strlen(buf);
-    if (len + 1 >= n) { break; }
-    buf[len] = '*';
-    buf[len + 1] = '\0';
-    stars--;
-  }
-}
-
-static void format_unnamed_running_label(int idx, char *buf, size_t n) {
-  Timer *t = &s_timers[idx];
-  format_unnamed_label_for_duration(t->duration, s_unnamed_star[idx], buf, n);
 }
 
 static void ensure_ticking(void);   // defined below; used by start/alarm handlers
@@ -754,11 +725,6 @@ static void dial_update_proc(Layer *layer, GContext *gctx) {
     Timer *t = &s_timers[s_detail_idx];
     if (t->name[0]) {
       snprintf(head_left, sizeof(head_left), "Edit %s", t->name);
-    } else {
-      ensure_unnamed_star(s_detail_idx);
-      char lbl[24];
-      format_unnamed_running_label(s_detail_idx, lbl, sizeof(lbl));
-      snprintf(head_left, sizeof(head_left), "Edit %s", lbl);
     }
   }
   graphics_draw_text(gctx, head_left, hf, GRect(4, 2, b.size.w - 90, 26),
@@ -965,12 +931,7 @@ static void dl_draw_header(GContext *gctx, const Layer *cell, uint16_t section, 
   graphics_context_set_text_color(gctx, GColorBlack);
   if (s_detail_style == DSTYLE_LONG_EXISTING) {
     if (t->name[0]) { snprintf(head, sizeof(head), "Edit %s", t->name); }
-    else {
-      ensure_unnamed_star(s_detail_idx);
-      char lbl[24];
-      format_unnamed_running_label(s_detail_idx, lbl, sizeof(lbl));
-      snprintf(head, sizeof(head), "Edit %s", lbl);
-    }
+    else { snprintf(head, sizeof(head), "Edit"); }
     graphics_draw_text(gctx, head, f, GRect(4, 3, b.size.w - 92, 26),
       GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
     graphics_draw_text(gctx, rem_head, f, GRect(4, 3, b.size.w - 8, 26),
@@ -978,11 +939,6 @@ static void dl_draw_header(GContext *gctx, const Layer *cell, uint16_t section, 
     return;
   }
   if (s_detail_style == DSTYLE_LONG_NEW && t->name[0] == 0) {
-    char lbl[24];
-    int stars = next_unnamed_star_excluding(s_detail_edit_secs, s_detail_idx);
-    format_unnamed_label_for_duration(s_detail_edit_secs, stars, lbl, sizeof(lbl));
-    graphics_draw_text(gctx, lbl, f, GRect(4, 3, b.size.w - 92, 26),
-      GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
     graphics_draw_text(gctx, rem_head, f, GRect(4, 3, b.size.w - 8, 26),
       GTextOverflowModeTrailingEllipsis, GTextAlignmentRight, NULL);
     return;
@@ -993,11 +949,6 @@ static void dl_draw_header(GContext *gctx, const Layer *cell, uint16_t section, 
     graphics_draw_text(gctx, rem_head, f, GRect(4, 3, b.size.w - 8, 26),
       GTextOverflowModeTrailingEllipsis, GTextAlignmentRight, NULL);
   } else {
-    ensure_unnamed_star(s_detail_idx);
-    char lbl[24];
-    format_unnamed_running_label(s_detail_idx, lbl, sizeof(lbl));
-    graphics_draw_text(gctx, lbl, f, GRect(4, 3, b.size.w - 92, 26),
-      GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
     graphics_draw_text(gctx, rem_head, f, GRect(4, 3, b.size.w - 8, 26),
       GTextOverflowModeTrailingEllipsis, GTextAlignmentRight, NULL);
   }
@@ -1768,7 +1719,7 @@ static void ml_draw_row(GContext *gctx, const Layer *cell, MenuIndex *ci, void *
   int icon_y = ty + (th - 12) / 2 + 3;
   ml_draw_state_icon(gctx, icon_x, icon_y, t->state, fg);
   int time_x = icon_x + 16;
-  bool show_full_duration = (t->state == TS_RUNNING) || (selected && t->state == TS_PAUSED);
+  bool show_full_duration = (t->state == TS_RUNNING) || (t->state == TS_PAUSED);
   int32_t primary_secs = show_full_duration ? t->duration : tc_remaining_now(t, now_s());
   char rem[16]; tc_format_fixed(rem, sizeof(rem), primary_secs);
   graphics_draw_text(gctx, rem, tf, GRect(time_x, ty, b.size.w - time_x - 4, th),
@@ -1780,13 +1731,6 @@ static void ml_draw_row(GContext *gctx, const Layer *cell, MenuIndex *ci, void *
   int desc_x = time_x + tw.w + 4;
   if (t->name[0]) {
     graphics_draw_text(gctx, t->name, nf,
-      GRect(desc_x, ty, b.size.w - 4 - desc_x, th),
-      GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
-  } else {
-    ensure_unnamed_star(info.timer_idx);
-    char lbl[24];
-    format_unnamed_running_label(info.timer_idx, lbl, sizeof(lbl));
-    graphics_draw_text(gctx, lbl, nf,
       GRect(desc_x, ty, b.size.w - 4 - desc_x, th),
       GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
   }
