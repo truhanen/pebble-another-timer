@@ -40,5 +40,5 @@ send_emulator_configuration:
 .PHONY: long_press_select_emulator
 long_press_select_emulator:
 	pebble emu-button --emulator emery push select && \
-	sleep 1.0 && \
+	sleep 0.3 && \
 	pebble emu-button --emulator emery release select
