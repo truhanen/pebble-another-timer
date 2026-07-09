@@ -11,6 +11,13 @@ static MenuLayer *s_menu;
 static Layer    *s_empty_hint_layer;
 static int16_t   s_menu_selected_timer_idx = -1; // logical timer index selected in list (-1 => + New timer)
 static bool      s_menu_internal_selection = false; // guards re-entrant selection callback during reselect
+static AppTimer *s_menu_anim_timer = NULL;
+static bool      s_menu_anim_active = false;
+static int16_t   s_menu_anim_from_y = 0, s_menu_anim_to_y = 0, s_menu_anim_cur_y = 0;
+static int16_t   s_menu_anim_from_h = 0, s_menu_anim_to_h = 0, s_menu_anim_cur_h = 0;
+static uint32_t  s_menu_anim_start_ms = 0;
+static int16_t   s_menu_visual_y = 0, s_menu_visual_h = 0;
+static bool      s_menu_visual_valid = false;
 static AppTimer *s_tick;
 
 // Full-screen alarm shown when a timer reaches zero.
@@ -343,6 +350,9 @@ static int sweep_expiries(void); // defined below; used by tick/start helpers
 static void trigger_alarm(int idx, int count); // defined below; alarm UI path
 static int ml_row_for_timer_primary(int timer_idx, int selected_idx); // defined below; list row mapping
 static int ml_row_for_new(int selected_idx); // defined below; list row mapping for trailing + New timer row
+static bool ml_block_for_selection(int selected_idx, int *out_y, int *out_h); // defined below; highlight block
+static bool ml_current_highlight_rect(int *out_y, int *out_h); // defined below; animated/static rect
+static void ml_start_animation(int from_y, int from_h, int to_y, int to_h); // defined below
 
 static void start_with_secs(Timer *t, int32_t secs) {
   tc_extend(t, secs, now_s());  // secs may be <=0 (immediate expiry on next sweep/check)
@@ -595,11 +605,28 @@ static void ensure_ticking(void) {
 // LIST cursor to follow it to its new row so the user needn't scroll to it.
 static void select_timer_row(int idx) {
   if (!s_menu) { return; }
+  int from_y = 0, from_h = 0;
+  bool has_from = s_menu_visual_valid
+    ? (from_y = s_menu_visual_y, from_h = s_menu_visual_h, true)
+    : ml_current_highlight_rect(&from_y, &from_h);
   s_menu_selected_timer_idx = (int16_t)idx;
   int row = ml_row_for_timer_primary(idx, s_menu_selected_timer_idx);
   if (row < 0) { return; }
+  s_menu_internal_selection = true;
   menu_layer_set_selected_index(s_menu, (MenuIndex){ .section = 0, .row = (uint16_t)row },
-                                MenuRowAlignTop, false);
+                                MenuRowAlignNone, false);
+  s_menu_internal_selection = false;
+  int to_y = 0, to_h = 0;
+  if (ml_block_for_selection(s_menu_selected_timer_idx, &to_y, &to_h)) {
+    bool can_animate = (window_stack_get_top_window() == s_window);
+    if (can_animate && has_from) { ml_start_animation(from_y, from_h, to_y, to_h); }
+    else {
+      s_menu_visual_y = (int16_t)to_y;
+      s_menu_visual_h = (int16_t)to_h;
+      s_menu_visual_valid = true;
+    }
+  }
+  menu_layer_reload_data(s_menu);
 }
 
 static int dl_clamp_step(int v, int min, int max, int delta) {
@@ -1416,6 +1443,27 @@ typedef struct {
   int timer_idx; // valid for TIMER_* rows
 } MlRowInfo;
 
+#define ML_ROW_H_PRIMARY 32
+#define ML_ROW_H_DETAIL  28
+#define ML_ANIM_MS       80
+#define ML_ANIM_STEP_MS  16
+
+static uint32_t ml_now_ms(void) {
+  time_t s_utc = 0;
+  uint16_t ms = 0;
+  time_ms(&s_utc, &ms);
+  return (uint32_t)s_utc * 1000u + (uint32_t)ms;
+}
+
+static int16_t ml_lerp_i16(int16_t a, int16_t b, uint16_t p_q1000) {
+  int32_t d = (int32_t)b - (int32_t)a;
+  return (int16_t)(a + (int16_t)((d * p_q1000) / 1000));
+}
+
+static int16_t ml_row_height_for_kind(MlRowKind kind) {
+  return (kind == ML_ROW_TIMER_DETAIL) ? ML_ROW_H_DETAIL : ML_ROW_H_PRIMARY;
+}
+
 static bool ml_timer_shows_detail(int idx, int selected_idx) {
   if (idx < 0 || idx >= s_count) { return false; }
   TimerState st = s_timers[idx].state;
@@ -1436,6 +1484,16 @@ static bool ml_row_info_for(uint16_t row, int selected_idx, MlRowInfo *out) {
   }
   if (v == row) { out->kind = ML_ROW_NEW; out->timer_idx = -1; return true; }
   return false;
+}
+
+static bool ml_is_item_boundary_row(uint16_t row, int selected_idx) {
+  MlRowInfo cur;
+  MlRowInfo next;
+  if (!ml_row_info_for(row, selected_idx, &cur)) { return false; }
+  if (cur.kind == ML_ROW_NEW) { return false; }
+  if (!ml_row_info_for((uint16_t)(row + 1), selected_idx, &next)) { return false; }
+  if (next.kind == ML_ROW_NEW) { return true; }
+  return cur.timer_idx != next.timer_idx;
 }
 
 static int ml_row_for_timer_primary(int timer_idx, int selected_idx) {
@@ -1464,6 +1522,86 @@ static int ml_row_for_new(int selected_idx) {
     if (ml_timer_shows_detail(idx, selected_idx)) { v++; }
   }
   return v;
+}
+
+static int ml_row_top_for(uint16_t row, int selected_idx) {
+  int y = 0;
+  for (uint16_t r = 0; r < row; r++) {
+    MlRowInfo ri;
+    if (!ml_row_info_for(r, selected_idx, &ri)) { break; }
+    y += ml_row_height_for_kind(ri.kind);
+  }
+  return y;
+}
+
+static bool ml_block_for_selection(int selected_idx, int *out_y, int *out_h) {
+  if (selected_idx == -1) {
+    int row = ml_row_for_new(selected_idx);
+    if (row < 0) { return false; }
+    if (out_y) { *out_y = ml_row_top_for((uint16_t)row, selected_idx); }
+    if (out_h) { *out_h = ML_ROW_H_PRIMARY; }
+    return true;
+  }
+  int row = ml_row_for_timer_primary(selected_idx, selected_idx);
+  if (row < 0) { return false; }
+  int h = ML_ROW_H_PRIMARY;
+  if (ml_timer_shows_detail(selected_idx, selected_idx)) { h += ML_ROW_H_DETAIL; }
+  if (out_y) { *out_y = ml_row_top_for((uint16_t)row, selected_idx); }
+  if (out_h) { *out_h = h; }
+  return true;
+}
+
+static bool ml_current_highlight_rect(int *out_y, int *out_h) {
+  if (s_menu_anim_active) {
+    if (out_y) { *out_y = s_menu_anim_cur_y; }
+    if (out_h) { *out_h = s_menu_anim_cur_h; }
+    return true;
+  }
+  return ml_block_for_selection(s_menu_selected_timer_idx, out_y, out_h);
+}
+
+static void ml_stop_animation(void) {
+  if (s_menu_anim_timer) {
+    app_timer_cancel(s_menu_anim_timer);
+    s_menu_anim_timer = NULL;
+  }
+  s_menu_anim_active = false;
+}
+
+static void ml_anim_step(void *ctx) {
+  (void)ctx;
+  s_menu_anim_timer = NULL;
+  if (!s_menu_anim_active) { return; }
+  uint32_t elapsed = ml_now_ms() - s_menu_anim_start_ms;
+  uint16_t p = (elapsed >= ML_ANIM_MS) ? 1000 : (uint16_t)((elapsed * 1000u) / ML_ANIM_MS);
+  s_menu_anim_cur_y = ml_lerp_i16(s_menu_anim_from_y, s_menu_anim_to_y, p);
+  s_menu_anim_cur_h = ml_lerp_i16(s_menu_anim_from_h, s_menu_anim_to_h, p);
+  s_menu_visual_y = s_menu_anim_cur_y;
+  s_menu_visual_h = s_menu_anim_cur_h;
+  s_menu_visual_valid = true;
+  if (s_menu) { menu_layer_reload_data(s_menu); }
+  if (p >= 1000) {
+    s_menu_anim_active = false;
+    return;
+  }
+  s_menu_anim_timer = app_timer_register(ML_ANIM_STEP_MS, ml_anim_step, NULL);
+}
+
+static void ml_start_animation(int from_y, int from_h, int to_y, int to_h) {
+  ml_stop_animation();
+  s_menu_anim_from_y = (int16_t)from_y;
+  s_menu_anim_from_h = (int16_t)from_h;
+  s_menu_anim_to_y = (int16_t)to_y;
+  s_menu_anim_to_h = (int16_t)to_h;
+  s_menu_anim_cur_y = (int16_t)from_y;
+  s_menu_anim_cur_h = (int16_t)from_h;
+  s_menu_visual_y = (int16_t)from_y;
+  s_menu_visual_h = (int16_t)from_h;
+  s_menu_visual_valid = true;
+  if (from_y == to_y && from_h == to_h) { return; }
+  s_menu_anim_active = true;
+  s_menu_anim_start_ms = ml_now_ms();
+  s_menu_anim_timer = app_timer_register(ML_ANIM_STEP_MS, ml_anim_step, NULL);
 }
 
 static void ml_row_colors(const Timer *t, bool selected, GColor *bg, GColor *fg) {
@@ -1518,8 +1656,8 @@ static uint16_t ml_num_rows(MenuLayer *ml, uint16_t section, void *ctx) {
 
 static int16_t ml_cell_height(MenuLayer *ml, MenuIndex *ci, void *ctx) {
   MlRowInfo info;
-  if (!ml_row_info_for(ci->row, s_menu_selected_timer_idx, &info)) { return 32; }
-  return (info.kind == ML_ROW_TIMER_DETAIL) ? 28 : 32;
+  if (!ml_row_info_for(ci->row, s_menu_selected_timer_idx, &info)) { return ML_ROW_H_PRIMARY; }
+  return ml_row_height_for_kind(info.kind);
 }
 
 static void ml_draw_row(GContext *gctx, const Layer *cell, MenuIndex *ci, void *ctx) {
@@ -1528,8 +1666,21 @@ static void ml_draw_row(GContext *gctx, const Layer *cell, MenuIndex *ci, void *
   if (info.kind == ML_ROW_NEW) {
     GRect b = layer_get_bounds(cell);
     bool selected = (s_menu_selected_timer_idx == -1);
-    graphics_context_set_fill_color(gctx, selected ? GColorBlack : GColorWhite);
+    graphics_context_set_fill_color(gctx, GColorWhite);
     graphics_fill_rect(gctx, b, 0, GCornerNone);
+    int hy, hh;
+    if (ml_current_highlight_rect(&hy, &hh)) {
+      int row_top = ml_row_top_for(ci->row, s_menu_selected_timer_idx);
+      int row_bottom = row_top + b.size.h;
+      int h_top = hy;
+      int h_bottom = hy + hh;
+      int ov_top = (h_top > row_top) ? h_top : row_top;
+      int ov_bottom = (h_bottom < row_bottom) ? h_bottom : row_bottom;
+      if (ov_top < ov_bottom) {
+        graphics_context_set_fill_color(gctx, GColorBlack);
+        graphics_fill_rect(gctx, GRect(0, ov_top - row_top, b.size.w, ov_bottom - ov_top), 0, GCornerNone);
+      }
+    }
     graphics_context_set_text_color(gctx, selected ? GColorWhite : GColorBlack);
     graphics_draw_text(gctx, "+ New timer", fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD),
       GRect(4, (b.size.h - 26) / 2, b.size.w - 8, 26),
@@ -1542,46 +1693,67 @@ static void ml_draw_row(GContext *gctx, const Layer *cell, MenuIndex *ci, void *
   // row uses a DARK shade of the same hue + white text so it still reads as the
   // cursor AND keeps its state colour; idle selected stays the plain black highlight.
   bool selected = (s_menu_selected_timer_idx == info.timer_idx);
-  GColor bg, fg;
-  ml_row_colors(t, selected, &bg, &fg);
+  GColor bg, fg, sel_bg, unused_fg;
+  ml_row_colors(t, false, &bg, &unused_fg);
+  ml_row_colors(t, true, &sel_bg, &unused_fg);
+  ml_row_colors(t, selected, &unused_fg, &fg);
   graphics_context_set_fill_color(gctx, bg);
   graphics_fill_rect(gctx, layer_get_bounds(cell), 0, GCornerNone);
+  int hy, hh;
+  if (ml_current_highlight_rect(&hy, &hh)) {
+    int row_top = ml_row_top_for(ci->row, s_menu_selected_timer_idx);
+    int row_bottom = row_top + layer_get_bounds(cell).size.h;
+    int h_top = hy;
+    int h_bottom = hy + hh;
+    int ov_top = (h_top > row_top) ? h_top : row_top;
+    int ov_bottom = (h_bottom < row_bottom) ? h_bottom : row_bottom;
+    if (ov_top < ov_bottom) {
+      graphics_context_set_fill_color(gctx, sel_bg);
+      graphics_fill_rect(gctx, GRect(0, ov_top - row_top, layer_get_bounds(cell).size.w, ov_bottom - ov_top), 0, GCornerNone);
+    }
+  }
   graphics_context_set_text_color(gctx, fg);
   GRect b = layer_get_bounds(cell);
   if (info.kind == ML_ROW_TIMER_DETAIL) {
     bool small = (b.size.w <= 144);
     bool running = (t->state == TS_RUNNING);
     bool stopped = (t->state != TS_RUNNING && t->state != TS_PAUSED);
-    GFont f = fonts_get_system_font(
+    GFont f_value = fonts_get_system_font(
       small
         ? (running ? FONT_KEY_GOTHIC_18_BOLD : FONT_KEY_GOTHIC_18)
         : (running ? FONT_KEY_GOTHIC_24_BOLD : FONT_KEY_GOTHIC_24)
     );
+    GFont f_suffix = fonts_get_system_font(small ? FONT_KEY_GOTHIC_18 : FONT_KEY_GOTHIC_24);
     int th = small ? 22 : 28;
-    int ty = (b.size.h - th) / 2 - 3;
+    int ty = (b.size.h - th) / 2 - 5;
     char rem[24];
     int32_t detail_secs = stopped ? t->duration : tc_remaining_now(t, now_s());
     tc_format_fixed(rem, sizeof(rem), detail_secs);
-    char rem_display[56];
-    snprintf(rem_display, sizeof(rem_display), "%s", rem);
+    char value_display[40];
+    snprintf(value_display, sizeof(value_display), "%s", rem);
     if (!running && launch_sync_applies_for_timer(t)) {
       char sync[16];
       format_launch_sync_suffix(sync, sizeof(sync));
-      size_t len = strlen(rem_display);
-      if (len + 1 < sizeof(rem_display)) {
-        rem_display[len++] = ' ';
-        rem_display[len] = '\0';
+      size_t len = strlen(value_display);
+      if (len + 1 < sizeof(value_display)) {
+        value_display[len++] = ' ';
+        value_display[len] = '\0';
       }
-      strncat(rem_display, sync, sizeof(rem_display) - strlen(rem_display) - 1);
+      strncat(value_display, sync, sizeof(value_display) - strlen(value_display) - 1);
     }
-    size_t len = strlen(rem_display);
-    if (len + 1 < sizeof(rem_display)) {
-      rem_display[len++] = ' ';
-      rem_display[len] = '\0';
-    }
-    strncat(rem_display, "remaining", sizeof(rem_display) - strlen(rem_display) - 1);
-    graphics_draw_text(gctx, rem_display, f, GRect(4, ty, b.size.w - 8, th),
+    graphics_draw_text(gctx, value_display, f_value, GRect(4, ty, b.size.w - 8, th),
       GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
+    GSize vw = graphics_text_layout_get_content_size(value_display, f_value,
+      GRect(0, 0, b.size.w, th), GTextOverflowModeFill, GTextAlignmentLeft);
+    int suffix_x = 4 + vw.w + 4;
+    if (suffix_x < b.size.w - 8) {
+      graphics_draw_text(gctx, "remaining", f_suffix, GRect(suffix_x, ty, b.size.w - 4 - suffix_x, th),
+        GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
+    }
+    if (ml_is_item_boundary_row(ci->row, s_menu_selected_timer_idx)) {
+      graphics_context_set_stroke_color(gctx, GColorDarkGray);
+      graphics_draw_line(gctx, GPoint(0, b.size.h - 1), GPoint(b.size.w - 1, b.size.h - 1));
+    }
     return;
   }
   // Single line: fixed-width HH:MM:SS time first (bold) so the column aligns and is
@@ -1591,7 +1763,7 @@ static void ml_draw_row(GContext *gctx, const Layer *cell, MenuIndex *ci, void *
   GFont tf = fonts_get_system_font(small ? FONT_KEY_GOTHIC_18_BOLD : FONT_KEY_GOTHIC_24_BOLD);
   GFont nf = fonts_get_system_font(small ? FONT_KEY_GOTHIC_18 : FONT_KEY_GOTHIC_24);
   int th = small ? 22 : 28;
-  int ty = (b.size.h - th) / 2;
+  int ty = (b.size.h - th) / 2 - 2;
   int icon_x = 4;
   int icon_y = ty + (th - 12) / 2 + 3;
   ml_draw_state_icon(gctx, icon_x, icon_y, t->state, fg);
@@ -1617,6 +1789,10 @@ static void ml_draw_row(GContext *gctx, const Layer *cell, MenuIndex *ci, void *
     graphics_draw_text(gctx, lbl, nf,
       GRect(desc_x, ty, b.size.w - 4 - desc_x, th),
       GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
+  }
+  if (ml_is_item_boundary_row(ci->row, s_menu_selected_timer_idx)) {
+    graphics_context_set_stroke_color(gctx, GColorDarkGray);
+    graphics_draw_line(gctx, GPoint(0, b.size.h - 1), GPoint(b.size.w - 1, b.size.h - 1));
   }
 }
 
@@ -1762,11 +1938,16 @@ static void ml_selection_changed(MenuLayer *ml, MenuIndex new_i, MenuIndex old_i
     next_selected = (int16_t)new_info.timer_idx;
   }
 
+  int from_y = 0, from_h = 0;
+  bool has_from = s_menu_visual_valid
+    ? (from_y = s_menu_visual_y, from_h = s_menu_visual_h, true)
+    : ml_current_highlight_rect(&from_y, &from_h);
+
   s_menu_selected_timer_idx = next_selected;
-  int target_row = (s_menu_selected_timer_idx == -1)
-    ? ml_row_for_new(s_menu_selected_timer_idx)
-    : ml_row_for_timer_primary(s_menu_selected_timer_idx, s_menu_selected_timer_idx);
-  bool logical_changed = (s_menu_selected_timer_idx != prev_selected);
+  int target_row = (next_selected == -1)
+    ? ml_row_for_new(next_selected)
+    : ml_row_for_timer_primary(next_selected, next_selected);
+  bool logical_changed = (next_selected != prev_selected);
   bool cursor_needs_reanchor = (target_row >= 0 && (int)new_i.row != target_row);
   if (!logical_changed && !cursor_needs_reanchor) {
     if (s_empty_hint_layer) { layer_mark_dirty(s_empty_hint_layer); }
@@ -1775,12 +1956,19 @@ static void ml_selection_changed(MenuLayer *ml, MenuIndex new_i, MenuIndex old_i
   if (s_menu) {
     s_menu_internal_selection = true;
     if (target_row >= 0) {
-      menu_layer_set_selected_index(s_menu, (MenuIndex){ .section = 0, .row = (uint16_t)target_row }, MenuRowAlignTop, false);
-    }
-    if (logical_changed) {
-      menu_layer_reload_data(s_menu);
+      menu_layer_set_selected_index(s_menu, (MenuIndex){ .section = 0, .row = (uint16_t)target_row }, MenuRowAlignNone, false);
     }
     s_menu_internal_selection = false;
+    int to_y = 0, to_h = 0;
+    if (ml_block_for_selection(next_selected, &to_y, &to_h)) {
+      if (has_from) { ml_start_animation(from_y, from_h, to_y, to_h); }
+      else {
+        s_menu_visual_y = (int16_t)to_y;
+        s_menu_visual_h = (int16_t)to_h;
+        s_menu_visual_valid = true;
+      }
+    }
+    menu_layer_reload_data(s_menu);
   }
   if (s_empty_hint_layer) { layer_mark_dirty(s_empty_hint_layer); }
 }
@@ -2094,11 +2282,20 @@ static void window_load(Window *w) {
   layer_set_update_proc(s_empty_hint_layer, empty_hint_update_proc);
   layer_add_child(root, s_empty_hint_layer);
   s_menu_selected_timer_idx = (s_count > 0) ? s_order[0] : -1;
+  s_menu_visual_valid = false;
   s_menu_internal_selection = true;
   menu_layer_set_selected_index(s_menu, (MenuIndex){ .section = 0, .row = 0 }, MenuRowAlignTop, false);
   s_menu_internal_selection = false;
+  int y = 0, h = 0;
+  if (ml_block_for_selection(s_menu_selected_timer_idx, &y, &h)) {
+    s_menu_visual_y = (int16_t)y;
+    s_menu_visual_h = (int16_t)h;
+    s_menu_visual_valid = true;
+  }
 }
 static void window_unload(Window *w) {
+  ml_stop_animation();
+  s_menu_visual_valid = false;
   if (s_empty_hint_layer) { layer_destroy(s_empty_hint_layer); s_empty_hint_layer = NULL; }
   menu_layer_destroy(s_menu); s_menu = NULL;
 }
