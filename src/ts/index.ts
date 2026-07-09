@@ -21,7 +21,8 @@ Pebble.addEventListener('appmessage', (e: any) => {
     const saved = appendCustomTimer(
       (k) => window.localStorage.getItem(k),
       (k, v) => window.localStorage.setItem(k, v),
-      p.AddTimer);
+      p.AddTimer,
+      p.AddTimerName);
     console.log(saved ? 'AddTimer saved: ' + p.AddTimer + 's'
       : 'AddTimer rejected (invalid or full): ' + p.AddTimer);
     return;   // no echo — the watch already holds the running timer locally as custom
@@ -40,7 +41,8 @@ Pebble.addEventListener('appmessage', (e: any) => {
       (k) => window.localStorage.getItem(k),
       (k, v) => window.localStorage.setItem(k, v),
       p.UpdateTimerIndex,
-      p.UpdateTimerSeconds);
+      p.UpdateTimerSeconds,
+      p.UpdateTimerName);
     console.log(saved === null
       ? 'UpdateTimer rejected: idx=' + p.UpdateTimerIndex + ' secs=' + p.UpdateTimerSeconds
       : 'UpdateTimer applied at index ' + p.UpdateTimerIndex + ' -> ' + p.UpdateTimerSeconds + 's');

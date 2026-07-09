@@ -4,6 +4,7 @@
 #include "timer_calc.h"
 #include "timer_store.h"
 #include "dial_touch.h"
+#include "multitap_keyboard/multitap_keyboard/multitap_keyboard_window.h"
 #include <string.h>
 
 static Window *s_window;
@@ -62,6 +63,11 @@ typedef enum { DSTYLE_LEGACY = 0, DSTYLE_LONG_EXISTING = 1, DSTYLE_LONG_NEW = 2 
 static DetailStyle s_detail_style = DSTYLE_LEGACY;
 typedef enum { SAVE_INTENT_NONE = 0, SAVE_INTENT_START_AND_SAVE = 1, SAVE_INTENT_ONLY_SAVE = 2 } SaveIntent;
 static SaveIntent s_save_intent = SAVE_INTENT_NONE;
+static int16_t s_label_target_idx = -1; // timer index receiving keyboard-entered label
+static DetailStyle s_label_return_style = DSTYLE_LONG_NEW; // detail style to restore after label input
+static char s_detail_label_edit[NAME_LEN + 1]; // staged label edit in existing-timer flow
+static bool s_detail_label_edited = false;     // true if staged label differs from original during this edit flow
+static bool s_detail_advancing = false; // true while pushing a modal from detail window
 
 // ---- time edit dial window (opened before long-press/new confirmation menu) ----
 static Window *s_dial_window;
@@ -246,6 +252,12 @@ static void persist_all(void) {
   store_save_ephemeral_mask(mask);
 }
 
+// Forward declarations used by reload_ui (implemented later in file).
+static int ml_row_for_timer_primary(int timer_idx, int selected_idx);
+static int ml_row_for_new(int selected_idx);
+static bool ml_block_for_selection(int selected_idx, int *out_y, int *out_h);
+static void ml_scroll_item_bounds_into_view(int item_y, int item_h);
+
 static void rebuild_order(void) {
   tc_display_order(s_timers, s_count, s_sort, now_s(), s_order, s_running_first);
   // For unnamed timers with identical durations, keep creation order (fewer '*' first).
@@ -271,7 +283,28 @@ static void rebuild_order(void) {
 
 static void reload_ui(void) {
   rebuild_order();
-  if (s_menu) { menu_layer_reload_data(s_menu); }
+  if (s_menu_selected_timer_idx != -1) {
+    int row = ml_row_for_timer_primary(s_menu_selected_timer_idx, s_menu_selected_timer_idx);
+    if (row < 0) { s_menu_selected_timer_idx = (s_count > 0) ? (int16_t)s_order[0] : -1; }
+  }
+  if (s_menu) {
+    menu_layer_reload_data(s_menu);
+    int target_row = (s_menu_selected_timer_idx == -1)
+      ? ml_row_for_new(s_menu_selected_timer_idx)
+      : ml_row_for_timer_primary(s_menu_selected_timer_idx, s_menu_selected_timer_idx);
+    if (target_row >= 0) {
+      s_menu_internal_selection = true;
+      menu_layer_set_selected_index(s_menu, (MenuIndex){ .section = 0, .row = (uint16_t)target_row }, MenuRowAlignNone, false);
+      s_menu_internal_selection = false;
+      int y = 0, h = 0;
+      if (ml_block_for_selection(s_menu_selected_timer_idx, &y, &h)) {
+        s_menu_visual_y = (int16_t)y;
+        s_menu_visual_h = (int16_t)h;
+        s_menu_visual_valid = true;
+        ml_scroll_item_bounds_into_view(y, h);
+      }
+    }
+  }
   if (s_empty_hint_layer) { layer_mark_dirty(s_empty_hint_layer); }
 }
 
@@ -720,16 +753,23 @@ static void dial_update_proc(Layer *layer, GContext *gctx) {
   char head_right[36];
   format_duration_with_launch_sync(s_detail_edit_secs, true, head_right, sizeof(head_right));
   GFont hf = fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD);
-  char head_left[NAME_LEN + 8];
-  snprintf(head_left, sizeof(head_left), (s_detail_style == DSTYLE_LONG_NEW) ? "Edit" : "Edit duration");
-  if (s_detail_style == DSTYLE_LONG_EXISTING && s_detail_idx >= 0 && s_detail_idx < s_count) {
-    Timer *t = &s_timers[s_detail_idx];
-    if (t->name[0]) {
-      snprintf(head_left, sizeof(head_left), "Edit %s", t->name);
+  const char *head_left = NULL;
+  if (s_detail_style == DSTYLE_LONG_NEW) {
+    if (s_detail_idx >= 0 && s_detail_idx < s_count && s_timers[s_detail_idx].name[0]) {
+      head_left = s_timers[s_detail_idx].name;
+    } else {
+      head_left = "Duration";
     }
   }
-  graphics_draw_text(gctx, head_left, hf, GRect(4, 2, b.size.w - 90, 26),
-    GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
+  if (s_detail_style == DSTYLE_LONG_EXISTING && s_detail_idx >= 0 && s_detail_idx < s_count) {
+    Timer *t = &s_timers[s_detail_idx];
+    const char *name = s_detail_label_edited ? s_detail_label_edit : t->name;
+    if (name[0]) { head_left = name; }
+  }
+  if (head_left) {
+    graphics_draw_text(gctx, head_left, hf, GRect(4, 2, b.size.w - 90, 26),
+      GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
+  }
   graphics_draw_text(gctx, head_right, hf, GRect(4, 2, b.size.w - 8, 26),
     GTextOverflowModeTrailingEllipsis, GTextAlignmentRight, NULL);
 
@@ -926,20 +966,23 @@ static void dl_draw_header(GContext *gctx, const Layer *cell, uint16_t section, 
   int32_t shown = (s_detail_style == DSTYLE_LEGACY) ? tc_remaining_now(t, now_s()) : s_detail_edit_secs;
   char rem_head[36];
   format_duration_with_launch_sync(shown, s_detail_style != DSTYLE_LEGACY, rem_head, sizeof(rem_head));
-  char head[NAME_LEN + 8];
   GRect b = layer_get_bounds(cell);
   GFont f = fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD);
   graphics_context_set_text_color(gctx, GColorBlack);
   if (s_detail_style == DSTYLE_LONG_EXISTING) {
-    if (t->name[0]) { snprintf(head, sizeof(head), "Edit %s", t->name); }
-    else { snprintf(head, sizeof(head), "Edit"); }
-    graphics_draw_text(gctx, head, f, GRect(4, 3, b.size.w - 92, 26),
-      GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
+    const char *name = s_detail_label_edited ? s_detail_label_edit : t->name;
+    if (name[0]) {
+      graphics_draw_text(gctx, name, f, GRect(4, 3, b.size.w - 92, 26),
+        GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
+    }
     graphics_draw_text(gctx, rem_head, f, GRect(4, 3, b.size.w - 8, 26),
       GTextOverflowModeTrailingEllipsis, GTextAlignmentRight, NULL);
     return;
   }
-  if (s_detail_style == DSTYLE_LONG_NEW && t->name[0] == 0) {
+  if (s_detail_style == DSTYLE_LONG_NEW) {
+    const char *left = (t->name[0] != 0) ? t->name : "<Add label>";
+    graphics_draw_text(gctx, left, f, GRect(4, 3, b.size.w - 92, 26),
+      GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
     graphics_draw_text(gctx, rem_head, f, GRect(4, 3, b.size.w - 8, 26),
       GTextOverflowModeTrailingEllipsis, GTextAlignmentRight, NULL);
     return;
@@ -974,17 +1017,19 @@ static void dl_draw_row(GContext *gctx, const Layer *cell, MenuIndex *ci, void *
     GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
 }
 
-static void start_as_new(int32_t secs, bool save_to_phone); // defined below
-static void save_as_new_only(int32_t secs);       // defined below
-static void apply_overwrite_only(int idx, int32_t secs);    // defined below
-static void apply_overwrite_start(int idx, int32_t secs);   // defined below
-static void send_add_timer(int32_t secs);          // defined below (phone sync)
-static void send_update_timer(int32_t idx, int32_t secs); // defined below (phone sync)
+static void start_as_new(int32_t secs, bool save_to_phone, const char *name); // defined below
+static void save_as_new_only(int32_t secs, const char *name);       // defined below
+static void apply_overwrite_only(int idx, int32_t secs, const char *name);    // defined below
+static void apply_overwrite_start(int idx, int32_t secs, const char *name);   // defined below
+static void send_add_timer(int32_t secs, const char *name);          // defined below (phone sync)
+static void send_update_timer(int32_t idx, int32_t secs, const char *name); // defined below (phone sync)
 static void create_new_timer(void);                // defined below ("+ New timer" row)
 static void open_delete_confirm(void);             // defined below (delete path)
 static void send_delete_timer(int32_t idx);        // defined below (delete path)
 static void show_start_confirmation(int idx);      // defined below (auto-return tail)
 static void open_save_type_menu(SaveIntent intent); // defined below
+static void open_label_input_for_new_timer(int idx); // defined below
+static const char *detail_pending_label_or_null(void); // defined below
 
 static void dl_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
   idle_reset();
@@ -1011,7 +1056,7 @@ static void dl_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
         start_with_secs(t, launch_adjust_start_secs_for_timer(t, base));
         ensure_unnamed_star(idx);
         if (idx == s_new_timer_idx) {
-          send_add_timer(t->duration);
+          send_add_timer(t->duration, t->name);
           s_new_timer_idx = -1;
         }
         bool fired = finish_start_tail();
@@ -1023,7 +1068,7 @@ static void dl_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
         }
       case DACT_SAVE_START: {
         int32_t rem = tc_remaining_now(t, now_s());
-        start_as_new(rem >= 1 ? rem : t->duration, true);
+        start_as_new(rem >= 1 ? rem : t->duration, true, NULL);
         break;
       }
       case DACT_STOP: {
@@ -1080,7 +1125,7 @@ static void dl_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
       if (s_auto_return) { show_start_confirmation(idx); }
       else { window_stack_remove(s_detail_window, true); }
     } else {
-      start_as_new(s_detail_edit_secs, false);
+      start_as_new(s_detail_edit_secs, false, detail_pending_label_or_null());
     }
     return;
   }
@@ -1095,7 +1140,7 @@ static void dl_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
       assign_unnamed_star_for_duration(idx, t->duration);
       s_new_timer_idx = -1;
       bool fired = finish_start_tail();
-      send_add_timer(s_detail_edit_secs);
+      send_add_timer(s_detail_edit_secs, t->name);
       if (fired) { return; }
       select_timer_row(idx);
       if (s_auto_return) { show_start_confirmation(idx); }
@@ -1117,7 +1162,7 @@ static void dl_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
       assign_unnamed_star_for_duration(idx, t->duration);
       s_new_timer_idx = -1;
       persist_all(); rearm_wakeup(); reload_ui();
-      send_add_timer(s_detail_edit_secs);
+      send_add_timer(s_detail_edit_secs, t->name);
       window_stack_remove(s_detail_window, true);
     } else {
       open_save_type_menu(SAVE_INTENT_ONLY_SAVE);
@@ -1125,6 +1170,79 @@ static void dl_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
     return;
   }
   if (ci->row == 3 && s_detail_style == DSTYLE_LONG_EXISTING) { open_delete_confirm(); }
+}
+
+static void detail_up_click(ClickRecognizerRef rec, void *ctx) {
+  idle_reset();
+  if (!s_detail_menu) { return; }
+  MenuIndex sel = menu_layer_get_selected_index(s_detail_menu);
+  if ((s_detail_style == DSTYLE_LONG_NEW || s_detail_style == DSTYLE_LONG_EXISTING)
+      && sel.section == 0 && sel.row == 0) {
+    open_label_input_for_new_timer(s_detail_idx);
+    return;
+  }
+  menu_layer_set_selected_next(s_detail_menu, true, MenuRowAlignNone, true);
+}
+
+static void detail_down_click(ClickRecognizerRef rec, void *ctx) {
+  idle_reset();
+  if (!s_detail_menu) { return; }
+  menu_layer_set_selected_next(s_detail_menu, false, MenuRowAlignNone, true);
+}
+
+static void detail_select_click(ClickRecognizerRef rec, void *ctx) {
+  if (!s_detail_menu) { return; }
+  MenuIndex sel = menu_layer_get_selected_index(s_detail_menu);
+  dl_select(s_detail_menu, &sel, NULL);
+}
+
+static void detail_click_config(void *ctx) {
+  window_single_click_subscribe(BUTTON_ID_SELECT, detail_select_click);
+  window_single_click_subscribe(BUTTON_ID_UP, detail_up_click);
+  window_single_click_subscribe(BUTTON_ID_DOWN, detail_down_click);
+}
+
+static void new_timer_label_result(const char *text, void *context) {
+  int idx = (int)(intptr_t)context;
+  s_label_target_idx = -1;
+  if (idx < 0 || idx >= s_count) { return; }
+  if (text) {
+    Timer *t = &s_timers[idx];
+    if (s_label_return_style == DSTYLE_LONG_EXISTING) {
+      strncpy(s_detail_label_edit, text, NAME_LEN);
+      s_detail_label_edit[NAME_LEN] = '\0';
+      s_detail_label_edited = true;
+    } else {
+      if (text[0]) {
+        strncpy(t->name, text, NAME_LEN);
+        t->name[NAME_LEN] = '\0';
+      } else {
+        t->name[0] = '\0';
+      }
+      assign_unnamed_star_for_duration(idx, t->duration);
+      t->last_used = now_s();
+    }
+    if (s_detail_window && window_stack_contains_window(s_detail_window)) {
+      s_detail_idx = idx;
+      s_detail_style = s_label_return_style;
+      if (s_detail_menu) { menu_layer_reload_data(s_detail_menu); }
+    }
+    if (s_label_return_style != DSTYLE_LONG_EXISTING) { reload_ui(); }
+  }
+}
+
+static void open_label_input_for_new_timer(int idx) {
+  if (idx < 0 || idx >= s_count) { return; }
+  s_label_target_idx = idx;
+  s_label_return_style = s_detail_style;
+  const char *initial = NULL;
+  if (s_label_return_style == DSTYLE_LONG_EXISTING && s_detail_label_edited) {
+    initial = (s_detail_label_edit[0] != 0) ? s_detail_label_edit : NULL;
+  } else {
+    initial = (s_timers[idx].name[0] != 0) ? s_timers[idx].name : NULL;
+  }
+  s_detail_advancing = true;
+  multitap_keyboard_window_push_ex(new_timer_label_result, initial, NAME_LEN, (void *)(intptr_t)idx);
 }
 
 static void detail_window_load(Window *w) {
@@ -1140,7 +1258,7 @@ static void detail_window_load(Window *w) {
   });
   menu_layer_set_normal_colors(s_detail_menu, GColorWhite, GColorBlack);
   menu_layer_set_highlight_colors(s_detail_menu, GColorBlack, GColorWhite);
-  menu_layer_set_click_config_onto_window(s_detail_menu, w);
+  window_set_click_config_provider(w, detail_click_config);
   layer_add_child(root, menu_layer_get_layer(s_detail_menu));
 }
 
@@ -1172,12 +1290,13 @@ static void sv_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
   int idx = s_detail_idx;
   if (idx < 0 || idx >= s_count) { return; }
   window_stack_remove(s_save_window, false);
+  const char *name = detail_pending_label_or_null();
   if (ci->row == 0) {
-    if (s_save_intent == SAVE_INTENT_START_AND_SAVE) { start_as_new(s_detail_edit_secs, true); }
-    else if (s_save_intent == SAVE_INTENT_ONLY_SAVE) { save_as_new_only(s_detail_edit_secs); }
+    if (s_save_intent == SAVE_INTENT_START_AND_SAVE) { start_as_new(s_detail_edit_secs, true, name); }
+    else if (s_save_intent == SAVE_INTENT_ONLY_SAVE) { save_as_new_only(s_detail_edit_secs, name); }
   } else {
-    if (s_save_intent == SAVE_INTENT_START_AND_SAVE) { apply_overwrite_start(idx, s_detail_edit_secs); }
-    else if (s_save_intent == SAVE_INTENT_ONLY_SAVE) { apply_overwrite_only(idx, s_detail_edit_secs); }
+    if (s_save_intent == SAVE_INTENT_START_AND_SAVE) { apply_overwrite_start(idx, s_detail_edit_secs, name); }
+    else if (s_save_intent == SAVE_INTENT_ONLY_SAVE) { apply_overwrite_only(idx, s_detail_edit_secs, name); }
   }
 }
 
@@ -1210,6 +1329,7 @@ static void open_save_type_menu(SaveIntent intent) {
       .load = save_window_load, .unload = save_window_unload,
       .appear = idle_appear, .disappear = idle_disappear });
   }
+  s_detail_advancing = true;
   window_stack_push(s_save_window, true);
 }
 
@@ -1273,6 +1393,7 @@ static void open_delete_confirm(void) {
       .load = del_window_load, .unload = del_window_unload });
     window_set_click_config_provider(s_del_window, del_click_config);
   }
+  s_detail_advancing = true;
   window_stack_push(s_del_window, true);
 }
 
@@ -1281,6 +1402,9 @@ static void open_delete_confirm(void) {
 // so this never discards a started/saved timer.
 static void detail_disappear(Window *w) {
   idle_cancel();
+  bool advancing = s_detail_advancing;
+  s_detail_advancing = false;
+  if (advancing) { return; }
   if (s_new_timer_idx >= 0 && s_new_timer_idx == s_detail_idx
       && s_new_timer_idx < s_count && s_timers[s_new_timer_idx].state == TS_IDLE) {
     remove_timer_at(s_new_timer_idx);
@@ -1345,6 +1469,8 @@ static void open_dial_window(int timer_idx, DetailStyle style) {
     Timer *t = &s_timers[timer_idx];
     if (style == DSTYLE_LONG_NEW) { s_detail_edit_secs = 60; }
     else { s_detail_edit_secs = t->duration; } // existing long-press edits duration
+    s_detail_label_edited = false;
+    s_detail_label_edit[0] = '\0';
     if (s_detail_edit_secs < 0) { s_detail_edit_secs = 0; }
   }
   if (!s_dial_window) {
@@ -1380,7 +1506,7 @@ static void main_touch_selected(uint8_t hours, uint8_t minutes, uint8_t seconds)
   m = ((m % 60) + 60) % 60;
   s = ((s % 60) + 60) % 60;
   int32_t secs = h * 3600 + m * 60 + s;
-  start_as_new(secs, false);
+  start_as_new(secs, false, NULL);
 }
 
 // ---- MenuLayer callbacks ----
@@ -2057,10 +2183,11 @@ static void request_config(void) {
 // Tell the phone to save a new unnamed timer of `secs` seconds (appended to its
 // TimerConfig + Clay store). The watch keeps the running timer locally (flagged
 // custom) so it survives even if this send fails / the phone is offline.
-static void send_add_timer(int32_t secs) {
+static void send_add_timer(int32_t secs, const char *name) {
   DictionaryIterator *out;
   if (app_message_outbox_begin(&out) == APP_MSG_OK) {
     dict_write_uint32(out, MESSAGE_KEY_AddTimer, (uint32_t)secs);
+    if (name) { dict_write_cstring(out, MESSAGE_KEY_AddTimerName, name); }
     app_message_outbox_send();
   }
 }
@@ -2078,11 +2205,12 @@ static void send_delete_timer(int32_t idx) {
 
 // Tell the phone to overwrite timer `idx` with a new duration (`secs`), keeping
 // its current name. Best-effort, like Add/Delete.
-static void send_update_timer(int32_t idx, int32_t secs) {
+static void send_update_timer(int32_t idx, int32_t secs, const char *name) {
   DictionaryIterator *out;
   if (app_message_outbox_begin(&out) == APP_MSG_OK) {
     dict_write_int32(out, MESSAGE_KEY_UpdateTimerIndex, idx);
     dict_write_int32(out, MESSAGE_KEY_UpdateTimerSeconds, secs);
+    if (name) { dict_write_cstring(out, MESSAGE_KEY_UpdateTimerName, name); }
     app_message_outbox_send();
   }
 }
@@ -2109,7 +2237,11 @@ static void remove_timer_at(int idx) {
   else if (s_menu_selected_timer_idx > idx) { s_menu_selected_timer_idx--; }
 }
 
-static void start_as_new(int32_t secs, bool save_to_phone) {
+static const char *detail_pending_label_or_null(void) {
+  return s_detail_label_edited ? s_detail_label_edit : NULL;
+}
+
+static void start_as_new(int32_t secs, bool save_to_phone, const char *name) {
   if (s_count >= MAX_TIMERS) {
     return;   // List full: nothing to create. (Keep it simple — no new row.)
   }
@@ -2117,7 +2249,12 @@ static void start_as_new(int32_t secs, bool save_to_phone) {
   int idx = s_count;
   Timer *t = &s_timers[idx];
   memset(t, 0, sizeof(*t));
-  t->name[0] = 0;
+  if (name) {
+    strncpy(t->name, name, NAME_LEN);
+    t->name[NAME_LEN] = '\0';
+  } else {
+    t->name[0] = 0;
+  }
   t->duration = secs;
   t->remaining = secs;
   t->state = TS_IDLE;
@@ -2128,7 +2265,7 @@ static void start_as_new(int32_t secs, bool save_to_phone) {
   assign_unnamed_star_for_duration(idx, t->duration);
   start_with_secs(t, launch_adjust_start_secs_for_timer(t, secs));
   bool fired = finish_start_tail();
-  if (save_to_phone) { send_add_timer(secs); }
+  if (save_to_phone) { send_add_timer(secs, t->name); }
   if (fired) { return; }
   select_timer_row(idx);
   if (s_auto_return) { show_start_confirmation(idx); }   // flash -> watchface
@@ -2137,13 +2274,18 @@ static void start_as_new(int32_t secs, bool save_to_phone) {
   }
 }
 
-static void save_as_new_only(int32_t secs) {
+static void save_as_new_only(int32_t secs, const char *name) {
   if (s_count >= MAX_TIMERS) { return; }
   if (secs < 0) { secs = 0; }
   int idx = s_count;
   Timer *t = &s_timers[idx];
   memset(t, 0, sizeof(*t));
-  t->name[0] = 0;
+  if (name) {
+    strncpy(t->name, name, NAME_LEN);
+    t->name[NAME_LEN] = '\0';
+  } else {
+    t->name[0] = 0;
+  }
   t->duration = secs;
   t->remaining = secs;
   t->state = TS_IDLE;
@@ -2154,14 +2296,18 @@ static void save_as_new_only(int32_t secs) {
   s_count++;
   assign_unnamed_star_for_duration(idx, t->duration);
   persist_all(); rearm_wakeup(); reload_ui();
-  send_add_timer(secs);
+  send_add_timer(secs, t->name);
   window_stack_remove(s_detail_window, true);
 }
 
-static void apply_overwrite_only(int idx, int32_t secs) {
+static void apply_overwrite_only(int idx, int32_t secs, const char *name) {
   if (idx < 0 || idx >= s_count) { return; }
   if (secs < 0) { secs = 0; }
   Timer *t = &s_timers[idx];
+  if (name) {
+    strncpy(t->name, name, NAME_LEN);
+    t->name[NAME_LEN] = '\0';
+  }
   t->duration = secs;
   if (t->state == TS_IDLE) { t->remaining = secs; }
   if (t->state == TS_DONE) { t->remaining = 0; }
@@ -2169,21 +2315,25 @@ static void apply_overwrite_only(int idx, int32_t secs) {
   assign_unnamed_star_for_duration(idx, t->duration);
   s_ephemeral[idx] = false;
   persist_all(); rearm_wakeup(); reload_ui();
-  send_update_timer(idx, secs);
+  send_update_timer(idx, secs, name);
   window_stack_remove(s_detail_window, true);
 }
 
-static void apply_overwrite_start(int idx, int32_t secs) {
+static void apply_overwrite_start(int idx, int32_t secs, const char *name) {
   if (idx < 0 || idx >= s_count) { return; }
   if (secs < 0) { secs = 0; }
   Timer *t = &s_timers[idx];
+  if (name) {
+    strncpy(t->name, name, NAME_LEN);
+    t->name[NAME_LEN] = '\0';
+  }
   t->duration = secs;
   t->remaining = secs;
   start_with_secs(t, launch_adjust_start_secs_for_timer(t, secs));
   assign_unnamed_star_for_duration(idx, t->duration);
   s_ephemeral[idx] = false;
   bool fired = finish_start_tail();
-  send_update_timer(idx, secs);
+  send_update_timer(idx, secs, name);
   if (fired) { return; }
   if (s_auto_return) { show_start_confirmation(idx); }
   else { window_stack_remove(s_detail_window, true); }
