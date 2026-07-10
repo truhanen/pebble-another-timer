@@ -10,6 +10,7 @@
 static Window *s_window;
 static MenuLayer *s_menu;
 static Layer    *s_empty_hint_layer;
+static Layer    *s_main_bottom_bar_layer;
 static int16_t   s_menu_selected_timer_idx = -1; // logical timer index selected in list (-1 => + New timer)
 static bool      s_menu_internal_selection = false; // guards re-entrant selection callback during reselect
 static AppTimer *s_menu_anim_timer = NULL;
@@ -54,6 +55,7 @@ static int64_t s_app_launch_s = 0; // app launch timestamp for launch-sync elaps
 // ---- per-timer detail window: long-press menu workflow ----
 static Window *s_detail_window;
 static MenuLayer *s_detail_menu;
+static Layer *s_detail_bottom_bar_layer;
 static int16_t s_detail_idx = -1;   // config index the detail window is showing
 static DetailAction s_detail_acts[7];
 static int8_t s_detail_act_count = 0;
@@ -132,21 +134,60 @@ static int32_t launch_adjust_start_secs_for_timer(const Timer *t, int32_t base) 
   return launch_adjust_start_secs(base);
 }
 
+#define BOTTOM_BAR_H 28
+
+static int16_t bottom_bar_top_for_bounds(GRect bounds) {
+  return bounds.size.h - BOTTOM_BAR_H + 3;
+}
+
+static GRect bottom_bar_rect_for_bounds(GRect bounds) {
+  return GRect(0, bottom_bar_top_for_bounds(bounds), bounds.size.w, BOTTOM_BAR_H);
+}
+
+static GFont bottom_bar_font_for_width(int16_t width) {
+  return fonts_get_system_font((width <= 144) ? FONT_KEY_GOTHIC_18_BOLD : FONT_KEY_GOTHIC_24_BOLD);
+}
+
+static int16_t bottom_bar_text_h_for_width(int16_t width) {
+  return (width <= 144) ? 22 : 28;
+}
+
+static bool detail_style_has_bottom_bar(void) {
+  return true;
+}
+
+static void draw_bottom_bar(GContext *gctx, GRect bounds) {
+  graphics_context_set_stroke_color(gctx, PBL_IF_COLOR_ELSE(GColorDarkGray, GColorBlack));
+  graphics_context_set_stroke_width(gctx, 1);
+  graphics_draw_line(gctx,
+    GPoint(bounds.origin.x, bounds.origin.y),
+    GPoint(bounds.origin.x + bounds.size.w - 1, bounds.origin.y));
+  graphics_context_set_fill_color(gctx, GColorBlack);
+  graphics_fill_rect(gctx, GRect(bounds.origin.x, bounds.origin.y + 1, bounds.size.w, bounds.size.h - 1),
+    0, GCornerNone);
+
+  char left[16];
+  clock_copy_time_string(left, sizeof(left));
+  char elapsed[16];
+  tc_format_remaining(elapsed, sizeof(elapsed), launch_elapsed_s());
+  char right[24];
+  snprintf(right, sizeof(right), "-%s", elapsed);
+
+  const GFont f = bottom_bar_font_for_width(bounds.size.w);
+  const int th = bottom_bar_text_h_for_width(bounds.size.w);
+  const int ty = bounds.origin.y + (bounds.size.h - th) / 2 - 5;
+  graphics_context_set_text_color(gctx, GColorWhite);
+  graphics_draw_text(gctx, left, f, GRect(bounds.origin.x + 4, ty, bounds.size.w - 8, th),
+    GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
+  graphics_draw_text(gctx, right, f, GRect(bounds.origin.x + 4, ty, bounds.size.w - 8, th),
+    GTextOverflowModeTrailingEllipsis, GTextAlignmentRight, NULL);
+}
+
 static void format_launch_sync_suffix(char *buf, size_t n) {
   int32_t e = launch_elapsed_s();
   int m = e / 60;
   int s = e % 60;
   snprintf(buf, n, "-%d:%02d", m, s);
-}
-
-static void format_duration_with_launch_sync(int32_t secs, bool include_sync, char *buf, size_t n) {
-  char rem[16];
-  tc_format_remaining(rem, sizeof(rem), secs);
-  snprintf(buf, n, "%s", rem);
-  if (!include_sync || !s_launch_sync) { return; }
-  char sync[16];
-  format_launch_sync_suffix(sync, sizeof(sync));
-  snprintf(buf, n, "%s %s", rem, sync);
 }
 
 // Close the app to the WATCHFACE (not the launcher). exit_reason_set tells
@@ -587,23 +628,29 @@ static void tick_cb(void *ctx) {
   int fired = sweep_expiries();
   bool running = false;
   for (int i = 0; i < s_count; i++) { if (s_timers[i].state == TS_RUNNING) { running = true; } }
-  reload_ui();
-  if (s_detail_menu && window_stack_get_top_window() == s_detail_window) {
-    menu_layer_reload_data(s_detail_menu);   // retick the live time header
+  if (running || fired) {
+    reload_ui();
+  }
+  if (s_detail_menu && window_stack_get_top_window() == s_detail_window && s_detail_style == DSTYLE_LEGACY) {
+    menu_layer_reload_data(s_detail_menu);   // retick the legacy live-time header
   }
   if (s_dial_layer && window_stack_get_top_window() == s_dial_window) {
-    layer_mark_dirty(s_dial_layer);          // retick the launch-sync suffix in dial header
+    layer_mark_dirty(s_dial_layer);          // retick dial header + bottom bar
+  }
+  if (s_main_bottom_bar_layer && window_stack_get_top_window() == s_window) {
+    layer_mark_dirty(s_main_bottom_bar_layer);
+  }
+  if (s_detail_bottom_bar_layer && window_stack_get_top_window() == s_detail_window
+      && detail_style_has_bottom_bar()) {
+    layer_mark_dirty(s_detail_bottom_bar_layer);
   }
   if (fired) { persist_all(); rearm_wakeup(); trigger_alarm(s_last_fired_idx, fired); }
-  s_tick = (running || s_launch_sync) ? app_timer_register(1000, tick_cb, NULL) : NULL;
+  s_tick = app_timer_register(1000, tick_cb, NULL);
 }
 
 static void ensure_ticking(void) {
   if (s_tick) { return; }
-  if (s_launch_sync) { s_tick = app_timer_register(1000, tick_cb, NULL); return; }
-  for (int i = 0; i < s_count; i++) {
-    if (s_timers[i].state == TS_RUNNING) { s_tick = app_timer_register(1000, tick_cb, NULL); return; }
-  }
+  s_tick = app_timer_register(1000, tick_cb, NULL);
 }
 
 // ---- per-timer detail window: live-time header + Pause/Stop/+N actions ----
@@ -753,7 +800,7 @@ static void dial_update_proc(Layer *layer, GContext *gctx) {
   graphics_context_set_text_color(gctx, GColorBlack);
 
   char head_right[36];
-  format_duration_with_launch_sync(s_detail_edit_secs, true, head_right, sizeof(head_right));
+  tc_format_remaining(head_right, sizeof(head_right), s_detail_edit_secs);
   GFont hf = fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD);
   const char *head_left = NULL;
   if (s_detail_style == DSTYLE_LONG_NEW) {
@@ -825,13 +872,18 @@ static void dial_update_proc(Layer *layer, GContext *gctx) {
   }
 
   const int hint_h = 26;
+  bool show_bottom_bar = !dial_touch_in_progress();
+  int bottom_reserved = show_bottom_bar ? BOTTOM_BAR_H : 0;
   if (b.size.h >= hint_h) {
-    const int hint_y = b.size.h - hint_h - 5;
+    const int hint_y = b.size.h - hint_h - 5 - bottom_reserved;
     graphics_context_set_text_color(gctx, GColorBlack);
     graphics_draw_text(gctx, "Touch opens touch dial",
       fonts_get_system_font(FONT_KEY_GOTHIC_24),
       GRect(4, hint_y, b.size.w - 8, hint_h),
       GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter, NULL);
+  }
+  if (show_bottom_bar) {
+    draw_bottom_bar(gctx, bottom_bar_rect_for_bounds(b));
   }
 }
 
@@ -982,7 +1034,7 @@ static void dl_draw_header(GContext *gctx, const Layer *cell, uint16_t section, 
   Timer *t = &s_timers[s_detail_idx];
   int32_t shown = (s_detail_style == DSTYLE_LEGACY) ? tc_remaining_now(t, now_s()) : s_detail_edit_secs;
   char rem_head[36];
-  format_duration_with_launch_sync(shown, s_detail_style != DSTYLE_LEGACY, rem_head, sizeof(rem_head));
+  tc_format_remaining(rem_head, sizeof(rem_head), shown);
   GRect b = layer_get_bounds(cell);
   GFont f = fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD);
   graphics_context_set_text_color(gctx, GColorBlack);
@@ -1271,9 +1323,35 @@ static void new_flow_open_label_cb(void *ctx) {
   }
 }
 
+static void main_bottom_bar_update_proc(Layer *layer, GContext *gctx) {
+  draw_bottom_bar(gctx, layer_get_bounds(layer));
+}
+
+static void detail_bottom_bar_update_proc(Layer *layer, GContext *gctx) {
+  draw_bottom_bar(gctx, layer_get_bounds(layer));
+}
+
+static void detail_apply_layout(void) {
+  if (!s_detail_window || !s_detail_menu) { return; }
+  Layer *root = window_get_root_layer(s_detail_window);
+  GRect bounds = layer_get_bounds(root);
+  bool show_bar = detail_style_has_bottom_bar();
+  GRect menu_bounds = bounds;
+  if (show_bar) { menu_bounds.size.h = bottom_bar_top_for_bounds(bounds); }
+  layer_set_frame(menu_layer_get_layer(s_detail_menu), menu_bounds);
+  if (s_detail_bottom_bar_layer) {
+    layer_set_frame(s_detail_bottom_bar_layer, bottom_bar_rect_for_bounds(bounds));
+    layer_set_hidden(s_detail_bottom_bar_layer, !show_bar);
+    if (show_bar) { layer_mark_dirty(s_detail_bottom_bar_layer); }
+  }
+}
+
 static void detail_window_load(Window *w) {
   Layer *root = window_get_root_layer(w);
-  s_detail_menu = menu_layer_create(layer_get_bounds(root));
+  GRect bounds = layer_get_bounds(root);
+  GRect menu_bounds = bounds;
+  if (detail_style_has_bottom_bar()) { menu_bounds.size.h = bottom_bar_top_for_bounds(bounds); }
+  s_detail_menu = menu_layer_create(menu_bounds);
   menu_layer_set_callbacks(s_detail_menu, NULL, (MenuLayerCallbacks){
     .get_num_rows = dl_num_rows,
     .get_cell_height = dl_cell_height,
@@ -1286,9 +1364,14 @@ static void detail_window_load(Window *w) {
   menu_layer_set_highlight_colors(s_detail_menu, GColorBlack, GColorWhite);
   window_set_click_config_provider(w, detail_click_config);
   layer_add_child(root, menu_layer_get_layer(s_detail_menu));
+  s_detail_bottom_bar_layer = layer_create(bottom_bar_rect_for_bounds(bounds));
+  layer_set_update_proc(s_detail_bottom_bar_layer, detail_bottom_bar_update_proc);
+  layer_set_hidden(s_detail_bottom_bar_layer, !detail_style_has_bottom_bar());
+  layer_add_child(root, s_detail_bottom_bar_layer);
 }
 
 static void detail_window_unload(Window *w) {
+  if (s_detail_bottom_bar_layer) { layer_destroy(s_detail_bottom_bar_layer); s_detail_bottom_bar_layer = NULL; }
   menu_layer_destroy(s_detail_menu); s_detail_menu = NULL;
 }
 
@@ -1440,6 +1523,7 @@ static void open_detail_window(int timer_idx, DetailStyle style) {
   // Idempotent: if it is already on the stack (e.g. it was open under the alarm when
   // a timer expired), just refresh it instead of pushing it a second time.
   if (window_stack_contains_window(s_detail_window)) {
+    detail_apply_layout();
     if (s_detail_menu) { menu_layer_reload_data(s_detail_menu); }
   } else {
     window_stack_push(s_detail_window, true);
@@ -1544,10 +1628,10 @@ static int16_t ml_row_height_for_kind(MlRowKind kind) {
 }
 
 static bool ml_timer_shows_detail(int idx, int selected_idx) {
+  (void)selected_idx;
   if (idx < 0 || idx >= s_count) { return false; }
   TimerState st = s_timers[idx].state;
-  if (st == TS_RUNNING || st == TS_PAUSED) { return true; }
-  return idx == selected_idx; // selected stopped timer
+  return (st == TS_RUNNING || st == TS_PAUSED);
 }
 
 static bool ml_row_info_for(uint16_t row, int selected_idx, MlRowInfo *out) {
@@ -1690,11 +1774,11 @@ static void ml_scroll_item_bounds_into_view(int item_y, int item_h) {
   GPoint off = scroll_layer_get_content_offset(sl);
   GRect vb = layer_get_bounds(menu_layer_get_layer(s_menu));
   int vis_top = -off.y;
-  int vis_bottom = vis_top + vb.size.h;
+  int vis_bottom = vis_top + vb.size.h - 1;
   int item_bottom = item_y + item_h;
   int target_top = vis_top;
   if (item_y < vis_top) { target_top = item_y; }
-  else if (item_bottom > vis_bottom) { target_top = item_bottom - vb.size.h; }
+  else if (item_bottom > vis_bottom) { target_top = item_bottom - vb.size.h - 1; }
   else { return; }
   GSize cs = scroll_layer_get_content_size(sl);
   int max_top = cs.h - vb.size.h;
@@ -2339,7 +2423,9 @@ static void window_load(Window *w) {
   rebuild_order();
   Layer *root = window_get_root_layer(w);
   GRect bounds = layer_get_bounds(root);
-  s_menu = menu_layer_create(bounds);
+  GRect menu_bounds = bounds;
+  menu_bounds.size.h = bottom_bar_top_for_bounds(bounds);
+  s_menu = menu_layer_create(menu_bounds);
   menu_layer_set_callbacks(s_menu, NULL, (MenuLayerCallbacks){
     .get_num_rows = ml_num_rows,
     .get_cell_height = ml_cell_height,
@@ -2350,9 +2436,12 @@ static void window_load(Window *w) {
   });
   menu_layer_set_click_config_onto_window(s_menu, w);
   layer_add_child(root, menu_layer_get_layer(s_menu));
-  s_empty_hint_layer = layer_create(bounds);
+  s_empty_hint_layer = layer_create(menu_bounds);
   layer_set_update_proc(s_empty_hint_layer, empty_hint_update_proc);
   layer_add_child(root, s_empty_hint_layer);
+  s_main_bottom_bar_layer = layer_create(bottom_bar_rect_for_bounds(bounds));
+  layer_set_update_proc(s_main_bottom_bar_layer, main_bottom_bar_update_proc);
+  layer_add_child(root, s_main_bottom_bar_layer);
   s_menu_selected_timer_idx = (s_count > 0) ? s_order[0] : -1;
   s_menu_visual_valid = false;
   s_menu_internal_selection = true;
@@ -2368,6 +2457,7 @@ static void window_load(Window *w) {
 static void window_unload(Window *w) {
   ml_stop_animation();
   s_menu_visual_valid = false;
+  if (s_main_bottom_bar_layer) { layer_destroy(s_main_bottom_bar_layer); s_main_bottom_bar_layer = NULL; }
   if (s_empty_hint_layer) { layer_destroy(s_empty_hint_layer); s_empty_hint_layer = NULL; }
   menu_layer_destroy(s_menu); s_menu = NULL;
 }
