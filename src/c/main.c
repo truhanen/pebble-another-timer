@@ -70,6 +70,7 @@ static int16_t s_new_flow_label_idx = -1;
 static bool s_dial_existing_duration_edit = false; // true while editing existing timer duration from edit menu
 static int32_t s_main_touch_secs = 0;
 static bool s_main_touch_pending = false;
+static AppTimer *s_main_touch_label_timer = NULL;
 
 // ---- time edit dial window (opened before long-press/new confirmation menu) ----
 static Window *s_dial_window;
@@ -347,6 +348,7 @@ static void open_dial_window(int timer_idx, DetailStyle style);    // defined be
 static void dial_touch_selected(uint8_t hours, uint8_t minutes, uint8_t seconds);
 static void main_touch_selected(uint8_t hours, uint8_t minutes, uint8_t seconds);
 static void main_touch_label_result(const char *text, void *context);
+static void main_touch_open_label_cb(void *ctx);
 static void open_delete_confirm(void);                              // defined below; delete confirm modal
 static void remove_timer_at(int idx); // defined below; used by alarm stop/delete paths
 static int sweep_expiries(void); // defined below; used by tick/start helpers
@@ -1489,6 +1491,14 @@ static void main_touch_selected(uint8_t hours, uint8_t minutes, uint8_t seconds)
   s = ((s % 60) + 60) % 60;
   s_main_touch_secs = h * 3600 + m * 60 + s;
   s_main_touch_pending = true;
+  if (s_main_touch_label_timer) { app_timer_cancel(s_main_touch_label_timer); }
+  s_main_touch_label_timer = app_timer_register(10, main_touch_open_label_cb, NULL);
+}
+
+static void main_touch_open_label_cb(void *ctx) {
+  (void)ctx;
+  s_main_touch_label_timer = NULL;
+  if (!s_main_touch_pending) { return; }
   multitap_keyboard_window_push_ex(main_touch_label_result, NULL, NAME_LEN, NULL);
 }
 
@@ -2434,6 +2444,7 @@ static void init(void) {
 static void deinit(void) {
   if (s_tick) { app_timer_cancel(s_tick); }
   if (s_new_flow_label_timer) { app_timer_cancel(s_new_flow_label_timer); s_new_flow_label_timer = NULL; }
+  if (s_main_touch_label_timer) { app_timer_cancel(s_main_touch_label_timer); s_main_touch_label_timer = NULL; }
   idle_cancel();
   if (s_new_timer_idx >= 0 && s_new_timer_idx < s_count) { remove_timer_at(s_new_timer_idx); }
   persist_all();
