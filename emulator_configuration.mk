@@ -14,15 +14,15 @@ EMULATOR_CFG_RUNNINGFIRST_KEY := 10004
 EMULATOR_CFG_RUNNINGFIRST_VAL := 1
 
 # IdleExitSec (0=off, else timeout in seconds)
-EMULATOR_CFG_IDLEEXIT_KEY := 10009
+EMULATOR_CFG_IDLEEXIT_KEY := 10011
 EMULATOR_CFG_IDLEEXIT_VAL := 0
 
 # CfgOpen (0=phone config closed, 1=open; use 0 for emulator config push)
-EMULATOR_CFG_CFGOPEN_KEY := 10010
+EMULATOR_CFG_CFGOPEN_KEY := 10012
 EMULATOR_CFG_CFGOPEN_VAL := 0
 
 # LaunchSync (0=off, 1=on)
-EMULATOR_CFG_LAUNCHSYNC_KEY := 10011
+EMULATOR_CFG_LAUNCHSYNC_KEY := 10013
 EMULATOR_CFG_LAUNCHSYNC_VAL := 1
 
 # Final `--int` argument list passed to pebble send-app-message.
