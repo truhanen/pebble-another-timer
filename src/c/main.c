@@ -2273,6 +2273,7 @@ static void start_as_new(int32_t secs, bool save_to_phone, const char *name) {
 static void apply_overwrite_only(int idx, int32_t secs, const char *name) {
   if (idx < 0 || idx >= s_count) { return; }
   if (secs < 0) { secs = 0; }
+  bool was_ephemeral = s_ephemeral[idx];
   Timer *t = &s_timers[idx];
   if (name) {
     strncpy(t->name, name, NAME_LEN);
@@ -2283,9 +2284,9 @@ static void apply_overwrite_only(int idx, int32_t secs, const char *name) {
   if (t->state == TS_DONE) { t->remaining = 0; }
   t->last_used = now_s();
   assign_unnamed_star_for_duration(idx, t->duration);
-  s_ephemeral[idx] = false;
+  s_ephemeral[idx] = was_ephemeral;
   persist_all(); rearm_wakeup(); reload_ui();
-  send_update_timer(idx, secs, name);
+  if (!was_ephemeral) { send_update_timer(idx, secs, name); }
   window_stack_remove(s_detail_window, true);
 }
 
