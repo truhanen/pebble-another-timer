@@ -1276,7 +1276,20 @@ static void detail_click_config(void *ctx) {
 static void new_timer_label_result(const char *text, void *context) {
   int idx = (int)(intptr_t)context;
   s_label_target_idx = -1;
+  s_detail_advancing = false;
   if (idx < 0 || idx >= s_count) { return; }
+  if (s_label_return_style == DSTYLE_LONG_NEW && !text) {
+    if (s_new_timer_idx >= 0 && s_new_timer_idx < s_count
+        && s_new_timer_idx == idx && s_timers[s_new_timer_idx].state == TS_IDLE) {
+      remove_timer_at(s_new_timer_idx);
+      s_new_timer_idx = -1;
+      reload_ui();
+    }
+    if (s_detail_window && window_stack_contains_window(s_detail_window)) {
+      window_stack_remove(s_detail_window, true);
+    }
+    return;
+  }
   if (s_label_return_style == DSTYLE_LONG_EXISTING) {
     if (text) {
       apply_overwrite_only(idx, s_timers[idx].duration, text);
