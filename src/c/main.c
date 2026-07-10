@@ -47,7 +47,7 @@ static int s_order[MAX_TIMERS];   // display order, rebuilt on reload per s_sort
 static SortMode s_sort = SORT_MRU;
 static int s_last_fired_idx = -1; // first timer that newly expired in the latest sweep
 static bool s_auto_return = false; // config: pop to watchface after a start/resume
-static bool s_running_first = true; // config: float RUNNING timers to the top
+static bool s_running_first = true; // config: group RUNNING first, then PAUSED
 static bool s_launch_sync = false; // config: subtract elapsed-from-launch on starts
 static int64_t s_app_launch_s = 0; // app launch timestamp for launch-sync elapsed
 

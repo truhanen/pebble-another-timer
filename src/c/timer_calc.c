@@ -87,14 +87,17 @@ bool tc_soonest_end(const Timer *t, int count, int64_t *out) {
 
 // Comparison key for a timer under `mode`. Returns a 64-bit value; the sort puts
 // HIGHER keys first, so we negate where the mode wants ascending order. When
-// running_first is set, RUNNING timers get a large bias so they sort above all
-// non-running timers regardless of mode.
+// running_first is set, timers are tiered as RUNNING first, then PAUSED, then
+// all other states, while preserving each tier's intra-order from `mode`.
 static int64_t order_key(const Timer *t, SortMode mode, int64_t now, bool running_first) {
   int64_t base;
   if (mode == SORT_SHORTEST) { base = -(int64_t)tc_remaining_now(t, now); } // asc -> negate
   else if (mode == SORT_LONGEST)  { base =  (int64_t)tc_remaining_now(t, now); } // desc
   else { base = t->last_used; }                                              // MRU: desc
-  if (running_first && t->state == TS_RUNNING) { base += (1LL << 40); }
+  if (running_first) {
+    if (t->state == TS_RUNNING) { base += (2LL << 40); }
+    else if (t->state == TS_PAUSED) { base += (1LL << 40); }
+  }
   return base;
 }
 

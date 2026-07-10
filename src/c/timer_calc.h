@@ -54,8 +54,8 @@ bool tc_soonest_end(const Timer *t, int count, int64_t *out);
 
 // Fill order[count] with timer indices sorted per `mode` (SORT_MRU: last_used
 // desc; SORT_SHORTEST/LONGEST: remaining-at-`now` asc/desc), ties by index asc.
-// When running_first is true, RUNNING timers sort above all non-running ones,
-// preserving each group's intra-order.
+// When running_first is true, timers are grouped as RUNNING first, then PAUSED,
+// then all other states, preserving each group's intra-order.
 void tc_display_order(const Timer *t, int count, SortMode mode, int64_t now, int *order, bool running_first);
 
 // State transitions (each stamps last_used = now where it represents a user action).
