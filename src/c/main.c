@@ -13,11 +13,6 @@ static Layer    *s_empty_hint_layer;
 static Layer    *s_main_bottom_bar_layer;
 static int16_t   s_menu_selected_timer_idx = -1; // logical timer index selected in list (-1 => + New timer)
 static bool      s_menu_internal_selection = false; // guards re-entrant selection callback during reselect
-static AppTimer *s_menu_anim_timer = NULL;
-static bool      s_menu_anim_active = false;
-static int16_t   s_menu_anim_from_y = 0, s_menu_anim_to_y = 0, s_menu_anim_cur_y = 0;
-static int16_t   s_menu_anim_from_h = 0, s_menu_anim_to_h = 0, s_menu_anim_cur_h = 0;
-static uint32_t  s_menu_anim_start_ms = 0;
 static int16_t   s_menu_visual_y = 0, s_menu_visual_h = 0;
 static bool      s_menu_visual_valid = false;
 static AppTimer *s_tick;
@@ -398,7 +393,6 @@ static int ml_row_for_timer_primary(int timer_idx, int selected_idx); // defined
 static int ml_row_for_new(int selected_idx); // defined below; list row mapping for trailing + New timer row
 static bool ml_block_for_selection(int selected_idx, int *out_y, int *out_h); // defined below; highlight block
 static bool ml_current_highlight_rect(int *out_y, int *out_h); // defined below; animated/static rect
-static void ml_start_animation(int from_y, int from_h, int to_y, int to_h); // defined below
 static void ml_scroll_item_bounds_into_view(int item_y, int item_h); // defined below
 static void apply_overwrite_only(int idx, int32_t secs, const char *name); // defined below
 
@@ -659,10 +653,6 @@ static void ensure_ticking(void) {
 // LIST cursor to follow it to its new row so the user needn't scroll to it.
 static void select_timer_row(int idx) {
   if (!s_menu) { return; }
-  int from_y = 0, from_h = 0;
-  bool has_from = s_menu_visual_valid
-    ? (from_y = s_menu_visual_y, from_h = s_menu_visual_h, true)
-    : ml_current_highlight_rect(&from_y, &from_h);
   s_menu_selected_timer_idx = (int16_t)idx;
   int row = ml_row_for_timer_primary(idx, s_menu_selected_timer_idx);
   if (row < 0) { return; }
@@ -672,13 +662,9 @@ static void select_timer_row(int idx) {
   menu_layer_set_selected_index(s_menu, (MenuIndex){ .section = 0, .row = (uint16_t)row },
                                 MenuRowAlignNone, false);
   s_menu_internal_selection = false;
-  bool can_animate = (window_stack_get_top_window() == s_window);
-  if (can_animate && has_from) { ml_start_animation(from_y, from_h, to_y, to_h); }
-  else {
-    s_menu_visual_y = (int16_t)to_y;
-    s_menu_visual_h = (int16_t)to_h;
-    s_menu_visual_valid = true;
-  }
+  s_menu_visual_y = (int16_t)to_y;
+  s_menu_visual_h = (int16_t)to_h;
+  s_menu_visual_valid = true;
   menu_layer_reload_data(s_menu);
   ml_scroll_item_bounds_into_view(to_y, to_h);
 }
@@ -1235,6 +1221,7 @@ static void dl_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
     s_new_timer_idx = -1;
     persist_all(); rearm_wakeup(); reload_ui();
     send_add_timer(s_detail_edit_secs, t->name);
+    select_timer_row(idx);
     window_stack_remove(s_detail_window, true);
     return;
   }
@@ -1612,21 +1599,6 @@ typedef struct {
 
 #define ML_ROW_H_PRIMARY 32
 #define ML_ROW_H_DETAIL  28
-#define ML_ANIM_MS       80
-#define ML_ANIM_STEP_MS  16
-
-static uint32_t ml_now_ms(void) {
-  time_t s_utc = 0;
-  uint16_t ms = 0;
-  time_ms(&s_utc, &ms);
-  return (uint32_t)s_utc * 1000u + (uint32_t)ms;
-}
-
-static int16_t ml_lerp_i16(int16_t a, int16_t b, uint16_t p_q1000) {
-  int32_t d = (int32_t)b - (int32_t)a;
-  return (int16_t)(a + (int16_t)((d * p_q1000) / 1000));
-}
-
 static int16_t ml_row_height_for_kind(MlRowKind kind) {
   return (kind == ML_ROW_TIMER_DETAIL) ? ML_ROW_H_DETAIL : ML_ROW_H_PRIMARY;
 }
@@ -1719,56 +1691,11 @@ static bool ml_block_for_selection(int selected_idx, int *out_y, int *out_h) {
 }
 
 static bool ml_current_highlight_rect(int *out_y, int *out_h) {
-  if (s_menu_anim_active) {
-    if (out_y) { *out_y = s_menu_anim_cur_y; }
-    if (out_h) { *out_h = s_menu_anim_cur_h; }
-    return true;
-  }
   return ml_block_for_selection(s_menu_selected_timer_idx, out_y, out_h);
 }
 
 static void ml_stop_animation(void) {
-  if (s_menu_anim_timer) {
-    app_timer_cancel(s_menu_anim_timer);
-    s_menu_anim_timer = NULL;
-  }
-  s_menu_anim_active = false;
-}
-
-static void ml_anim_step(void *ctx) {
-  (void)ctx;
-  s_menu_anim_timer = NULL;
-  if (!s_menu_anim_active) { return; }
-  uint32_t elapsed = ml_now_ms() - s_menu_anim_start_ms;
-  uint16_t p = (elapsed >= ML_ANIM_MS) ? 1000 : (uint16_t)((elapsed * 1000u) / ML_ANIM_MS);
-  s_menu_anim_cur_y = ml_lerp_i16(s_menu_anim_from_y, s_menu_anim_to_y, p);
-  s_menu_anim_cur_h = ml_lerp_i16(s_menu_anim_from_h, s_menu_anim_to_h, p);
-  s_menu_visual_y = s_menu_anim_cur_y;
-  s_menu_visual_h = s_menu_anim_cur_h;
-  s_menu_visual_valid = true;
-  if (s_menu) { menu_layer_reload_data(s_menu); }
-  if (p >= 1000) {
-    s_menu_anim_active = false;
-    return;
-  }
-  s_menu_anim_timer = app_timer_register(ML_ANIM_STEP_MS, ml_anim_step, NULL);
-}
-
-static void ml_start_animation(int from_y, int from_h, int to_y, int to_h) {
-  ml_stop_animation();
-  s_menu_anim_from_y = (int16_t)from_y;
-  s_menu_anim_from_h = (int16_t)from_h;
-  s_menu_anim_to_y = (int16_t)to_y;
-  s_menu_anim_to_h = (int16_t)to_h;
-  s_menu_anim_cur_y = (int16_t)from_y;
-  s_menu_anim_cur_h = (int16_t)from_h;
-  s_menu_visual_y = (int16_t)from_y;
-  s_menu_visual_h = (int16_t)from_h;
-  s_menu_visual_valid = true;
-  if (from_y == to_y && from_h == to_h) { return; }
-  s_menu_anim_active = true;
-  s_menu_anim_start_ms = ml_now_ms();
-  s_menu_anim_timer = app_timer_register(ML_ANIM_STEP_MS, ml_anim_step, NULL);
+  // Selection highlight movement is intentionally immediate (no interpolation).
 }
 
 static void ml_scroll_item_bounds_into_view(int item_y, int item_h) {
@@ -2119,11 +2046,6 @@ static void ml_selection_changed(MenuLayer *ml, MenuIndex new_i, MenuIndex old_i
     next_selected = (int16_t)new_info.timer_idx;
   }
 
-  int from_y = 0, from_h = 0;
-  bool has_from = s_menu_visual_valid
-    ? (from_y = s_menu_visual_y, from_h = s_menu_visual_h, true)
-    : ml_current_highlight_rect(&from_y, &from_h);
-
   s_menu_selected_timer_idx = next_selected;
   int target_row = (next_selected == -1)
     ? ml_row_for_new(next_selected)
@@ -2143,12 +2065,9 @@ static void ml_selection_changed(MenuLayer *ml, MenuIndex new_i, MenuIndex old_i
     }
     s_menu_internal_selection = false;
     if (target_row >= 0 && ml_block_for_selection(next_selected, &to_y, &to_h)) {
-      if (has_from) { ml_start_animation(from_y, from_h, to_y, to_h); }
-      else {
-        s_menu_visual_y = (int16_t)to_y;
-        s_menu_visual_h = (int16_t)to_h;
-        s_menu_visual_valid = true;
-      }
+      s_menu_visual_y = (int16_t)to_y;
+      s_menu_visual_h = (int16_t)to_h;
+      s_menu_visual_valid = true;
       menu_layer_reload_data(s_menu);
       ml_scroll_item_bounds_into_view(to_y, to_h);
     } else {
