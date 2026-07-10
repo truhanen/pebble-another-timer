@@ -793,8 +793,7 @@ static void dial_update_proc(Layer *layer, GContext *gctx) {
   }
   if (s_detail_style == DSTYLE_LONG_EXISTING && s_detail_idx >= 0 && s_detail_idx < s_count) {
     Timer *t = &s_timers[s_detail_idx];
-    const char *name = t->name;
-    if (name[0]) { head_left = name; }
+    head_left = t->name[0] ? t->name : "<No label>";
   }
   if (head_left) {
     graphics_draw_text(gctx, head_left, hf, GRect(4, 2, b.size.w - 90, 26),
