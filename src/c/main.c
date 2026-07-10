@@ -2296,16 +2296,30 @@ static void create_new_timer(void) {
 }
 
 static void empty_hint_update_proc(Layer *layer, GContext *gctx) {
-  if (s_count != 0) { return; }
   GRect b = layer_get_bounds(layer);
   if (b.size.h <= 32) { return; }
   const GFont f = fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD);
-  const char *msg =
-    "Configure timers by\n"
-    "- \"+ New timer\",\n"
-    "- the phone, or\n"
-    "- touch";
+  const char *msg = NULL;
   GRect area = GRect(8, 32, b.size.w - 16, b.size.h - 32);
+  if (s_count == 0) {
+    msg =
+      "Configure timers by\n"
+      "- \"+ New timer\",\n"
+      "- the phone, or\n"
+      "- touch";
+  } else if (s_count == 1) {
+    msg =
+      "- Short-press to start or\n"
+      "  control running\n"
+      "- Long-press to edit";
+    int top_rows = ML_ROW_H_PRIMARY + ML_ROW_H_PRIMARY;
+    if (ml_timer_shows_detail(s_order[0], s_menu_selected_timer_idx)) { top_rows += ML_ROW_H_DETAIL; }
+    area = GRect(8, top_rows + 4, b.size.w - 16, b.size.h - top_rows - 4);
+    if (area.size.h <= 20) { return; }
+  } else {
+    return;
+  }
+
   GSize sz = graphics_text_layout_get_content_size(
     msg, f, GRect(0, 0, area.size.w, 200), GTextOverflowModeWordWrap, GTextAlignmentLeft);
   int w = sz.w;
