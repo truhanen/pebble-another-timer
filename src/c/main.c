@@ -63,12 +63,11 @@ typedef enum { DSTYLE_LEGACY = 0, DSTYLE_LONG_EXISTING = 1, DSTYLE_LONG_NEW = 2 
 static DetailStyle s_detail_style = DSTYLE_LEGACY;
 static int16_t s_label_target_idx = -1; // timer index receiving keyboard-entered label
 static DetailStyle s_label_return_style = DSTYLE_LONG_NEW; // detail style to restore after label input
-static char s_detail_label_edit[NAME_LEN + 1]; // staged label edit in existing-timer flow
-static bool s_detail_label_edited = false;     // true if staged label differs from original during this edit flow
 static bool s_detail_advancing = false; // true while pushing a modal from detail window
 static bool s_new_flow_open_label_after_dial = false; // chain new timer: dial -> label -> menu
 static AppTimer *s_new_flow_label_timer = NULL;
 static int16_t s_new_flow_label_idx = -1;
+static bool s_dial_existing_duration_edit = false; // true while editing existing timer duration from edit menu
 static int32_t s_main_touch_secs = 0;
 static bool s_main_touch_pending = false;
 
@@ -358,6 +357,7 @@ static bool ml_block_for_selection(int selected_idx, int *out_y, int *out_h); //
 static bool ml_current_highlight_rect(int *out_y, int *out_h); // defined below; animated/static rect
 static void ml_start_animation(int from_y, int from_h, int to_y, int to_h); // defined below
 static void ml_scroll_item_bounds_into_view(int item_y, int item_h); // defined below
+static void apply_overwrite_only(int idx, int32_t secs, const char *name); // defined below
 
 static void start_with_secs(Timer *t, int32_t secs) {
   tc_extend(t, secs, now_s());  // secs may be <=0 (immediate expiry on next sweep/check)
@@ -763,7 +763,7 @@ static void dial_update_proc(Layer *layer, GContext *gctx) {
   }
   if (s_detail_style == DSTYLE_LONG_EXISTING && s_detail_idx >= 0 && s_detail_idx < s_count) {
     Timer *t = &s_timers[s_detail_idx];
-    const char *name = s_detail_label_edited ? s_detail_label_edit : t->name;
+    const char *name = t->name;
     if (name[0]) { head_left = name; }
   }
   if (head_left) {
@@ -772,15 +772,6 @@ static void dial_update_proc(Layer *layer, GContext *gctx) {
   }
   graphics_draw_text(gctx, head_right, hf, GRect(4, 2, b.size.w - 8, 26),
     GTextOverflowModeTrailingEllipsis, GTextAlignmentRight, NULL);
-
-  const int delete_hint_y = 28;
-  const int delete_hint_h = 20;
-  if (s_detail_style == DSTYLE_LONG_EXISTING) {
-    graphics_draw_text(gctx, "Hold select to delete timer",
-      fonts_get_system_font(FONT_KEY_GOTHIC_24),
-      GRect(4, delete_hint_y, b.size.w - 8, delete_hint_h),
-      GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter, NULL);
-  }
 
   int margin = 8;
   int gap = 6;
@@ -850,6 +841,14 @@ static void dial_select(ClickRecognizerRef rec, void *ctx) {
     if (s_dial_layer) { layer_mark_dirty(s_dial_layer); }
     return;
   }
+  if (s_dial_existing_duration_edit && s_detail_style == DSTYLE_LONG_EXISTING) {
+    apply_overwrite_only(s_detail_idx, s_detail_edit_secs, NULL);
+    s_dial_existing_duration_edit = false;
+    if (window_stack_contains_window(s_dial_window)) {
+      window_stack_remove(s_dial_window, true);
+    }
+    return;
+  }
   s_dial_advancing = true;
   if (s_detail_style == DSTYLE_LONG_NEW) { s_new_flow_open_label_after_dial = true; }
   open_detail_window(s_detail_idx, s_detail_style);
@@ -861,6 +860,21 @@ static void dial_select(ClickRecognizerRef rec, void *ctx) {
 static void dial_back(ClickRecognizerRef rec, void *ctx) {
   idle_reset();
   dial_touch_enable(true);
+  if (s_dial_existing_duration_edit && s_detail_style == DSTYLE_LONG_EXISTING) {
+    if (s_dial_field > 0) {
+      s_dial_field--;
+      if (s_dial_layer) { layer_mark_dirty(s_dial_layer); }
+      return;
+    }
+    s_dial_existing_duration_edit = false;
+    if (window_stack_contains_window(s_dial_window)) {
+      window_stack_remove(s_dial_window, false);
+    }
+    if (s_detail_window && window_stack_contains_window(s_detail_window)) {
+      window_stack_remove(s_detail_window, true);
+    }
+    return;
+  }
   if (s_dial_field > 0) {
     s_dial_field--;
     if (s_dial_layer) { layer_mark_dirty(s_dial_layer); }
@@ -900,7 +914,7 @@ static void dial_down_long_end(ClickRecognizerRef rec, void *ctx) {
 }
 
 static void dial_select_long(ClickRecognizerRef rec, void *ctx) {
-  if (s_detail_style != DSTYLE_LONG_EXISTING) { return; }
+  if (s_detail_style != DSTYLE_LONG_EXISTING || s_dial_existing_duration_edit) { return; }
   idle_reset();
   open_delete_confirm();
 }
@@ -955,7 +969,7 @@ static uint16_t dl_num_rows(MenuLayer *ml, uint16_t section, void *ctx) {
     dl_rebuild_actions();
     return (uint16_t)s_detail_act_count;
   }
-  return (s_detail_style == DSTYLE_LONG_NEW) ? 3 : 4;
+  return 3;
 }
 static int16_t dl_cell_height(MenuLayer *ml, MenuIndex *ci, void *ctx) { return 34; }
 static int16_t dl_header_height(MenuLayer *ml, uint16_t section, void *ctx) { return 32; }
@@ -971,7 +985,7 @@ static void dl_draw_header(GContext *gctx, const Layer *cell, uint16_t section, 
   GFont f = fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD);
   graphics_context_set_text_color(gctx, GColorBlack);
   if (s_detail_style == DSTYLE_LONG_EXISTING) {
-    const char *name = s_detail_label_edited ? s_detail_label_edit : t->name;
+    const char *name = t->name;
     if (name[0]) {
       graphics_draw_text(gctx, name, f, GRect(4, 3, b.size.w - 92, 26),
         GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
@@ -1006,11 +1020,19 @@ static void dl_draw_row(GContext *gctx, const Layer *cell, MenuIndex *ci, void *
     if (ci->row >= s_detail_act_count) { return; }
     label = dl_legacy_action_label(s_detail_acts[ci->row]);
   } else {
-    if (ci->row == 0) { label = "Run"; }
-    else if (ci->row == 1) { label = "Run & save"; }
-    else if (ci->row == 2) { label = "Only save"; }
-    else if (ci->row == 3 && s_detail_style == DSTYLE_LONG_EXISTING) { label = "Delete timer"; }
-    else { return; }
+    if (s_detail_style == DSTYLE_LONG_NEW) {
+      if (ci->row == 0) { label = "Run"; }
+      else if (ci->row == 1) { label = "Run & save"; }
+      else if (ci->row == 2) { label = "Only save"; }
+      else { return; }
+    } else if (s_detail_style == DSTYLE_LONG_EXISTING) {
+      if (ci->row == 0) { label = "Edit duration"; }
+      else if (ci->row == 1) { label = "Edit label"; }
+      else if (ci->row == 2) { label = "Delete"; }
+      else { return; }
+    } else {
+      return;
+    }
   }
   GRect b = layer_get_bounds(cell);
   graphics_draw_text(gctx, label,
@@ -1021,7 +1043,6 @@ static void dl_draw_row(GContext *gctx, const Layer *cell, MenuIndex *ci, void *
 
 static void start_as_new(int32_t secs, bool save_to_phone, const char *name); // defined below
 static void apply_overwrite_only(int idx, int32_t secs, const char *name);    // defined below
-static void apply_overwrite_start(int idx, int32_t secs, const char *name);   // defined below
 static void send_add_timer(int32_t secs, const char *name);          // defined below (phone sync)
 static void send_update_timer(int32_t idx, int32_t secs, const char *name); // defined below (phone sync)
 static void create_new_timer(void);                // defined below ("+ New timer" row)
@@ -1029,7 +1050,6 @@ static void open_delete_confirm(void);             // defined below (delete path
 static void send_delete_timer(int32_t idx);        // defined below (delete path)
 static void show_start_confirmation(int idx);      // defined below (auto-return tail)
 static void open_label_input_for_new_timer(int idx); // defined below
-static const char *detail_pending_label_or_null(void); // defined below
 
 static void dl_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
   idle_reset();
@@ -1109,77 +1129,75 @@ static void dl_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
     }
     return;
   }
-  if (ci->row == 0) {
-    if (s_detail_style == DSTYLE_LONG_NEW) {
-      Timer *t = &s_timers[idx];
-      t->duration = s_detail_edit_secs;
-      t->remaining = s_detail_edit_secs;
-      t->custom = true;
-      s_ephemeral[idx] = true;
-      start_with_secs(t, launch_adjust_start_secs(s_detail_edit_secs));
-      assign_unnamed_star_for_duration(idx, t->duration);
-      s_new_timer_idx = -1;
-      bool fired = finish_start_tail();
-      if (fired) { return; }
-      select_timer_row(idx);
-      if (s_auto_return) { show_start_confirmation(idx); }
-      else { window_stack_remove(s_detail_window, true); }
-    } else {
-      start_as_new(s_detail_edit_secs, false, detail_pending_label_or_null());
+  if (s_detail_style == DSTYLE_LONG_EXISTING) {
+    if (ci->row == 0) { // Edit duration
+      s_dial_existing_duration_edit = true;
+      s_detail_advancing = true;
+      open_dial_window(idx, DSTYLE_LONG_EXISTING);
+      return;
     }
+    if (ci->row == 1) { // Edit label
+      open_label_input_for_new_timer(idx);
+      return;
+    }
+    if (ci->row == 2) { // Delete
+      open_delete_confirm();
+    }
+    return;
+  }
+  if (ci->row == 0) {
+    Timer *t = &s_timers[idx];
+    t->duration = s_detail_edit_secs;
+    t->remaining = s_detail_edit_secs;
+    t->custom = true;
+    s_ephemeral[idx] = true;
+    start_with_secs(t, launch_adjust_start_secs(s_detail_edit_secs));
+    assign_unnamed_star_for_duration(idx, t->duration);
+    s_new_timer_idx = -1;
+    bool fired = finish_start_tail();
+    if (fired) { return; }
+    select_timer_row(idx);
+    if (s_auto_return) { show_start_confirmation(idx); }
+    else { window_stack_remove(s_detail_window, true); }
     return;
   }
   if (ci->row == 1) { // Start & save
-    if (s_detail_style == DSTYLE_LONG_NEW) {
-      Timer *t = &s_timers[idx];
-      t->duration = s_detail_edit_secs;
-      t->remaining = s_detail_edit_secs;
-      t->custom = true;
-      s_ephemeral[idx] = false;
-      start_with_secs(t, launch_adjust_start_secs(s_detail_edit_secs));
-      assign_unnamed_star_for_duration(idx, t->duration);
-      s_new_timer_idx = -1;
-      bool fired = finish_start_tail();
-      send_add_timer(s_detail_edit_secs, t->name);
-      if (fired) { return; }
-      select_timer_row(idx);
-      if (s_auto_return) { show_start_confirmation(idx); }
-      else { window_stack_remove(s_detail_window, true); }
-    } else {
-      apply_overwrite_start(idx, s_detail_edit_secs, detail_pending_label_or_null());
-    }
+    Timer *t = &s_timers[idx];
+    t->duration = s_detail_edit_secs;
+    t->remaining = s_detail_edit_secs;
+    t->custom = true;
+    s_ephemeral[idx] = false;
+    start_with_secs(t, launch_adjust_start_secs(s_detail_edit_secs));
+    assign_unnamed_star_for_duration(idx, t->duration);
+    s_new_timer_idx = -1;
+    bool fired = finish_start_tail();
+    send_add_timer(s_detail_edit_secs, t->name);
+    if (fired) { return; }
+    select_timer_row(idx);
+    if (s_auto_return) { show_start_confirmation(idx); }
+    else { window_stack_remove(s_detail_window, true); }
     return;
   }
   if (ci->row == 2) { // Only save
-    if (s_detail_style == DSTYLE_LONG_NEW) {
-      Timer *t = &s_timers[idx];
-      t->duration = s_detail_edit_secs;
-      t->remaining = s_detail_edit_secs;
-      t->state = TS_IDLE;
-      t->end_time = 0;
-      t->custom = true;
-      s_ephemeral[idx] = false;
-      assign_unnamed_star_for_duration(idx, t->duration);
-      s_new_timer_idx = -1;
-      persist_all(); rearm_wakeup(); reload_ui();
-      send_add_timer(s_detail_edit_secs, t->name);
-      window_stack_remove(s_detail_window, true);
-    } else {
-      apply_overwrite_only(idx, s_detail_edit_secs, detail_pending_label_or_null());
-    }
+    Timer *t = &s_timers[idx];
+    t->duration = s_detail_edit_secs;
+    t->remaining = s_detail_edit_secs;
+    t->state = TS_IDLE;
+    t->end_time = 0;
+    t->custom = true;
+    s_ephemeral[idx] = false;
+    assign_unnamed_star_for_duration(idx, t->duration);
+    s_new_timer_idx = -1;
+    persist_all(); rearm_wakeup(); reload_ui();
+    send_add_timer(s_detail_edit_secs, t->name);
+    window_stack_remove(s_detail_window, true);
     return;
   }
-  if (ci->row == 3 && s_detail_style == DSTYLE_LONG_EXISTING) { open_delete_confirm(); }
 }
 
 static void detail_up_click(ClickRecognizerRef rec, void *ctx) {
   idle_reset();
   if (!s_detail_menu) { return; }
-  MenuIndex sel = menu_layer_get_selected_index(s_detail_menu);
-  if (s_detail_style == DSTYLE_LONG_EXISTING && sel.section == 0 && sel.row == 0) {
-    open_label_input_for_new_timer(s_detail_idx);
-    return;
-  }
   menu_layer_set_selected_next(s_detail_menu, true, MenuRowAlignNone, true);
 }
 
@@ -1205,28 +1223,30 @@ static void new_timer_label_result(const char *text, void *context) {
   int idx = (int)(intptr_t)context;
   s_label_target_idx = -1;
   if (idx < 0 || idx >= s_count) { return; }
+  if (s_label_return_style == DSTYLE_LONG_EXISTING) {
+    if (text) {
+      apply_overwrite_only(idx, s_timers[idx].duration, text);
+    } else if (s_detail_window && window_stack_contains_window(s_detail_window)) {
+      window_stack_remove(s_detail_window, true);
+    }
+    return;
+  }
   if (text) {
     Timer *t = &s_timers[idx];
-    if (s_label_return_style == DSTYLE_LONG_EXISTING) {
-      strncpy(s_detail_label_edit, text, NAME_LEN);
-      s_detail_label_edit[NAME_LEN] = '\0';
-      s_detail_label_edited = true;
+    if (text[0]) {
+      strncpy(t->name, text, NAME_LEN);
+      t->name[NAME_LEN] = '\0';
     } else {
-      if (text[0]) {
-        strncpy(t->name, text, NAME_LEN);
-        t->name[NAME_LEN] = '\0';
-      } else {
-        t->name[0] = '\0';
-      }
-      assign_unnamed_star_for_duration(idx, t->duration);
-      t->last_used = now_s();
+      t->name[0] = '\0';
     }
+    assign_unnamed_star_for_duration(idx, t->duration);
+    t->last_used = now_s();
     if (s_detail_window && window_stack_contains_window(s_detail_window)) {
       s_detail_idx = idx;
       s_detail_style = s_label_return_style;
       if (s_detail_menu) { menu_layer_reload_data(s_detail_menu); }
     }
-    if (s_label_return_style != DSTYLE_LONG_EXISTING) { reload_ui(); }
+    reload_ui();
   }
 }
 
@@ -1234,12 +1254,7 @@ static void open_label_input_for_new_timer(int idx) {
   if (idx < 0 || idx >= s_count) { return; }
   s_label_target_idx = idx;
   s_label_return_style = s_detail_style;
-  const char *initial = NULL;
-  if (s_label_return_style == DSTYLE_LONG_EXISTING && s_detail_label_edited) {
-    initial = (s_detail_label_edit[0] != 0) ? s_detail_label_edit : NULL;
-  } else {
-    initial = (s_timers[idx].name[0] != 0) ? s_timers[idx].name : NULL;
-  }
+  const char *initial = (s_timers[idx].name[0] != 0) ? s_timers[idx].name : NULL;
   s_detail_advancing = true;
   multitap_keyboard_window_push_ex(new_timer_label_result, initial, NAME_LEN, (void *)(intptr_t)idx);
 }
@@ -1316,9 +1331,21 @@ static void del_confirm_select(ClickRecognizerRef rec, void *ctx) {
   window_stack_remove(s_detail_window, true);
 }
 
-// Back is the implicit pop (cancel); only Select needs a handler.
+static void del_confirm_back(ClickRecognizerRef rec, void *ctx) {
+  bool exit_edit_flow = (s_detail_style == DSTYLE_LONG_EXISTING);
+  window_stack_remove(s_del_window, false);
+  if (!exit_edit_flow) { return; }
+  if (s_dial_window && window_stack_contains_window(s_dial_window)) {
+    window_stack_remove(s_dial_window, false);
+  }
+  if (s_detail_window && window_stack_contains_window(s_detail_window)) {
+    window_stack_remove(s_detail_window, true);
+  }
+}
+
 static void del_click_config(void *ctx) {
   window_single_click_subscribe(BUTTON_ID_SELECT, del_confirm_select);
+  window_single_click_subscribe(BUTTON_ID_BACK, del_confirm_back);
 }
 
 static void open_delete_confirm(void) {
@@ -1379,6 +1406,7 @@ static void dial_disappear(Window *w) {
   dial_hold_cancel();
   bool advancing = s_dial_advancing;
   s_dial_advancing = false;
+  if (!window_stack_contains_window(s_dial_window)) { s_dial_existing_duration_edit = false; }
   if (advancing) { return; }
   if (s_new_timer_idx >= 0 && s_new_timer_idx == s_detail_idx
       && s_new_timer_idx < s_count && s_timers[s_new_timer_idx].state == TS_IDLE) {
@@ -1396,6 +1424,8 @@ static void open_detail_window(int timer_idx, DetailStyle style) {
     if (style == DSTYLE_LEGACY) {
       int32_t rem = tc_remaining_now(t, now_s());
       s_detail_edit_secs = rem >= 1 ? rem : t->duration;
+    } else if (style == DSTYLE_LONG_EXISTING) {
+      s_detail_edit_secs = t->duration;
     }
     if (s_detail_edit_secs < 0) { s_detail_edit_secs = 0; }
   }
@@ -1417,13 +1447,12 @@ static void open_detail_window(int timer_idx, DetailStyle style) {
 static void open_dial_window(int timer_idx, DetailStyle style) {
   s_detail_idx = timer_idx;
   s_detail_style = style;
+  if (style != DSTYLE_LONG_EXISTING) { s_dial_existing_duration_edit = false; }
   s_dial_field = 1; // minute first on all platforms
   if (timer_idx >= 0 && timer_idx < s_count) {
     Timer *t = &s_timers[timer_idx];
     if (style == DSTYLE_LONG_NEW) { s_detail_edit_secs = 60; }
-    else { s_detail_edit_secs = t->duration; } // existing long-press edits duration
-    s_detail_label_edited = false;
-    s_detail_label_edit[0] = '\0';
+    else { s_detail_edit_secs = t->duration; } // existing timer edit: start from current duration
     if (s_detail_edit_secs < 0) { s_detail_edit_secs = 0; }
   }
   if (!s_dial_window) {
@@ -1953,14 +1982,13 @@ static void ml_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
   }
 }
 
-// Long SELECT opens the detail window for ANY timer (short SELECT still starts an
-// idle timer directly). The long-press menu contains the edit/save/delete flow.
+// Long SELECT opens the timer edit menu for any existing row.
 static void ml_select_long(MenuLayer *ml, MenuIndex *ci, void *ctx) {
   idle_reset();
   int idx = -1;
   bool is_new = false;
   if (!ml_resolve_selected_target(ci->row, &idx, &is_new) || is_new) { return; }
-  open_dial_window(idx, DSTYLE_LONG_EXISTING);
+  open_detail_window(idx, DSTYLE_LONG_EXISTING);
 }
 
 static void ml_selection_changed(MenuLayer *ml, MenuIndex new_i, MenuIndex old_i, void *ctx) {
@@ -2199,10 +2227,6 @@ static void remove_timer_at(int idx) {
   else if (s_menu_selected_timer_idx > idx) { s_menu_selected_timer_idx--; }
 }
 
-static const char *detail_pending_label_or_null(void) {
-  return s_detail_label_edited ? s_detail_label_edit : NULL;
-}
-
 static void start_as_new(int32_t secs, bool save_to_phone, const char *name) {
   if (s_count >= MAX_TIMERS) {
     return;   // List full: nothing to create. (Keep it simple — no new row.)
@@ -2253,26 +2277,6 @@ static void apply_overwrite_only(int idx, int32_t secs, const char *name) {
   persist_all(); rearm_wakeup(); reload_ui();
   send_update_timer(idx, secs, name);
   window_stack_remove(s_detail_window, true);
-}
-
-static void apply_overwrite_start(int idx, int32_t secs, const char *name) {
-  if (idx < 0 || idx >= s_count) { return; }
-  if (secs < 0) { secs = 0; }
-  Timer *t = &s_timers[idx];
-  if (name) {
-    strncpy(t->name, name, NAME_LEN);
-    t->name[NAME_LEN] = '\0';
-  }
-  t->duration = secs;
-  t->remaining = secs;
-  start_with_secs(t, launch_adjust_start_secs_for_timer(t, secs));
-  assign_unnamed_star_for_duration(idx, t->duration);
-  s_ephemeral[idx] = false;
-  bool fired = finish_start_tail();
-  send_update_timer(idx, secs, name);
-  if (fired) { return; }
-  if (s_auto_return) { show_start_confirmation(idx); }
-  else { window_stack_remove(s_detail_window, true); }
 }
 
 // "+ New timer" action: create an unnamed IDLE draft timer (default 1:00) held in
