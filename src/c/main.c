@@ -66,6 +66,11 @@ static DetailStyle s_label_return_style = DSTYLE_LONG_NEW; // detail style to re
 static char s_detail_label_edit[NAME_LEN + 1]; // staged label edit in existing-timer flow
 static bool s_detail_label_edited = false;     // true if staged label differs from original during this edit flow
 static bool s_detail_advancing = false; // true while pushing a modal from detail window
+static bool s_new_flow_open_label_after_dial = false; // chain new timer: dial -> label -> menu
+static AppTimer *s_new_flow_label_timer = NULL;
+static int16_t s_new_flow_label_idx = -1;
+static int32_t s_main_touch_secs = 0;
+static bool s_main_touch_pending = false;
 
 // ---- time edit dial window (opened before long-press/new confirmation menu) ----
 static Window *s_dial_window;
@@ -342,6 +347,7 @@ static void open_detail_window(int timer_idx, DetailStyle style);  // defined be
 static void open_dial_window(int timer_idx, DetailStyle style);    // defined below; used by long/new flows
 static void dial_touch_selected(uint8_t hours, uint8_t minutes, uint8_t seconds);
 static void main_touch_selected(uint8_t hours, uint8_t minutes, uint8_t seconds);
+static void main_touch_label_result(const char *text, void *context);
 static void open_delete_confirm(void);                              // defined below; delete confirm modal
 static void remove_timer_at(int idx); // defined below; used by alarm stop/delete paths
 static int sweep_expiries(void); // defined below; used by tick/start helpers
@@ -845,6 +851,7 @@ static void dial_select(ClickRecognizerRef rec, void *ctx) {
     return;
   }
   s_dial_advancing = true;
+  if (s_detail_style == DSTYLE_LONG_NEW) { s_new_flow_open_label_after_dial = true; }
   open_detail_window(s_detail_idx, s_detail_style);
   if (window_stack_contains_window(s_dial_window)) {
     window_stack_remove(s_dial_window, false);
@@ -974,9 +981,10 @@ static void dl_draw_header(GContext *gctx, const Layer *cell, uint16_t section, 
     return;
   }
   if (s_detail_style == DSTYLE_LONG_NEW) {
-    const char *left = (t->name[0] != 0) ? t->name : "<Add label>";
-    graphics_draw_text(gctx, left, f, GRect(4, 3, b.size.w - 92, 26),
-      GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
+    if (t->name[0]) {
+      graphics_draw_text(gctx, t->name, f, GRect(4, 3, b.size.w - 92, 26),
+        GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
+    }
     graphics_draw_text(gctx, rem_head, f, GRect(4, 3, b.size.w - 8, 26),
       GTextOverflowModeTrailingEllipsis, GTextAlignmentRight, NULL);
     return;
@@ -1168,8 +1176,7 @@ static void detail_up_click(ClickRecognizerRef rec, void *ctx) {
   idle_reset();
   if (!s_detail_menu) { return; }
   MenuIndex sel = menu_layer_get_selected_index(s_detail_menu);
-  if ((s_detail_style == DSTYLE_LONG_NEW || s_detail_style == DSTYLE_LONG_EXISTING)
-      && sel.section == 0 && sel.row == 0) {
+  if (s_detail_style == DSTYLE_LONG_EXISTING && sel.section == 0 && sel.row == 0) {
     open_label_input_for_new_timer(s_detail_idx);
     return;
   }
@@ -1235,6 +1242,16 @@ static void open_label_input_for_new_timer(int idx) {
   }
   s_detail_advancing = true;
   multitap_keyboard_window_push_ex(new_timer_label_result, initial, NAME_LEN, (void *)(intptr_t)idx);
+}
+
+static void new_flow_open_label_cb(void *ctx) {
+  (void)ctx;
+  s_new_flow_label_timer = NULL;
+  int idx = s_new_flow_label_idx;
+  s_new_flow_label_idx = -1;
+  if (idx >= 0 && idx < s_count && s_detail_style == DSTYLE_LONG_NEW) {
+    open_label_input_for_new_timer(idx);
+  }
 }
 
 static void detail_window_load(Window *w) {
@@ -1338,6 +1355,17 @@ static void detail_disappear(Window *w) {
   }
 }
 
+static void detail_appear(Window *w) {
+  idle_appear(w);
+  if (!s_new_flow_open_label_after_dial) { return; }
+  s_new_flow_open_label_after_dial = false;
+  if (s_detail_style == DSTYLE_LONG_NEW && s_detail_idx >= 0 && s_detail_idx < s_count) {
+    s_new_flow_label_idx = s_detail_idx;
+    if (s_new_flow_label_timer) { app_timer_cancel(s_new_flow_label_timer); }
+    s_new_flow_label_timer = app_timer_register(10, new_flow_open_label_cb, NULL);
+  }
+}
+
 static void dial_appear(Window *w) {
   idle_appear(w);
   dial_touch_create(window_get_root_layer(w), dial_touch_selected);
@@ -1375,7 +1403,7 @@ static void open_detail_window(int timer_idx, DetailStyle style) {
     s_detail_window = window_create();
     window_set_window_handlers(s_detail_window, (WindowHandlers){
       .load = detail_window_load, .unload = detail_window_unload,
-      .appear = idle_appear, .disappear = detail_disappear });
+      .appear = detail_appear, .disappear = detail_disappear });
   }
   // Idempotent: if it is already on the stack (e.g. it was open under the alarm when
   // a timer expired), just refresh it instead of pushing it a second time.
@@ -1430,8 +1458,17 @@ static void main_touch_selected(uint8_t hours, uint8_t minutes, uint8_t seconds)
   if (h > 100) { h = 100; }
   m = ((m % 60) + 60) % 60;
   s = ((s % 60) + 60) % 60;
-  int32_t secs = h * 3600 + m * 60 + s;
-  start_as_new(secs, false, NULL);
+  s_main_touch_secs = h * 3600 + m * 60 + s;
+  s_main_touch_pending = true;
+  multitap_keyboard_window_push_ex(main_touch_label_result, NULL, NAME_LEN, NULL);
+}
+
+static void main_touch_label_result(const char *text, void *context) {
+  (void)context;
+  if (!s_main_touch_pending) { return; }
+  s_main_touch_pending = false;
+  const char *name = (text && text[0] != '\0') ? text : NULL;
+  start_as_new(s_main_touch_secs, false, name);
 }
 
 // ---- MenuLayer callbacks ----
@@ -2392,6 +2429,7 @@ static void init(void) {
 
 static void deinit(void) {
   if (s_tick) { app_timer_cancel(s_tick); }
+  if (s_new_flow_label_timer) { app_timer_cancel(s_new_flow_label_timer); s_new_flow_label_timer = NULL; }
   idle_cancel();
   if (s_new_timer_idx >= 0 && s_new_timer_idx < s_count) { remove_timer_at(s_new_timer_idx); }
   persist_all();
