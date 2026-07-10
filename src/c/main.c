@@ -61,8 +61,6 @@ static int16_t s_new_timer_idx = -1;  // index in s_timers of an un-started draf
 static int32_t s_detail_edit_secs = 60;
 typedef enum { DSTYLE_LEGACY = 0, DSTYLE_LONG_EXISTING = 1, DSTYLE_LONG_NEW = 2 } DetailStyle;
 static DetailStyle s_detail_style = DSTYLE_LEGACY;
-typedef enum { SAVE_INTENT_NONE = 0, SAVE_INTENT_START_AND_SAVE = 1, SAVE_INTENT_ONLY_SAVE = 2 } SaveIntent;
-static SaveIntent s_save_intent = SAVE_INTENT_NONE;
 static int16_t s_label_target_idx = -1; // timer index receiving keyboard-entered label
 static DetailStyle s_label_return_style = DSTYLE_LONG_NEW; // detail style to restore after label input
 static char s_detail_label_edit[NAME_LEN + 1]; // staged label edit in existing-timer flow
@@ -82,10 +80,6 @@ static uint32_t s_dial_hold_next_due_ms;
 #define DIAL_HOLD_POLL_MS 20
 #define DIAL_TRI_HW 10
 #define DIAL_TRI_H 12
-
-// ---- save-type submenu: "As new timer" / "Overwrite current" ----
-static Window *s_save_window;
-static MenuLayer *s_save_menu;
 
 // ---- transient "Started" confirmation shown ~1.1s before auto-return closes the app ----
 static Window  *s_confirm_window;
@@ -1018,7 +1012,6 @@ static void dl_draw_row(GContext *gctx, const Layer *cell, MenuIndex *ci, void *
 }
 
 static void start_as_new(int32_t secs, bool save_to_phone, const char *name); // defined below
-static void save_as_new_only(int32_t secs, const char *name);       // defined below
 static void apply_overwrite_only(int idx, int32_t secs, const char *name);    // defined below
 static void apply_overwrite_start(int idx, int32_t secs, const char *name);   // defined below
 static void send_add_timer(int32_t secs, const char *name);          // defined below (phone sync)
@@ -1027,7 +1020,6 @@ static void create_new_timer(void);                // defined below ("+ New time
 static void open_delete_confirm(void);             // defined below (delete path)
 static void send_delete_timer(int32_t idx);        // defined below (delete path)
 static void show_start_confirmation(int idx);      // defined below (auto-return tail)
-static void open_save_type_menu(SaveIntent intent); // defined below
 static void open_label_input_for_new_timer(int idx); // defined below
 static const char *detail_pending_label_or_null(void); // defined below
 
@@ -1146,7 +1138,7 @@ static void dl_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
       if (s_auto_return) { show_start_confirmation(idx); }
       else { window_stack_remove(s_detail_window, true); }
     } else {
-      open_save_type_menu(SAVE_INTENT_START_AND_SAVE);
+      apply_overwrite_start(idx, s_detail_edit_secs, detail_pending_label_or_null());
     }
     return;
   }
@@ -1165,7 +1157,7 @@ static void dl_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
       send_add_timer(s_detail_edit_secs, t->name);
       window_stack_remove(s_detail_window, true);
     } else {
-      open_save_type_menu(SAVE_INTENT_ONLY_SAVE);
+      apply_overwrite_only(idx, s_detail_edit_secs, detail_pending_label_or_null());
     }
     return;
   }
@@ -1264,73 +1256,6 @@ static void detail_window_load(Window *w) {
 
 static void detail_window_unload(Window *w) {
   menu_layer_destroy(s_detail_menu); s_detail_menu = NULL;
-}
-
-static uint16_t sv_num_rows(MenuLayer *ml, uint16_t section, void *ctx) { return 2; }
-static int16_t sv_cell_height(MenuLayer *ml, MenuIndex *ci, void *ctx) { return 34; }
-static int16_t sv_header_height(MenuLayer *ml, uint16_t section, void *ctx) { return 32; }
-
-static void sv_draw_header(GContext *gctx, const Layer *cell, uint16_t section, void *ctx) {
-  GRect b = layer_get_bounds(cell);
-  graphics_context_set_text_color(gctx, GColorBlack);
-  graphics_draw_text(gctx, "Save type", fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD),
-    GRect(4, 3, b.size.w - 8, 26), GTextOverflowModeFill, GTextAlignmentCenter, NULL);
-}
-
-static void sv_draw_row(GContext *gctx, const Layer *cell, MenuIndex *ci, void *ctx) {
-  const char *label = (ci->row == 0) ? "As new timer" : "Overwrite current";
-  GRect b = layer_get_bounds(cell);
-  graphics_draw_text(gctx, label, fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD),
-    GRect(6, (b.size.h - 26) / 2, b.size.w - 12, 26),
-    GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
-}
-
-static void sv_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
-  idle_reset();
-  int idx = s_detail_idx;
-  if (idx < 0 || idx >= s_count) { return; }
-  window_stack_remove(s_save_window, false);
-  const char *name = detail_pending_label_or_null();
-  if (ci->row == 0) {
-    if (s_save_intent == SAVE_INTENT_START_AND_SAVE) { start_as_new(s_detail_edit_secs, true, name); }
-    else if (s_save_intent == SAVE_INTENT_ONLY_SAVE) { save_as_new_only(s_detail_edit_secs, name); }
-  } else {
-    if (s_save_intent == SAVE_INTENT_START_AND_SAVE) { apply_overwrite_start(idx, s_detail_edit_secs, name); }
-    else if (s_save_intent == SAVE_INTENT_ONLY_SAVE) { apply_overwrite_only(idx, s_detail_edit_secs, name); }
-  }
-}
-
-static void save_window_load(Window *w) {
-  Layer *root = window_get_root_layer(w);
-  s_save_menu = menu_layer_create(layer_get_bounds(root));
-  menu_layer_set_callbacks(s_save_menu, NULL, (MenuLayerCallbacks){
-    .get_num_rows = sv_num_rows,
-    .get_cell_height = sv_cell_height,
-    .get_header_height = sv_header_height,
-    .draw_header = sv_draw_header,
-    .draw_row = sv_draw_row,
-    .select_click = sv_select,
-  });
-  menu_layer_set_normal_colors(s_save_menu, GColorWhite, GColorBlack);
-  menu_layer_set_highlight_colors(s_save_menu, GColorBlack, GColorWhite);
-  menu_layer_set_click_config_onto_window(s_save_menu, w);
-  layer_add_child(root, menu_layer_get_layer(s_save_menu));
-}
-
-static void save_window_unload(Window *w) {
-  menu_layer_destroy(s_save_menu); s_save_menu = NULL;
-}
-
-static void open_save_type_menu(SaveIntent intent) {
-  s_save_intent = intent;
-  if (!s_save_window) {
-    s_save_window = window_create();
-    window_set_window_handlers(s_save_window, (WindowHandlers){
-      .load = save_window_load, .unload = save_window_unload,
-      .appear = idle_appear, .disappear = idle_disappear });
-  }
-  s_detail_advancing = true;
-  window_stack_push(s_save_window, true);
 }
 
 static void del_update_proc(Layer *layer, GContext *gctx) {
@@ -2112,7 +2037,7 @@ static void inbox_received(DictionaryIterator *iter, void *ctx) {
     else               { idle_reset();  APP_LOG(APP_LOG_LEVEL_INFO, "config closed: idle resumed"); }
   }
   Tuple *cfg = dict_find(iter, MESSAGE_KEY_TimerConfig);
-  if (cfg) {
+  if (cfg && cfg->type == TUPLE_CSTRING) {
     // static, NOT on the stack: two Timer[MAX_TIMERS] arrays are ~2 KB and would
     // overflow the Pebble app stack. The inbox handler runs on the single event
     // loop, so static is safe.
@@ -2272,32 +2197,6 @@ static void start_as_new(int32_t secs, bool save_to_phone, const char *name) {
   else if (s_detail_window && window_stack_contains_window(s_detail_window)) {
     window_stack_remove(s_detail_window, true);           // back to the list
   }
-}
-
-static void save_as_new_only(int32_t secs, const char *name) {
-  if (s_count >= MAX_TIMERS) { return; }
-  if (secs < 0) { secs = 0; }
-  int idx = s_count;
-  Timer *t = &s_timers[idx];
-  memset(t, 0, sizeof(*t));
-  if (name) {
-    strncpy(t->name, name, NAME_LEN);
-    t->name[NAME_LEN] = '\0';
-  } else {
-    t->name[0] = 0;
-  }
-  t->duration = secs;
-  t->remaining = secs;
-  t->state = TS_IDLE;
-  t->custom = true;
-  t->last_used = now_s();
-  s_ephemeral[idx] = false;
-  s_unnamed_star[idx] = -1;
-  s_count++;
-  assign_unnamed_star_for_duration(idx, t->duration);
-  persist_all(); rearm_wakeup(); reload_ui();
-  send_add_timer(secs, t->name);
-  window_stack_remove(s_detail_window, true);
 }
 
 static void apply_overwrite_only(int idx, int32_t secs, const char *name) {
@@ -2498,7 +2397,6 @@ static void deinit(void) {
   persist_all();
   rearm_wakeup();   // ensure the closed-app wakeup reflects final state
   if (s_confirm_window) { window_destroy(s_confirm_window); }
-  if (s_save_window) { window_destroy(s_save_window); }
   if (s_del_window) { window_destroy(s_del_window); }
   if (s_dial_window) { window_destroy(s_dial_window); }
   if (s_detail_window) { window_destroy(s_detail_window); }
