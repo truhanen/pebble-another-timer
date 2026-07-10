@@ -1035,37 +1035,28 @@ static void dl_draw_header(GContext *gctx, const Layer *cell, uint16_t section, 
   int32_t shown = (s_detail_style == DSTYLE_LEGACY) ? tc_remaining_now(t, now_s()) : s_detail_edit_secs;
   char rem_head[36];
   tc_format_remaining(rem_head, sizeof(rem_head), shown);
+  const char *title = t->name[0] ? t->name : "<No label>";
   GRect b = layer_get_bounds(cell);
   GFont f = fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD);
   graphics_context_set_text_color(gctx, GColorBlack);
   if (s_detail_style == DSTYLE_LONG_EXISTING) {
-    const char *name = t->name;
-    if (name[0]) {
-      graphics_draw_text(gctx, name, f, GRect(4, 3, b.size.w - 92, 26),
-        GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
-    }
+    graphics_draw_text(gctx, title, f, GRect(4, 3, b.size.w - 92, 26),
+      GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
     graphics_draw_text(gctx, rem_head, f, GRect(4, 3, b.size.w - 8, 26),
       GTextOverflowModeTrailingEllipsis, GTextAlignmentRight, NULL);
     return;
   }
   if (s_detail_style == DSTYLE_LONG_NEW) {
-    if (t->name[0]) {
-      graphics_draw_text(gctx, t->name, f, GRect(4, 3, b.size.w - 92, 26),
-        GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
-    }
+    graphics_draw_text(gctx, title, f, GRect(4, 3, b.size.w - 92, 26),
+      GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
     graphics_draw_text(gctx, rem_head, f, GRect(4, 3, b.size.w - 8, 26),
       GTextOverflowModeTrailingEllipsis, GTextAlignmentRight, NULL);
     return;
   }
-  if (t->name[0]) {
-    graphics_draw_text(gctx, t->name, f, GRect(4, 3, b.size.w - 92, 26),
-      GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
-    graphics_draw_text(gctx, rem_head, f, GRect(4, 3, b.size.w - 8, 26),
-      GTextOverflowModeTrailingEllipsis, GTextAlignmentRight, NULL);
-  } else {
-    graphics_draw_text(gctx, rem_head, f, GRect(4, 3, b.size.w - 8, 26),
-      GTextOverflowModeTrailingEllipsis, GTextAlignmentRight, NULL);
-  }
+  graphics_draw_text(gctx, title, f, GRect(4, 3, b.size.w - 92, 26),
+    GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
+  graphics_draw_text(gctx, rem_head, f, GRect(4, 3, b.size.w - 8, 26),
+    GTextOverflowModeTrailingEllipsis, GTextAlignmentRight, NULL);
 }
 
 static void dl_draw_row(GContext *gctx, const Layer *cell, MenuIndex *ci, void *ctx) {
