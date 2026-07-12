@@ -223,18 +223,9 @@ static void prv_utf8_backspace(MultitapKeyboard *kb) {
   kb->buffer[i] = '\0';
 }
 
-// Delete a whole word: trailing whitespace, then the run of non-whitespace.
-static void prv_delete_word(MultitapKeyboard *kb) {
-  int i = (int)strlen(kb->buffer);
-  while (i > 0 && (kb->buffer[i - 1] == ' ' || kb->buffer[i - 1] == '\n')) i--;
-  while (i > 0 && kb->buffer[i - 1] != ' ' && kb->buffer[i - 1] != '\n') i--;
-  kb->buffer[i] = '\0';
-}
-
 static void prv_do_delete(MultitapKeyboard *kb) {
   if (kb->pending_active) { kb->pending_active = false; return; }
-  if (kb->settings.delete_mode == 1) prv_delete_word(kb);
-  else prv_utf8_backspace(kb);
+  prv_utf8_backspace(kb);
   prv_recompute_autocap(kb);
 }
 
@@ -300,17 +291,7 @@ static void prv_cycle_page(MultitapKeyboard *kb) {
   layer_mark_dirty(kb->layer);
 }
 
-// ---- Feedback (haptics, blinking caret, tap flash) --------------------------
-
-static void prv_haptic(MultitapKeyboard *kb) {
-  if (!kb->settings.haptics || kb->settings.haptic_ms <= 0) return;
-  // One short custom pulse, length set in settings. The durations buffer must
-  // outlive the (asynchronous) playback, so it is a function-local static; the
-  // watchapp is single-threaded, so reusing one buffer is safe.
-  static uint32_t pulse[1];
-  pulse[0] = (uint32_t)kb->settings.haptic_ms;
-  vibes_enqueue_custom_pattern((VibePattern){ .durations = pulse, .num_segments = 1 });
-}
+// ---- Feedback (blinking caret, tap flash) ------------------------------------
 
 static void prv_caret_timer_cb(void *data) {
   MultitapKeyboard *kb = (MultitapKeyboard *)data;
@@ -369,23 +350,11 @@ static void prv_press_char_key(MultitapKeyboard *kb, int key) {
   prv_arm_commit_timer(kb);
 }
 
-// Word char for the double-space rule: not space, not sentence punctuation.
-static bool prv_is_word_byte(char c) {
-  return c != ' ' && c != '.' && c != '!' && c != '?';
-}
-
 static void prv_do_space(MultitapKeyboard *kb) {
   prv_commit_pending(kb);
   if (kb->page == PAGE_NUMBERS) { prv_append(kb, "0"); prv_recompute_autocap(kb); return; }
 
-  size_t len = strlen(kb->buffer);
-  if (kb->settings.two_space_period &&
-      len >= 2 && kb->buffer[len - 1] == ' ' && prv_is_word_byte(kb->buffer[len - 2])) {
-    kb->buffer[len - 1] = '\0';   // drop the trailing space...
-    prv_append(kb, ". ");         // ...and replace it with ". "
-  } else {
-    prv_append(kb, " ");
-  }
+  prv_append(kb, " ");
   prv_recompute_autocap(kb);
 }
 
@@ -446,7 +415,6 @@ void multitap_keyboard_handle_tap(MultitapKeyboard *kb, GPoint point) {
   if (key < 0) return;
   prv_flash(kb, key);
   prv_press_key(kb, key);
-  prv_haptic(kb);            // every on-screen key tap buzzes, re-presses included
 }
 
 // Press feedback: highlight the key under the finger from touchdown until liftoff
@@ -488,13 +456,12 @@ void multitap_keyboard_handle_hold(MultitapKeyboard *kb, GPoint point) {
   if (key < 0) return;
   prv_caret_wake(kb);
   prv_flash(kb, key);
-  if (key == KEY_SHIFT) { prv_cycle_page(kb); prv_haptic(kb); return; }
-  if (key == KEY_DEL)   { prv_press_key(kb, KEY_DEL); prv_haptic(kb); return; }
+  if (key == KEY_SHIFT) { prv_cycle_page(kb); return; }
+  if (key == KEY_DEL)   { prv_press_key(kb, KEY_DEL); return; }
   prv_commit_pending(kb);
   if (key == KEY_SPACE) prv_append(kb, (kb->page == PAGE_NUMBERS) ? " " : "0");
   else { char d[2] = { (char)('1' + key), '\0' }; prv_append(kb, d); }
   prv_recompute_autocap(kb);
-  prv_haptic(kb);
   layer_mark_dirty(kb->layer);
 }
 
@@ -914,13 +881,6 @@ MultitapKeyboard *multitap_keyboard_create(GRect frame, MultitapKeyboardDoneHand
   kb->shift = SHIFT_OFF;
   kb->settings.commit_timeout_ms = MULTITAP_DEFAULT_WAIT_MS;
   kb->settings.auto_caps = true;
-  kb->settings.two_space_period = false;
-  kb->settings.haptics = false;
-  kb->settings.haptic_ms = 20;   // one short pulse by default
-  kb->settings.delete_mode = 0;
-  kb->settings.del_repeat_chars_ms = 100;
-  kb->settings.del_repeat_words_ms = 250;
-  kb->settings.flat_keys = false;   // 3D raised keys by default
   for (int i = 0; i < EXT_COUNT; i++) kb->ext_enabled[i] = true;
   kb->theme = 0;
   kb->flash_key = -1;
@@ -995,8 +955,7 @@ void multitap_keyboard_set_settings(MultitapKeyboard *kb, const MultitapSettings
 }
 
 // ---- Button-shortcut actions ------------------------------------------------
-// These are driven by the physical watch buttons, which stay silent by design;
-// only on-screen key taps buzz. So none of these call prv_haptic().
+// Driven by the physical watch buttons, as opposed to on-screen key taps.
 
 void multitap_keyboard_backspace(MultitapKeyboard *kb) { if (kb) prv_press_key(kb, KEY_DEL); }
 
@@ -1021,9 +980,7 @@ void multitap_keyboard_newline(MultitapKeyboard *kb) {
 }
 
 int multitap_keyboard_delete_repeat_ms(MultitapKeyboard *kb) {
-  if (!kb) return 100;
-  return (kb->settings.delete_mode == 1) ? kb->settings.del_repeat_words_ms
-                                         : kb->settings.del_repeat_chars_ms;
+  return 100;
 }
 
 // ---- Extended (toggleable) characters ---------------------------------------

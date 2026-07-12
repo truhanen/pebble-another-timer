@@ -19,9 +19,9 @@
 // key labels (so `abc` reads "abc") but still reachable by cycling, and can be
 // turned on/off individually via the extended-character API.
 //
-// Behavior settings (see MultitapSettings): the multi-tap wait time, auto-capitalize
-// at the start of sentences (the shift indicator reflects it), and a
-// double-space-inserts-period shortcut. Text is stored as UTF-8.
+// Behavior settings (see MultitapSettings): the multi-tap wait time and
+// auto-capitalize at the start of sentences (the shift indicator reflects it).
+// Text is stored as UTF-8.
 //
 // This is the keyboard WIDGET (a Layer). It takes no touch dependency — feed
 // it taps via multitap_keyboard_handle_tap(), so it stays portable and testable.
@@ -35,13 +35,6 @@
 typedef struct {
   int  commit_timeout_ms;  // wait between presses of the same key before commit
   bool auto_caps;          // capitalize first letter of each sentence
-  bool two_space_period;   // "word " + space  ->  "word. "
-  bool haptics;            // master on/off for vibration
-  int  haptic_ms;          // length of the single key-press pulse (ms)
-  int  delete_mode;        // 0 = characters, 1 = words
-  int  del_repeat_chars_ms;// hold-to-repeat interval in characters mode
-  int  del_repeat_words_ms;// hold-to-repeat interval in words mode
-  bool flat_keys;          // draw keys flat (no 3D raise/shadow); darken on press
 } MultitapSettings;
 
 // Fired by multitap_keyboard_submit(). `text` is only valid during the callback.
