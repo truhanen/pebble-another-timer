@@ -1,17 +1,18 @@
 {
-  "name": "countdown-timer",
-  "author": "Sykerö Software",
-  "version": "1.5.0",
+  "name": "pebble-another-timer",
+  "author": "Tuukka Ruhanen",
+  "version": "1.0.0",
   "keywords": [
-    "pebble-app"
+    "timer",
+    "touch"
   ],
   "private": true,
   "dependencies": {
     "pebble-clay": "^1.0.4"
   },
   "pebble": {
-    "displayName": "Countdown timer",
-    "uuid": "6514c531-5e09-470e-8ffb-ce633f721e64",
+    "displayName": "Another timer",
+    "uuid": "1df6fc5c-261d-49c7-b339-6ea60cbe6649",
     "sdkVersion": "3",
     "enableMultiJS": true,
     "targetPlatforms": [
