@@ -95,12 +95,19 @@ static char     s_del_name[NAME_LEN + 1];
 
 static int64_t now_s(void) { return (int64_t)time(NULL); }
 
-static int32_t launch_elapsed_s(void) {
-  if (!s_launch_sync || s_app_launch_s <= 0) { return 0; }
+// Seconds since app launch, regardless of the launch-sync config toggle — used
+// for the bottom bar's always-on elapsed display.
+static int32_t raw_launch_elapsed_s(void) {
+  if (s_app_launch_s <= 0) { return 0; }
   int64_t d = now_s() - s_app_launch_s;
   if (d < 0) { d = 0; }
   if (d > INT32_MAX) { d = INT32_MAX; }
   return (int32_t)d;
+}
+
+static int32_t launch_elapsed_s(void) {
+  if (!s_launch_sync) { return 0; }
+  return raw_launch_elapsed_s();
 }
 
 static int32_t launch_adjust_start_secs(int32_t base) {
@@ -161,7 +168,7 @@ static void draw_bottom_bar(GContext *gctx, GRect bounds) {
   char left[16];
   clock_copy_time_string(left, sizeof(left));
   char elapsed[16];
-  tc_format_remaining(elapsed, sizeof(elapsed), launch_elapsed_s());
+  tc_format_remaining(elapsed, sizeof(elapsed), raw_launch_elapsed_s());
   char right[24];
   snprintf(right, sizeof(right), "-%s", elapsed);
 
