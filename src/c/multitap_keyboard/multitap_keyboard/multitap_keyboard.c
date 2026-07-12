@@ -765,14 +765,16 @@ static void prv_update_proc(Layer *layer, GContext *ctx) {
     strcat(shown, "|");
   }
 
-  // The text header is a soft gray section (standing in for the old divider),
-  // holding a bright rounded field where the text is drawn.
-  graphics_context_set_fill_color(ctx, c_key);
+  // The text header is a white section (standing in for the old divider),
+  // holding a plain field outlined with a 3px frame (matching the duration
+  // dial boxes) where the text is drawn.
+  graphics_context_set_fill_color(ctx, GColorWhite);
   graphics_fill_rect(ctx, GRect(0, 0, b.size.w, TEXT_AREA_H), 0, GCornerNone);
 
   GRect field = GRect(4, 4, b.size.w - 8, TEXT_AREA_H - 8);
-  graphics_context_set_fill_color(ctx, c_bg);
-  graphics_fill_rect(ctx, field, 6, GCornersAll);
+  graphics_context_set_stroke_color(ctx, c_fg);
+  graphics_context_set_stroke_width(ctx, 3);
+  graphics_draw_rect(ctx, field);
 
   // Relax the sticky layout only when the committed text actually shrank (a
   // delete). Track kb->buffer, not `shown`: the blinking caret toggles shown's

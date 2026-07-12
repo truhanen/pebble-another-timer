@@ -237,7 +237,7 @@ static void draw_clock_indices(const GRect* bounds, GContext *ctx) {
         {"12", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11"};
     static const char* mins_text[NUM_CLOCK_INDICES] =
         {"0", "5", "10", "15", "20", "25", "30", "35", "40", "45", "50", "55"};
-    const GFont font = fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD);
+    const GFont font = fonts_get_system_font(FONT_KEY_GOTHIC_28_BOLD);
     graphics_context_set_text_color(ctx, color_outer_fg());
 
 #if INDEX_LINES
@@ -262,9 +262,14 @@ static void draw_clock_indices(const GRect* bounds, GContext *ctx) {
             : (s_select_mode == SELECTMODE_HOUR) ? hours_text[i]
             : mins_text[i]
         );
+        GSize txt_sz = graphics_text_layout_get_content_size(
+            text, font, GRect(0, 0, 40, 200), GTextOverflowModeWordWrap, GTextAlignmentCenter);
+        // GOTHIC reserves headroom above the caps (see multitap_keyboard.c's font ladder), so a
+        // measured content box still sits low when centered; lift it back to the optical middle.
+        const int rise = 5;
         const GRect text_bounds = {
-            .origin = {number_point.x - 12, number_point.y - 17},
-            .size = {28, 36}
+            .origin = {number_point.x - txt_sz.w / 2, number_point.y - txt_sz.h / 2 - rise},
+            .size = txt_sz
         };
         graphics_draw_text(ctx, text, font, text_bounds, GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
     }
@@ -621,10 +626,13 @@ void touch_create(Layer* parent, TouchSelectionCallback callback, TouchServiceHa
 
         // central text
         const GRect bounds = layer_get_bounds(s_layer);
-        const GFont main_text_font = fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD);
-        const int16_t main_text_h = 24 + 8;
+        const GFont main_text_font = fonts_get_system_font(FONT_KEY_GOTHIC_28_BOLD);
+        const int16_t main_text_h = 28 + 8;
+        // TextLayer top-anchors its text, and GOTHIC_28_BOLD reserves 1px more headroom
+        // above the caps than GOTHIC_24_BOLD (see multitap_keyboard.c's font ladder), so
+        // nudge the frame up by that much to keep the glyphs where the smaller font sat.
         s_layer_central_text = text_layer_create(
-            GRect(0, TOUCH_TOP_TEXT_Y + 8, bounds.size.w, main_text_h));
+            GRect(0, TOUCH_TOP_TEXT_Y + 8 - 1, bounds.size.w, main_text_h));
         text_layer_set_text(s_layer_central_text, s_central_text);
         text_layer_set_text_alignment(s_layer_central_text, GTextAlignmentCenter);
         text_layer_set_font(s_layer_central_text, main_text_font);

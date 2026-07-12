@@ -849,9 +849,15 @@ static void dial_update_proc(Layer *layer, GContext *gctx) {
     if (i == 0) { snprintf(txt, sizeof(txt), "%d", v); }
     else { snprintf(txt, sizeof(txt), "%02d", v); }
     graphics_context_set_text_color(gctx, text_c);
-    const int text_h = 30;
-    graphics_draw_text(gctx, txt, fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD),
-      GRect(x + 2, by + (bh - text_h) / 2, bw - 4, text_h),
+    GFont num_font = fonts_get_system_font(FONT_KEY_GOTHIC_28_BOLD);
+    int text_h = graphics_text_layout_get_content_size(
+      txt, num_font, GRect(0, 0, bw - 4, 200), GTextOverflowModeFill, GTextAlignmentCenter).h;
+    // GOTHIC reserves headroom above the caps (see multitap_keyboard.c's font ladder), so a
+    // measured content box still sits low when centered; lift it back to the optical middle.
+    const int rise = 5;
+    const int nudge_x = (i == 0) ? 0 : 1;   // minute/second glyphs shifted 1px right
+    graphics_draw_text(gctx, txt, num_font,
+      GRect(x + 2 + nudge_x, by + (bh - text_h) / 2 - rise, bw - 4, text_h),
       GTextOverflowModeFill, GTextAlignmentCenter, NULL);
 
     dl_draw_triangle_up_sized(gctx, cx, up_y, DIAL_TRI_HW, DIAL_TRI_H, tri_c);
