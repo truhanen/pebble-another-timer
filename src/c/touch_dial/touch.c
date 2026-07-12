@@ -106,9 +106,6 @@ static AppTimer* s_animation_timer = NULL;
 #define CIRCLE_PERCENT_GROWTH_RATE (100 / (APPEAR_DURATION_MS / MS_PER_FRAME))
 static int32_t s_circle_percent = 0;
 
-#define WINDUP_HINT_DEGREES_PER_SEC (360 / FRAMERATE)
-static uint32_t s_windup_hint_angle = 0;
-
 static bool s_is_windup_seconds = false;
 static bool s_is_windup_seconds_enablable = false;
 static bool is_mode_windup_seconds(void) {
@@ -171,37 +168,45 @@ static void animate_circle(bool appear) {
     }
 }
 
-static void animate_windup_hint(void* context) {
-    UNUSED(context);
-    s_animation_timer = NULL;
-    s_windup_hint_angle = (
-        (s_windup_hint_angle + DEG_TO_TRIGANGLE(WINDUP_HINT_DEGREES_PER_SEC))
-        % TRIG_MAX_ANGLE
+static void draw_arrow_head(GContext *ctx, GPoint tip, int32_t direction_angle, int16_t len) {
+    const int32_t spread = DEG_TO_TRIGANGLE(30);
+    graphics_draw_line(ctx, tip,
+        point_from_angle(tip, direction_angle + DEG_TO_TRIGANGLE(180) - spread, len)
     );
-    layer_mark_dirty(s_layer);
+    graphics_draw_line(ctx, tip,
+        point_from_angle(tip, direction_angle + DEG_TO_TRIGANGLE(180) + spread, len)
+    );
 }
 
-// Draw a spinning arrow to hint the windup gesture
+// Draw a static arc arrow outside the inner circle, with arrow heads at both ends.
 static void draw_windup_hint(const GRect* bounds, const GPoint* centre, GContext *ctx) {
-    const GRect radial_bounds = grect_crop(*bounds, (PBL_DISPLAY_WIDTH / 2) - THRESHOLD_RADIUS + 10);
+    const int16_t hint_radius = THRESHOLD_RADIUS + 10;
+    const int16_t arc_radius = hint_radius + 1;
+    const int32_t arc_start = DEG_TO_TRIGANGLE(310);
+    const int32_t arc_end = DEG_TO_TRIGANGLE(50);
 
-    graphics_context_set_fill_color(ctx, color_inner_fg());
-    graphics_fill_radial(ctx, radial_bounds, GOvalScaleModeFitCircle, 1,
-                         s_windup_hint_angle - DEG_TO_TRIGANGLE(45),
-                         s_windup_hint_angle);
-
-    graphics_context_set_stroke_width(ctx, 1);
-    graphics_context_set_stroke_color(ctx, color_inner_fg());
-    const GPoint arrow_point = point_from_angle(*centre, s_windup_hint_angle, (radial_bounds.size.w / 2));
-    graphics_draw_line(ctx, arrow_point,
-        point_from_angle(arrow_point, s_windup_hint_angle - DEG_TO_TRIGANGLE(45), 10)
-    );
-    graphics_draw_line(ctx, arrow_point,
-        point_from_angle(arrow_point, s_windup_hint_angle - DEG_TO_TRIGANGLE(135), 10)
-    );
-    if (s_animation_timer == NULL) {
-        s_animation_timer = app_timer_register(FRAMERATE, animate_windup_hint, NULL);
+    graphics_context_set_stroke_color(ctx, GColorBlack);
+    graphics_context_set_stroke_width(ctx, 2);
+    const int32_t arc_step = DEG_TO_TRIGANGLE(8);
+    int32_t angle = arc_start;
+    GPoint prev = point_from_angle(*centre, angle, arc_radius);
+    while (true) {
+        uint32_t dist_to_end = (uint32_t)((arc_end - angle + TRIG_MAX_ANGLE) % TRIG_MAX_ANGLE);
+        int32_t next = (dist_to_end <= (uint32_t)arc_step)
+            ? arc_end
+            : (angle + arc_step) % TRIG_MAX_ANGLE;
+        GPoint cur = point_from_angle(*centre, next, arc_radius);
+        graphics_draw_line(ctx, prev, cur);
+        if (next == arc_end) { break; }
+        angle = next;
+        prev = cur;
     }
+
+    const GPoint start_tip = point_from_angle(*centre, arc_start, hint_radius);
+    const GPoint end_tip = point_from_angle(*centre, arc_end, hint_radius);
+    graphics_context_set_stroke_width(ctx, 2);
+    draw_arrow_head(ctx, start_tip, arc_start - DEG_TO_TRIGANGLE(90), 9);
+    draw_arrow_head(ctx, end_tip, arc_end + DEG_TO_TRIGANGLE(90), 9);
 }
 
 static void draw_background(const GPoint* centre, GContext *ctx) {
