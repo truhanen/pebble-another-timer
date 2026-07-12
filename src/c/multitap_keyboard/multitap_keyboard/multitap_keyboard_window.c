@@ -2,7 +2,6 @@
 #include "multitap_keyboard_window.h"
 #include "multitap_keyboard.h"
 #include "keyboard_settings.h"
-#include "c/multitap_keyboard/ui/ui_touch.h"
 
 // Full-screen modal keyboard wrapper.
 
@@ -25,6 +24,7 @@ static bool      s_held;
 static int       s_touch_key;          // cell the press started on (-1 = off grid)
 static bool      s_canceled;           // finger slid off that cell: no tap/hold
 static AppTimer *s_del_repeat_timer;   // hold-to-erase on the on-screen DEL key
+static bool      s_touch_registered;   // whether we actually subscribed to touch
 
 // ---- Touch -----------------------------------------------------------------
 
@@ -165,13 +165,13 @@ static void prv_load(Window *window) {
   if (s_max_len > 0) multitap_keyboard_set_max_len(s_keyboard, s_max_len);
   if (s_has_initial) multitap_keyboard_set_text(s_keyboard, s_initial);
 
-  if (!ui_touch_register(prv_touch_handler, NULL)) {   // shared touch (see ui_touch.h)
-    APP_LOG(APP_LOG_LEVEL_WARNING, "Touch not available on this watch");
-  }
+  s_touch_registered = touch_service_is_enabled();
+  if (s_touch_registered) touch_service_subscribe(prv_touch_handler, NULL);
+  else APP_LOG(APP_LOG_LEVEL_WARNING, "Touch not available on this watch");
 }
 
 static void prv_unload(Window *window) {
-  ui_touch_unregister(prv_touch_handler, NULL);
+  if (s_touch_registered) touch_service_unsubscribe();
   if (s_hold_timer) { app_timer_cancel(s_hold_timer); s_hold_timer = NULL; }
   prv_del_repeat_cancel();
   multitap_keyboard_destroy(s_keyboard);

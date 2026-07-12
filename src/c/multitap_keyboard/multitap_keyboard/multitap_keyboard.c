@@ -1,6 +1,4 @@
 #include "multitap_keyboard.h"
-#include "c/multitap_keyboard/ui/button.h"   // 3D key shape (raised at rest, sunk on press)
-#include "c/multitap_keyboard/ui/ui_align.h" // center icons/glyphs in their key faces
 
 // ---- Constants --------------------------------------------------------------
 #define TEXT_AREA_H  44
@@ -383,6 +381,14 @@ static void prv_press_key(MultitapKeyboard *kb, int key) {
 
 // ---- Hit testing ------------------------------------------------------------
 
+// The origin that centers `content` inside `box`.
+static GPoint prv_center_origin(GRect box, GSize content) {
+  return (GPoint){
+    .x = (int16_t)(box.origin.x + (box.size.w - content.w) / 2),
+    .y = (int16_t)(box.origin.y + (box.size.h - content.h) / 2),
+  };
+}
+
 // Key-grid geometry shared by drawing and hit-testing: integer cell size and the
 // centered top-left origin. The grid sits GRID_VPAD below the text header and the
 // same distance above the screen bottom, so the keyboard has equal white margins;
@@ -393,9 +399,8 @@ static void prv_grid_metrics(GRect b, int *cw, int *ch, GPoint *origin) {
   int w = b.size.w / GRID_COLS;
   int h = avail_h > 0 ? avail_h / GRID_ROWS : 0;
   *cw = w; *ch = h;
-  *origin = ui_rect_align(GRect(0, top, b.size.w, avail_h),
-                          GSize(w * GRID_COLS, h * GRID_ROWS),
-                          UI_ALIGN_CENTER, UI_ALIGN_CENTER).origin;
+  *origin = prv_center_origin(GRect(0, top, b.size.w, avail_h),
+                              GSize(w * GRID_COLS, h * GRID_ROWS));
 }
 
 static int prv_key_at_point(MultitapKeyboard *kb, GPoint p) {
@@ -700,9 +705,7 @@ static void prv_draw_backspace(GContext *ctx, GRect face, GColor ink, GColor kno
   graphics_context_set_stroke_width(ctx, 1);
 }
 
-// One step toward black per channel — the shade a flat key darkens to on press,
-// mirroring the sink-shade ui_button_draw derives for a raised key (button.c's
-// shadow_of). Used only in flat mode, where there is no shadow to sink into.
+// One step toward black per channel — the shade a key darkens to on press.
 static GColor prv_darker(GColor c) {
   c.r = c.r ? c.r - 1 : 0;
   c.g = c.g ? c.g - 1 : 0;
@@ -827,15 +830,8 @@ static void prv_update_proc(Layer *layer, GContext *ctx) {
     }
     GColor sink = prv_darker(fill);
     GColor draw_fill = pressed ? sink : fill;
-    UiButtonSpec bs = {
-      .style = UI_BTN_SOLID, .radius = 4,
-      .fill_override = draw_fill,
-      .elevation = 0,
-      .pressed = false,
-      .shadow_override = GColorClear,
-    };
-    ui_button_draw(ctx, face, &bs);
-    face = ui_button_content_box(face, &bs);   // glyph sinks with the key
+    graphics_context_set_fill_color(ctx, draw_fill);
+    graphics_fill_rect(ctx, face, 4, GCornersAll);
     graphics_context_set_text_color(ctx, txt);
 
     if (i == KEY_SHIFT && kb->page == PAGE_ALPHA) {
@@ -847,7 +843,7 @@ static void prv_update_proc(Layer *layer, GContext *ctx) {
         GSize is = gbitmap_get_bounds(icon).size;
         // +2px: the glyph sits high in its bounds, so a geometric center reads
         // a few pixels too high — nudge down to optically center.
-        GRect ir = ui_rect_center(face, is);
+        GRect ir = { .origin = prv_center_origin(face, is), .size = is };
         ir.origin.y += 2;
         graphics_context_set_compositing_mode(ctx, GCompOpSet);
         graphics_draw_bitmap_in_rect(ctx, icon, ir);
@@ -1043,13 +1039,12 @@ void multitap_keyboard_set_app_theme(const char *name, UiTheme t) {
   s_app_theme.key         = t.neutral.argb;        // ui has no "key" role → neutral
   s_app_theme.accent      = t.accent.argb;
   s_app_theme.accent_text = t.accent_text.argb;
-  // The DEL key uses the ui danger ramp. Read it through the getters (not the
-  // raw struct fields, which the caller may leave unset) so it picks up the
-  // red-ramp defaults — danger is one app-wide semantic, so the keyboard's
-  // destructive key tracks the app's danger regardless of skin.
-  s_app_theme.danger        = ui_danger().argb;         // key fill
-  s_app_theme.danger_light  = ui_danger_light().argb;   // glyph ink
-  s_app_theme.danger_darker = ui_danger_darker().argb;  // shadow / press
+  // The DEL key always uses this fixed danger ramp (not the caller's t.danger*
+  // fields) — the same triple THEMES[] uses for every built-in, so the
+  // destructive key reads the same no matter which skin is active.
+  s_app_theme.danger        = GColorDarkCandyAppleRedARGB8;  // key fill
+  s_app_theme.danger_light  = GColorMelonARGB8;              // glyph ink
+  s_app_theme.danger_darker = GColorBulgarianRoseARGB8;      // shadow / press
   s_has_app_theme = true;
 }
 

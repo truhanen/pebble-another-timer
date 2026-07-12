@@ -1,6 +1,5 @@
 #pragma once
 #include <pebble.h>
-#include "c/multitap_keyboard/ui/ui_theme.h"   // the app-brand keyboard skin is a UiTheme
 
 // =============================================================================
 // multitap_keyboard — a Nokia-style multi-tap on-screen keyboard for PebbleOS
@@ -113,6 +112,22 @@ const char *multitap_keyboard_theme_name(int index);
 int  multitap_keyboard_get_theme(MultitapKeyboard *kb);
 void multitap_keyboard_set_theme(MultitapKeyboard *kb, int index);
 
+// A themeable palette, shared between the keyboard and a host surface (e.g. the
+// on-watch settings menu) that wants to paint itself to match. Keep each fg/bg
+// pair legible against each other: text on background, accent_text on accent,
+// and danger_light behind danger.
+typedef struct {
+  GColor background;     // window / menu fill
+  GColor text;           // primary ink
+  GColor text_muted;     // secondary / disabled ink
+  GColor neutral;        // soft low-contrast surface fill
+  GColor accent;         // selection highlight
+  GColor accent_text;    // ink drawn on the accent
+  GColor danger;         // destructive / negative signal (the DEL key)
+  GColor danger_light;   // soft danger surface fill (danger ink reads on it)
+  GColor danger_darker;  // pressed / drop-shadow shade of a danger surface
+} UiTheme;
+
 // The colors of the keyboard's CURRENTLY-ACTIVE theme, packed as a UiTheme so a
 // host surface (e.g. the on-watch settings menu) can paint itself to match the
 // live keyboard skin. Reflects whatever is actually applied — built-in pick or
@@ -120,16 +135,16 @@ void multitap_keyboard_set_theme(MultitapKeyboard *kb, int index);
 // it has no muted-ink role, so `text_muted` mirrors `text`.
 UiTheme multitap_keyboard_get_theme_colors(MultitapKeyboard *kb);
 
-// Register the app-brand keyboard skin from your app's shared ui palette, so the
-// brand colors live in ONE place (the UiTheme) instead of being duplicated here.
-// It appends a single pickable theme after the built-ins, addressed as theme
-// index multitap_keyboard_theme_count(). The mapping onto the keyboard's roles:
+// Register the app-brand keyboard skin from your app's shared UiTheme, so the
+// brand colors live in ONE place instead of being duplicated here. It appends a
+// single pickable theme after the built-ins, addressed as theme index
+// multitap_keyboard_theme_count(). The mapping onto the keyboard's roles:
 //   background -> screen      accent      -> function row / active keys
 //   text       -> ink/divider accent_text -> ink on the accent
 //   neutral    -> resting key fill        danger/danger_light -> the DEL key
 // The keyboard has no "key fill" token of its own, so `neutral` plays that role.
-// Pass a typical `ui_theme_get()`. `name` shows in the picker and must outlive
-// the keyboard (use a string literal). Call once at startup, before any keyboard
+// `name` shows in the picker and must outlive the keyboard (use a string
+// literal). Call once at startup, before any keyboard
 // window is shown; pass name=NULL to clear the slot.
 void multitap_keyboard_set_app_theme(const char *name, UiTheme theme);
 bool multitap_keyboard_has_app_theme(void);
