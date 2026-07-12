@@ -237,7 +237,7 @@ static void draw_clock_indices(const GRect* bounds, GContext *ctx) {
         {"12", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11"};
     static const char* mins_text[NUM_CLOCK_INDICES] =
         {"0", "5", "10", "15", "20", "25", "30", "35", "40", "45", "50", "55"};
-    const GFont font = fonts_get_system_font(FONT_KEY_GOTHIC_28_BOLD);
+    const GFont font = fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD);
     graphics_context_set_text_color(ctx, color_outer_fg());
 
 #if INDEX_LINES
@@ -266,7 +266,7 @@ static void draw_clock_indices(const GRect* bounds, GContext *ctx) {
             text, font, GRect(0, 0, 40, 200), GTextOverflowModeWordWrap, GTextAlignmentCenter);
         // GOTHIC reserves headroom above the caps (see multitap_keyboard.c's font ladder), so a
         // measured content box still sits low when centered; lift it back to the optical middle.
-        const int rise = 5;
+        const int rise = 4;
         const GRect text_bounds = {
             .origin = {number_point.x - txt_sz.w / 2, number_point.y - txt_sz.h / 2 - rise},
             .size = txt_sz
