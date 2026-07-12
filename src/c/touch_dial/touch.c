@@ -272,18 +272,18 @@ static void draw_clock_indices(const GRect* bounds, GContext *ctx) {
 
 static void update_selection_text(void) {
     if (s_selected_hours < 0) {
-        snprintf(s_central_text, sizeof(s_central_text), s_is_duration ? "--h--m" : "--:--");
+        snprintf(s_central_text, sizeof(s_central_text), s_is_duration ? "--:--:--" : "--:--");
     } else if (s_selected_minutes < 0) {
-        const char* fmt = (s_is_duration ? "%dh--m" : "%d:--");
+        const char* fmt = (s_is_duration ? "--:--:--" : "%d:--");
         snprintf(s_central_text, sizeof(s_central_text), fmt, s_selected_hours);
     } else if (!is_mode_windup_seconds()) {
-        const char* fmt = (s_is_duration ? "%dh%02dm" : "%d:%02d");
+        const char* fmt = (s_is_duration ? "%02d:%02d:00" : "%d:%02d");
         snprintf(s_central_text, sizeof(s_central_text), fmt, s_selected_hours, s_selected_minutes);
     } else {
         if (s_selected_seconds < 0) {
-            snprintf(s_central_text, sizeof(s_central_text), "%dh%02dm--s", s_selected_hours, s_selected_minutes);
+            snprintf(s_central_text, sizeof(s_central_text), "%02d:%02d:--", s_selected_hours, s_selected_minutes);
         } else {
-            snprintf(s_central_text, sizeof(s_central_text), "%dh%02dm%02ds",
+            snprintf(s_central_text, sizeof(s_central_text), "%02d:%02d:%02d",
                      s_selected_hours, s_selected_minutes, s_selected_seconds);
         }
     }
