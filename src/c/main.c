@@ -167,7 +167,7 @@ static void draw_bottom_bar(GContext *gctx, GRect bounds) {
 
   const GFont f = bottom_bar_font_for_width(bounds.size.w);
   const int th = bottom_bar_text_h_for_width(bounds.size.w);
-  const int ty = bounds.origin.y + (bounds.size.h - th) / 2 - 5;
+  const int ty = bounds.origin.y + (bounds.size.h - th) / 2 - 4;
   graphics_context_set_text_color(gctx, GColorWhite);
   graphics_draw_text(gctx, left, f, GRect(bounds.origin.x + 4, ty, bounds.size.w - 8, th),
     GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
