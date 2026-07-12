@@ -2340,7 +2340,10 @@ static void empty_hint_update_proc(Layer *layer, GContext *gctx) {
   int w = sz.w;
   if (w > area.size.w) { w = area.size.w; }
   int x = area.origin.x + (area.size.w - w) / 2;
-  int y = area.origin.y + (area.size.h - sz.h) / 2;
+  // GOTHIC reserves headroom above the caps (see multitap_keyboard.c's font ladder), so a
+  // measured content box still sits low when centered; lift it back to the optical middle.
+  const int rise = 4;
+  int y = area.origin.y + (area.size.h - sz.h) / 2 - rise;
   if (y < area.origin.y) { y = area.origin.y; }
   GRect hint = GRect(x, y, w, sz.h);
   graphics_context_set_text_color(gctx, GColorBlack);
