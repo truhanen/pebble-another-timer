@@ -1776,7 +1776,7 @@ static void ml_draw_row(GContext *gctx, const Layer *cell, MenuIndex *ci, void *
     }
     graphics_context_set_text_color(gctx, selected ? GColorWhite : GColorBlack);
     graphics_draw_text(gctx, "+ New timer", fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD),
-      GRect(4, (b.size.h - 26) / 2, b.size.w - 8, 26),
+      GRect(4, (b.size.h - 26) / 2 - 3, b.size.w - 8, 26),
       GTextOverflowModeFill, GTextAlignmentCenter, NULL);
     return;
   }
@@ -2298,9 +2298,14 @@ static void create_new_timer(void) {
 static void empty_hint_update_proc(Layer *layer, GContext *gctx) {
   GRect b = layer_get_bounds(layer);
   if (b.size.h <= 32) { return; }
-  const GFont f = fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD);
+  const GFont f = fonts_get_system_font(FONT_KEY_GOTHIC_24);
   const char *msg = NULL;
-  GRect area = GRect(8, 32, b.size.w - 16, b.size.h - 32);
+  int new_row = ml_row_for_new(s_menu_selected_timer_idx);
+  int free_top = 32;
+  if (new_row >= 0) {
+    free_top = ml_row_top_for((uint16_t)new_row, s_menu_selected_timer_idx) + ML_ROW_H_PRIMARY;
+  }
+  GRect area = GRect(8, free_top, b.size.w - 16, b.size.h - free_top);
   if (s_count == 0) {
     msg =
       "Configure timers by\n"
@@ -2312,13 +2317,10 @@ static void empty_hint_update_proc(Layer *layer, GContext *gctx) {
       "- Short-press to start or\n"
       "  control running\n"
       "- Long-press to edit";
-    int top_rows = ML_ROW_H_PRIMARY + ML_ROW_H_PRIMARY;
-    if (ml_timer_shows_detail(s_order[0], s_menu_selected_timer_idx)) { top_rows += ML_ROW_H_DETAIL; }
-    area = GRect(8, top_rows + 4, b.size.w - 16, b.size.h - top_rows - 4);
-    if (area.size.h <= 20) { return; }
   } else {
     return;
   }
+  if (area.size.h <= 20) { return; }
 
   GSize sz = graphics_text_layout_get_content_size(
     msg, f, GRect(0, 0, area.size.w, 200), GTextOverflowModeWordWrap, GTextAlignmentLeft);
