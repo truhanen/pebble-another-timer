@@ -83,7 +83,7 @@ const config = [
       { type: 'text', defaultValue:
         '<b>Edit/save actions</b> (after confirming duration)<br>' +
         '• <b>Start unsaved</b> — add and start a temporary timer (not saved, disappears after finishing).<br>' +
-        '• <b>Start &amp; save</b> / <b>Only save</b> — then choose save type: ' +
+        '• <b>Start &amp; save</b> / <b>Save</b> — then choose save type: ' +
         '<b>As new timer</b> or <b>Overwrite current</b>.<br>' +
         '• <b>Delete timer</b> — remove the selected timer (asks to confirm).' },
       { type: 'text', defaultValue:

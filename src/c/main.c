@@ -1061,7 +1061,7 @@ static void dl_draw_row(GContext *gctx, const Layer *cell, MenuIndex *ci, void *
     if (s_detail_style == DSTYLE_LONG_NEW) {
       if (ci->row == 0) { label = "Run"; }
       else if (ci->row == 1) { label = "Run & save"; }
-      else if (ci->row == 2) { label = "Only save"; }
+      else if (ci->row == 2) { label = "Save"; }
       else { return; }
     } else if (s_detail_style == DSTYLE_LONG_EXISTING) {
       if (ci->row == 0) { label = "Edit duration"; }
@@ -1216,7 +1216,7 @@ static void dl_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
     else { window_stack_remove(s_detail_window, true); }
     return;
   }
-  if (ci->row == 2) { // Only save
+  if (ci->row == 2) { // Save
     Timer *t = &s_timers[idx];
     t->duration = s_detail_edit_secs;
     t->remaining = s_detail_edit_secs;
