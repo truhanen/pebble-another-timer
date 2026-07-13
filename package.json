@@ -16,10 +16,7 @@
     "sdkVersion": "3",
     "enableMultiJS": true,
     "targetPlatforms": [
-      "basalt",
-      "diorite",
-      "emery",
-      "flint"
+      "emery"
     ],
     "capabilities": [],
     "watchapp": {

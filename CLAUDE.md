@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A Pebble watchapp (C + Pebble SDK, targets basalt/diorite/emery/flint) with a
+A Pebble watchapp (C + Pebble SDK, targets emery) with a
 multi-timer list on the watch and a Clay-based config page on the phone.
 Phone-side logic is written in TypeScript, compiled to PebbleKit JS.
 
