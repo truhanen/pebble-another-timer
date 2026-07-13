@@ -47,3 +47,7 @@ long_press_select_emulator:
 	pebble emu-button --emulator emery push select && \
 	sleep 0.3 && \
 	pebble emu-button --emulator emery release select
+
+.PHONY: create_screenshots
+create_screenshots:
+	scripts/create_screenshots.sh
