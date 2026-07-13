@@ -63,6 +63,7 @@ static DetailStyle s_label_return_style = DSTYLE_LONG_NEW; // detail style to re
 static bool s_detail_advancing = false; // true while pushing a modal from detail window
 static bool s_new_flow_open_label_after_dial = false; // chain new timer: dial -> label -> menu
 static AppTimer *s_new_flow_label_timer = NULL;
+static AppTimer *s_dial_touch_confirm_timer = NULL;
 static int16_t s_new_flow_label_idx = -1;
 static bool s_dial_existing_duration_edit = false; // true while editing existing timer duration from edit menu
 
@@ -880,14 +881,10 @@ static void dial_update_proc(Layer *layer, GContext *gctx) {
   }
 }
 
-static void dial_select(ClickRecognizerRef rec, void *ctx) {
-  idle_reset();
-  dial_touch_enable(true);
-  if (s_dial_field < 2) {
-    s_dial_field++;
-    if (s_dial_layer) { layer_mark_dirty(s_dial_layer); }
-    return;
-  }
+// Commits the currently selected duration and advances past the dial window.
+// Shared by the physical-button confirm (dial_select, once all fields are set)
+// and the touch dial, which reports a duration in one shot on finger liftoff.
+static void dial_confirm(void) {
   if (s_dial_existing_duration_edit && s_detail_style == DSTYLE_LONG_EXISTING) {
     apply_overwrite_only(s_detail_idx, s_detail_edit_secs, NULL);
     s_dial_existing_duration_edit = false;
@@ -902,6 +899,17 @@ static void dial_select(ClickRecognizerRef rec, void *ctx) {
   if (window_stack_contains_window(s_dial_window)) {
     window_stack_remove(s_dial_window, false);
   }
+}
+
+static void dial_select(ClickRecognizerRef rec, void *ctx) {
+  idle_reset();
+  dial_touch_enable(true);
+  if (s_dial_field < 2) {
+    s_dial_field++;
+    if (s_dial_layer) { layer_mark_dirty(s_dial_layer); }
+    return;
+  }
+  dial_confirm();
 }
 
 static void dial_back(ClickRecognizerRef rec, void *ctx) {
@@ -1487,6 +1495,10 @@ static void dial_disappear(Window *w) {
   dial_touch_enable(false);
   dial_touch_destroy();
   dial_hold_cancel();
+  if (s_dial_touch_confirm_timer) {
+    app_timer_cancel(s_dial_touch_confirm_timer);
+    s_dial_touch_confirm_timer = NULL;
+  }
   bool advancing = s_dial_advancing;
   s_dial_advancing = false;
   if (!window_stack_contains_window(s_dial_window)) { s_dial_existing_duration_edit = false; }
@@ -1553,6 +1565,11 @@ static void open_dial_window(int timer_idx, DetailStyle style) {
   }
 }
 
+static void dial_touch_confirm_cb(void *data) {
+  s_dial_touch_confirm_timer = NULL;
+  dial_confirm();
+}
+
 static void dial_touch_selected(uint8_t hours, uint8_t minutes, uint8_t seconds) {
   int h = (int)hours;
   int m = (int)minutes;
@@ -1562,6 +1579,24 @@ static void dial_touch_selected(uint8_t hours, uint8_t minutes, uint8_t seconds)
   s = ((s % 60) + 60) % 60;
   s_detail_edit_secs = h * 3600 + m * 60 + s;
   if (s_dial_layer) { layer_mark_dirty(s_dial_layer); }
+  // New-timer and existing-timer-duration-edit flows: the touch dial reports
+  // a duration in one shot on finger liftoff, so that alone is enough to
+  // confirm - unlike the physical dial, which needs an explicit SELECT once
+  // all hour/minute/second fields have been stepped through.
+  //
+  // This callback fires from inside the touch dial's own touch-event handler
+  // (touch_dial/touch.c's handle_touch_event), which still has work left to
+  // do after invoking it (clearing its selection state, tearing down its
+  // animation). Confirming synchronously here would tear down the dial
+  // window - and with it the touch dial's layer, via dial_disappear's
+  // dial_touch_destroy() - out from under that still-executing handler,
+  // a use-after-free that only reliably crashed on real hardware. Defer the
+  // confirm to a fresh app timer so it runs after that handler has returned.
+  if (s_detail_style == DSTYLE_LONG_NEW
+      || (s_detail_style == DSTYLE_LONG_EXISTING && s_dial_existing_duration_edit)) {
+    if (s_dial_touch_confirm_timer) { app_timer_cancel(s_dial_touch_confirm_timer); }
+    s_dial_touch_confirm_timer = app_timer_register(10, dial_touch_confirm_cb, NULL);
+  }
 }
 
 static void main_touch_selected(uint8_t hours, uint8_t minutes, uint8_t seconds) {
