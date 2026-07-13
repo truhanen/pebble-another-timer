@@ -148,6 +148,9 @@ fi
 # ---------------------------------------------------------------------------
 install_fresh
 
+log "Main view (no timers)"
+shoot "06_main_view_no_timers.png"
+
 log "Duration dial view"
 button select 2   # "+ New timer" (the only row) -> opens the box-style duration dial
 shoot "02_duration_dial.png"
@@ -202,5 +205,22 @@ button select 2   # confirm -> back to the main list
 
 log "Main view (1 running, 1 paused, 2 stopped, all labeled)"
 shoot "01_main_view.png"
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: main list with a single (unstarted) timer, "+ New timer" selected.
+# ---------------------------------------------------------------------------
+install_fresh
+
+log "Configuring 1 labeled timer via send-app-message"
+TIMER_CONFIG="Pasta${US}600"
+pebble send-app-message --emulator "$PLATFORM" --string "${TIMER_CONFIG_KEY}=${TIMER_CONFIG}"
+sleep 2
+
+# As in phase 2, the list was empty at launch so the selection was sitting on
+# the "+ New timer" row; after the config lands it's still on that row, now
+# pushed past the one new timer - exactly the selection this screenshot wants.
+log "Main view (one timer, '+ New timer' selected)"
+shoot "07_main_view_one_timer.png"
 
 log "Done - screenshots saved in $OUT_DIR"
