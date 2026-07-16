@@ -36,7 +36,8 @@
       "UpdateTimerName",
       "IdleExitSec",
       "CfgOpen",
-      "LaunchSync"
+      "LaunchSync",
+      "DefaultFinishAction"
     ],
     "resources": {
       "media": [

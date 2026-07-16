@@ -19,6 +19,7 @@ export function resendDict(get: (k: string) => string | null): Record<string, an
   const rf = get('running_first');
   const ie = get('idle_exit');
   const ls = get('launch_sync');
+  const dfa = get('default_finish_action');
   return {
     TimerConfig: tc,
     SortOrder: parseInt(get('sort_order') || '0', 10) || 0,
@@ -26,5 +27,6 @@ export function resendDict(get: (k: string) => string | null): Record<string, an
     RunningFirst: rf === null ? 1 : (parseInt(rf, 10) ? 1 : 0),
     IdleExitSec: ie === null ? 15 : (parseInt(ie, 10) || 0),
     LaunchSync: ls === null ? 0 : (parseInt(ls, 10) ? 1 : 0),
+    DefaultFinishAction: dfa === null ? 1 : (parseInt(dfa, 10) ? 1 : 0),
   };
 }

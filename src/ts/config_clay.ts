@@ -55,6 +55,14 @@ const config = [
         label: 'Launch-sync starts',
         description: 'When on, starts subtract elapsed time since app launch from the started timer.',
         defaultValue: false },
+      // radiogroup values MUST be strings (Clay gotcha); index.ts parseInts on save.
+      { type: 'radiogroup', messageKey: 'DefaultFinishAction', label: 'Default action after timer finishes',
+        description: 'Default for newly created timers. Can be changed per timer from the watch\'s ' +
+          'timer edit menu ("After finished").',
+        defaultValue: '1', options: [
+          { label: 'Save timer', value: '0' },
+          { label: 'Delete timer', value: '1' },
+        ] },
     ],
   },
   {
@@ -76,20 +84,19 @@ const config = [
         '<b>Duration dial</b> (opened first on long press and for New timer)<br>' +
         '• Three boxes: hours, minutes, and seconds.<br>' +
         '• Up/Down changes the selected field. Hours clamp at 0..100; minutes/seconds wrap 0..59. Hold repeats.<br>' +
-        '• Select moves right; Select on seconds opens actions. Back moves left; Back on hours cancels editing.<br>' +
-        '• Touch opens the touch dial for direct duration selection.<br>' +
-        '• In touch dial, to enter second-precision mode: rotate anticlockwise past 6 o\'clock, then past 12 o\'clock while at 0h.<br>' +
-        '• On existing timers, long press Select on the dial opens delete confirmation.' },
+        '• Select moves right; Select on seconds confirms. Back moves left; Back on hours cancels editing.<br>' +
+        '• Touch opens the touch dial for direct duration selection; releasing confirms it immediately.<br>' +
+        '• In touch dial, to enter second-precision mode: rotate anticlockwise past 6 o\'clock, then past 12 o\'clock while at 0h.' },
       { type: 'text', defaultValue:
-        '<b>Edit/save actions</b> (after confirming duration)<br>' +
-        '• <b>Start unsaved</b> — add and start a temporary timer (not saved, disappears after finishing).<br>' +
-        '• <b>Start &amp; save</b> / <b>Save</b> — then choose save type: ' +
-        '<b>As new timer</b> or <b>Overwrite current</b>.<br>' +
-        '• <b>Delete timer</b> — remove the selected timer (asks to confirm).' },
+        '<b>New timer</b><br>' +
+        '• After the duration dial and a label, the timer starts immediately - no extra menu.<br>' +
+        '• Whether it\'s then kept or deleted once it finishes follows the "Default action after timer finishes" ' +
+        'setting above (can be changed per timer afterwards).' },
       { type: 'text', defaultValue:
-          '<b>New timer menu</b><br>' +
-          '• Same as timer edit/save menu except no Delete and no save-type submenu ' +
-          '(save is always as new timer).' },
+        '<b>Timer edit menu</b> (long press Select on an existing timer)<br>' +
+        '• <b>Edit duration</b> / <b>Edit label</b>.<br>' +
+        '• <b>After finished: Delete/Save</b> — toggles (Select) whether this timer is removed ' +
+        'or kept once it finishes or is stopped; kept timers show up here on the phone.' },
       { type: 'text', defaultValue:
         '<b>When a timer reaches zero</b><br>' +
         '• <b>Up</b> — +1 min (snooze). ' +

@@ -11,8 +11,9 @@
 #define PERSIST_KEY_AUTORETURN 5
 #define PERSIST_KEY_RUNNINGFIRST 6
 #define PERSIST_KEY_IDLEEXIT 7       // idle auto-exit timeout, seconds (0 = off)
-#define PERSIST_KEY_EPHEMERAL 8      // bit i => timer i is ephemeral ("Start unsaved")
+#define PERSIST_KEY_EPHEMERAL 8      // bit i => timer i is deleted (not kept) once it finishes/stops
 #define PERSIST_KEY_LAUNCHSYNC 9     // launch-sync starts (0/1)
+#define PERSIST_KEY_DEFAULT_FINISH_DELETE 10 // default "delete on finish" for newly created timers
 #define PERSIST_KEY_TIMER_BASE 100   // timer i -> key 100+i (one Timer per key; 256B/key cap)
 #define STORE_SCHEMA 2
 
@@ -35,9 +36,12 @@ void store_save_runningfirst(bool on);
 // Idle auto-exit timeout in seconds (defaults to 15 when unset; 0 = off).
 int store_load_idleexit(void);
 void store_save_idleexit(int seconds);
-// Bitmask of ephemeral timers (bit i corresponds to row i in persisted timer list).
-uint32_t store_load_ephemeral_mask(void);
-void store_save_ephemeral_mask(uint32_t mask);
+// Bitmask of "delete on finish" timers (bit i corresponds to row i in persisted timer list).
+uint32_t store_load_delete_on_finish_mask(void);
+void store_save_delete_on_finish_mask(uint32_t mask);
 // Launch-sync starts setting (default OFF).
 bool store_load_launchsync(void);
 void store_save_launchsync(bool on);
+// Default "delete on finish" for newly created timers (defaults to true/Delete when unset).
+bool store_load_default_finish_delete(void);
+void store_save_default_finish_delete(bool on);

@@ -113,12 +113,14 @@ appstore screenshots (see `scripts/`).
   `appmessage`/`showConfiguration`/`webviewclosed`, dispatches inbound
   AppMessages to the right handler, builds the outbound
   `TimerConfig`/`SortOrder`/`AutoReturn`/`RunningFirst`/`IdleExitSec`/
-  `LaunchSync` dict on Save.
+  `LaunchSync`/`DefaultFinishAction` dict on Save.
 
 AppMessage keys (declared in `package.json` under `pebble.messageKeys`, used
 as `MESSAGE_KEY_*` in C): phone→watch config push is
 `TimerConfig`/`SortOrder`/`AutoReturn`/`RunningFirst`/`IdleExitSec`/
-`LaunchSync`; watch→phone is `Request` (ask for config), `AddTimer`/
+`LaunchSync`/`DefaultFinishAction` (default "After finished" behavior,
+Delete/Save, for newly created timers); watch→phone is `Request` (ask for
+config), `AddTimer`/
 `AddTimerName`, `DeleteTimer`, `UpdateTimerIndex`/`UpdateTimerSeconds`/
 `UpdateTimerName` (one-way, no echo — the watch already applied the change
 locally), and `CfgOpen` (tells the watch the Clay page opened/closed, to

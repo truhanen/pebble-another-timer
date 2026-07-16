@@ -36,7 +36,7 @@ static AppTimer *s_alarm_buzz_timer;
 static int64_t   s_alarm_buzz_start_s;
 
 static Timer s_timers[MAX_TIMERS];
-static bool s_ephemeral[MAX_TIMERS];  // true => watch-local "start as new" timer, never phone-synced
+static bool s_delete_on_finish[MAX_TIMERS];  // true => timer is deleted (not kept) once it finishes/stops; never phone-synced while true
 static int8_t s_unnamed_star[MAX_TIMERS]; // unnamed timers: per-duration creation-order rank for stable sorting
 static int s_count = 0;
 static int s_order[MAX_TIMERS];   // display order, rebuilt on reload per s_sort
@@ -44,6 +44,7 @@ static SortMode s_sort = SORT_MRU;
 static int s_last_fired_idx = -1; // first timer that newly expired in the latest sweep
 static bool s_auto_return = false; // config: pop to watchface after a start/resume
 static bool s_running_first = true; // config: group RUNNING first, then PAUSED
+static bool s_default_finish_delete = true; // config: "Default action after timer finishes" default for new timers
 static bool s_launch_sync = false; // config: subtract elapsed-from-launch on starts
 static int64_t s_app_launch_s = 0; // app launch timestamp for launch-sync elapsed
 
@@ -286,10 +287,10 @@ static void rearm_wakeup(void) {
 static void persist_all(void) {
   uint32_t mask = 0;
   for (int i = 0; i < s_count && i < 32; i++) {
-    if (s_ephemeral[i]) { mask |= (1u << i); }
+    if (s_delete_on_finish[i]) { mask |= (1u << i); }
   }
   store_save(s_timers, s_count);
-  store_save_ephemeral_mask(mask);
+  store_save_delete_on_finish_mask(mask);
 }
 
 // Forward declarations used by reload_ui (implemented later in file).
@@ -458,7 +459,7 @@ static void alarm_stop(ClickRecognizerRef rec, void *ctx) {
   // (-> watchface). The alarm often fires while the app is closed (wakeup-launched),
   // so after dismissing the user wants the watchface, not to be left in the app.
   if (s_alarm_idx >= 0 && s_alarm_idx < s_count) {
-    if (s_ephemeral[s_alarm_idx]) { remove_timer_at(s_alarm_idx); }
+    if (s_delete_on_finish[s_alarm_idx]) { remove_timer_at(s_alarm_idx); }
     else { tc_reset(&s_timers[s_alarm_idx], now_s()); }
     persist_all(); rearm_wakeup(); reload_ui();
   }
@@ -1062,19 +1063,20 @@ static void dl_draw_header(GContext *gctx, const Layer *cell, uint16_t section, 
 
 static void dl_draw_row(GContext *gctx, const Layer *cell, MenuIndex *ci, void *ctx) {
   const char *label = "";
+  static char finish_label[24];
   if (s_detail_style == DSTYLE_LEGACY) {
     if (ci->row >= s_detail_act_count) { return; }
     label = dl_legacy_action_label(s_detail_acts[ci->row]);
   } else {
-    if (s_detail_style == DSTYLE_LONG_NEW) {
-      if (ci->row == 0) { label = "Run"; }
-      else if (ci->row == 1) { label = "Run & save"; }
-      else if (ci->row == 2) { label = "Save"; }
-      else { return; }
-    } else if (s_detail_style == DSTYLE_LONG_EXISTING) {
+    if (s_detail_style == DSTYLE_LONG_EXISTING) {
       if (ci->row == 0) { label = "Edit duration"; }
       else if (ci->row == 1) { label = "Edit label"; }
-      else if (ci->row == 2) { label = "Delete"; }
+      else if (ci->row == 2) {
+        bool del = (s_detail_idx >= 0 && s_detail_idx < s_count)
+          ? s_delete_on_finish[s_detail_idx] : false;
+        snprintf(finish_label, sizeof(finish_label), "After finished: %s", del ? "Delete" : "Save");
+        label = finish_label;
+      }
       else { return; }
     } else {
       return;
@@ -1138,12 +1140,12 @@ static void dl_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
         break;
       }
       case DACT_STOP: {
-        bool was_ephemeral = s_ephemeral[idx];
-        if (was_ephemeral) { remove_timer_at(idx); }
+        bool was_delete_on_finish = s_delete_on_finish[idx];
+        if (was_delete_on_finish) { remove_timer_at(idx); }
         else { tc_reset(t, now_s()); }
         persist_all(); rearm_wakeup(); reload_ui();
-        if (!was_ephemeral) { select_timer_row(idx); }
-        if (!was_ephemeral && s_auto_return) { close_to_watchface(); }
+        if (!was_delete_on_finish) { select_timer_row(idx); }
+        if (!was_delete_on_finish && s_auto_return) { close_to_watchface(); }
         else { window_stack_remove(s_detail_window, true); }
         break;
       }
@@ -1186,58 +1188,27 @@ static void dl_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
       open_label_input_for_new_timer(idx);
       return;
     }
-    if (ci->row == 2) { // Delete
-      open_delete_confirm();
+    if (ci->row == 2) { // After finished: Delete/Save (toggle)
+      Timer *t = &s_timers[idx];
+      s_delete_on_finish[idx] = !s_delete_on_finish[idx];
+      if (s_delete_on_finish[idx]) {
+        send_delete_timer(idx);   // now watch-local only: drop it from the phone
+        // Already stopped: there's no future finish/stop transition left to catch
+        // it, so apply "delete" right away instead of leaving it in the list.
+        if (t->state == TS_IDLE || t->state == TS_DONE) {
+          remove_timer_at(idx);
+          persist_all(); rearm_wakeup(); reload_ui();
+          s_detail_idx = -1;
+          window_stack_remove(s_detail_window, true);
+          return;
+        }
+      } else {
+        t->custom = true;
+        send_add_timer(t->duration, t->name);   // now "kept": add it to the phone
+      }
+      persist_all();
+      if (s_detail_menu) { menu_layer_reload_data(s_detail_menu); }
     }
-    return;
-  }
-  if (ci->row == 0) {
-    Timer *t = &s_timers[idx];
-    t->duration = s_detail_edit_secs;
-    t->remaining = s_detail_edit_secs;
-    t->custom = true;
-    s_ephemeral[idx] = true;
-    start_with_secs(t, launch_adjust_start_secs(s_detail_edit_secs));
-    assign_unnamed_star_for_duration(idx, t->duration);
-    s_new_timer_idx = -1;
-    bool fired = finish_start_tail();
-    if (fired) { return; }
-    select_timer_row(idx);
-    if (s_auto_return) { show_start_confirmation(idx); }
-    else { window_stack_remove(s_detail_window, true); }
-    return;
-  }
-  if (ci->row == 1) { // Start & save
-    Timer *t = &s_timers[idx];
-    t->duration = s_detail_edit_secs;
-    t->remaining = s_detail_edit_secs;
-    t->custom = true;
-    s_ephemeral[idx] = false;
-    start_with_secs(t, launch_adjust_start_secs(s_detail_edit_secs));
-    assign_unnamed_star_for_duration(idx, t->duration);
-    s_new_timer_idx = -1;
-    bool fired = finish_start_tail();
-    send_add_timer(s_detail_edit_secs, t->name);
-    if (fired) { return; }
-    select_timer_row(idx);
-    if (s_auto_return) { show_start_confirmation(idx); }
-    else { window_stack_remove(s_detail_window, true); }
-    return;
-  }
-  if (ci->row == 2) { // Save
-    Timer *t = &s_timers[idx];
-    t->duration = s_detail_edit_secs;
-    t->remaining = s_detail_edit_secs;
-    t->state = TS_IDLE;
-    t->end_time = 0;
-    t->custom = true;
-    s_ephemeral[idx] = false;
-    assign_unnamed_star_for_duration(idx, t->duration);
-    s_new_timer_idx = -1;
-    persist_all(); rearm_wakeup(); reload_ui();
-    send_add_timer(s_detail_edit_secs, t->name);
-    select_timer_row(idx);
-    window_stack_remove(s_detail_window, true);
     return;
   }
 }
@@ -1299,8 +1270,27 @@ static void new_timer_label_result(const char *text, void *context) {
     } else {
       t->name[0] = '\0';
     }
-    assign_unnamed_star_for_duration(idx, t->duration);
     t->last_used = now_s();
+    if (s_label_return_style == DSTYLE_LONG_NEW) {
+      // New-timer flow: always start immediately, no Run/Save menu. Only
+      // phone-sync it when the effective mode is "Save" (After finished).
+      t->duration = s_detail_edit_secs;
+      t->remaining = s_detail_edit_secs;
+      t->custom = true;
+      start_with_secs(t, launch_adjust_start_secs(s_detail_edit_secs));
+      assign_unnamed_star_for_duration(idx, t->duration);
+      if (!s_delete_on_finish[idx]) { send_add_timer(t->duration, t->name); }
+      s_new_timer_idx = -1;
+      bool fired = finish_start_tail();
+      if (fired) { return; }
+      select_timer_row(idx);
+      if (s_auto_return) { show_start_confirmation(idx); }
+      else if (s_detail_window && window_stack_contains_window(s_detail_window)) {
+        window_stack_remove(s_detail_window, true);
+      }
+      return;
+    }
+    assign_unnamed_star_for_duration(idx, t->duration);
     if (s_detail_window && window_stack_contains_window(s_detail_window)) {
       s_detail_idx = idx;
       s_detail_style = s_label_return_style;
@@ -1409,7 +1399,7 @@ static void del_window_unload(Window *w) {
 static void del_confirm_select(ClickRecognizerRef rec, void *ctx) {
   int idx = s_detail_idx;
   if (idx >= 0 && idx < s_count) {
-    if (idx == s_new_timer_idx || s_ephemeral[idx]) { s_new_timer_idx = -1; }  // never synced -> no phone delete
+    if (idx == s_new_timer_idx || s_delete_on_finish[idx]) { s_new_timer_idx = -1; }  // never synced -> no phone delete
     else { send_delete_timer(idx); }
     remove_timer_at(idx);
     persist_all(); rearm_wakeup(); reload_ui();
@@ -2121,6 +2111,11 @@ static void inbox_received(DictionaryIterator *iter, void *ctx) {
     s_running_first = runfirst->value->int32 != 0;
     store_save_runningfirst(s_running_first);
   }
+  Tuple *deffin = dict_find(iter, MESSAGE_KEY_DefaultFinishAction);
+  if (deffin) {
+    s_default_finish_delete = deffin->value->int32 != 0;
+    store_save_default_finish_delete(s_default_finish_delete);
+  }
   Tuple *idle = dict_find(iter, MESSAGE_KEY_IdleExitSec);
   int isec = idle_read_seconds(idle);
   if (isec >= 0) {
@@ -2151,33 +2146,89 @@ static void inbox_received(DictionaryIterator *iter, void *ctx) {
     static Timer cur[MAX_TIMERS];
     static Timer parsed[MAX_TIMERS];
     static Timer merged[MAX_TIMERS];
-    static bool eph_old[MAX_TIMERS];
-    static bool eph_new[MAX_TIMERS];
+    static Timer orphans[MAX_TIMERS];
+    static bool dof_old[MAX_TIMERS];
+    static bool dof_new[MAX_TIMERS];
     static bool draft_old[MAX_TIMERS];
     static bool draft_new[MAX_TIMERS];
     static int8_t st_old[MAX_TIMERS];
     static int8_t st_new[MAX_TIMERS];
+    static int8_t orphan_star[MAX_TIMERS];
     int cn = s_count;
     memcpy(cur, s_timers, sizeof(Timer) * (size_t)cn);
-    memcpy(eph_old, s_ephemeral, sizeof(bool) * (size_t)cn);
+    memcpy(dof_old, s_delete_on_finish, sizeof(bool) * (size_t)cn);
     memset(draft_old, 0, sizeof(draft_old));
     if (s_new_timer_idx >= 0 && s_new_timer_idx < cn) { draft_old[s_new_timer_idx] = true; }
     memcpy(st_old, s_unnamed_star, sizeof(int8_t) * (size_t)cn);
     int pn = tc_parse_config(cfg->value->cstring, parsed, MAX_TIMERS);
+
+    // tc_reconcile matches purely by position, so a kept ("After finished: Save")
+    // timer that the phone deleted from its config would either be silently
+    // dropped or have its live state misapplied to an unrelated, reordered config
+    // row. Pull any such timers out (matched by name) before reconciling, and
+    // re-append them afterward as watch-local, flipped to "After finished:
+    // Delete" - they're no longer represented on the phone.
+    int on = 0;
+    int compact_n = 0;
+    for (int i = 0; i < cn; i++) {
+      bool orphaned = false;
+      // Note: deliberately not gated on !cur[i].custom - a timer just toggled to
+      // "Save" (or a freshly created one) stays custom=true until a later phone
+      // Save absorbs it by position, but it can be deleted from the phone before
+      // that ever happens, and must still be recognized as orphaned here.
+      // Match on (name, duration) rather than name alone, since an unnamed timer
+      // ("<No label>") is a normal, common case - matching name-only would either
+      // require a non-empty name (missing unnamed orphans entirely) or treat any
+      // two unnamed timers as interchangeable.
+      if (!dof_old[i]) {
+        orphaned = true;
+        for (int j = 0; j < pn; j++) {
+          if (strcmp(cur[i].name, parsed[j].name) == 0 && cur[i].duration == parsed[j].duration) {
+            orphaned = false;
+            break;
+          }
+        }
+      }
+      if (orphaned && on < MAX_TIMERS) {
+        orphans[on] = cur[i];
+        orphan_star[on] = st_old[i];
+        on++;
+      } else {
+        cur[compact_n] = cur[i];
+        dof_old[compact_n] = dof_old[i];
+        draft_old[compact_n] = draft_old[i];
+        st_old[compact_n] = st_old[i];
+        compact_n++;
+      }
+    }
+    cn = compact_n;
+
     int mn = tc_reconcile(cur, cn, parsed, pn, merged);
     memcpy(s_timers, merged, sizeof(Timer) * (size_t)mn);
     s_count = mn;
-    memset(eph_new, 0, sizeof(eph_new));
+    memset(dof_new, 0, sizeof(dof_new));
     memset(draft_new, 0, sizeof(draft_new));
     for (int i = 0; i < MAX_TIMERS; i++) { st_new[i] = -1; }
     int out = pn;
     for (int i = pn; i < cn && out < mn; i++) {
       if (!cur[i].custom) { continue; }
-      eph_new[out++] = eph_old[i];
+      dof_new[out++] = dof_old[i];
       draft_new[out - 1] = draft_old[i];
       st_new[out - 1] = st_old[i];
     }
-    memcpy(s_ephemeral, eph_new, sizeof(eph_new));
+    // Re-append the orphaned (phone-deleted) timers, now watch-local and flipped
+    // to "After finished: Delete". If one's already stopped, there's no future
+    // finish/stop to catch it - drop it outright instead of re-listing it.
+    for (int i = 0; i < on && s_count < MAX_TIMERS; i++) {
+      if (orphans[i].state == TS_IDLE || orphans[i].state == TS_DONE) { continue; }
+      Timer *t = &s_timers[s_count];
+      *t = orphans[i];
+      t->custom = true;
+      dof_new[s_count] = true;
+      st_new[s_count] = orphan_star[i];
+      s_count++;
+    }
+    memcpy(s_delete_on_finish, dof_new, sizeof(dof_new));
     memcpy(s_unnamed_star, st_new, sizeof(st_new));
     for (int i = 0; i < s_count; i++) { ensure_unnamed_star(i); }
     // Rebuild draft-tracking after reconcile index remaps so BACK still discards
@@ -2188,6 +2239,12 @@ static void inbox_received(DictionaryIterator *iter, void *ctx) {
     }
     sweep_expiries();   // mark stale expiries DONE; no alarm for a config reconcile
     persist_all(); rearm_wakeup(); ensure_ticking();
+    // reload_ui() below only refreshes the main list - if the per-timer edit menu
+    // is open (e.g. showing "After finished") its label was just built from
+    // s_delete_on_finish and won't repaint on its own otherwise.
+    if (s_detail_menu && s_detail_window && window_stack_contains_window(s_detail_window)) {
+      menu_layer_reload_data(s_detail_menu);
+    }
   }
   reload_ui();
 }
@@ -2252,11 +2309,11 @@ static void remove_timer_at(int idx) {
   if (idx < 0 || idx >= s_count) { return; }
   for (int i = idx; i < s_count - 1; i++) {
     s_timers[i] = s_timers[i + 1];
-    s_ephemeral[i] = s_ephemeral[i + 1];
+    s_delete_on_finish[i] = s_delete_on_finish[i + 1];
     s_unnamed_star[i] = s_unnamed_star[i + 1];
   }
   s_count--;
-  s_ephemeral[s_count] = false;
+  s_delete_on_finish[s_count] = false;
   s_unnamed_star[s_count] = -1;
   // Keep the draft-tracking index valid across the shift: clear it if the draft
   // itself was removed, decrement it if a lower row was removed. Prevents
@@ -2287,7 +2344,7 @@ static void start_as_new(int32_t secs, bool save_to_phone, const char *name) {
   t->remaining = secs;
   t->state = TS_IDLE;
   t->custom = true;
-  s_ephemeral[idx] = !save_to_phone;
+  s_delete_on_finish[idx] = !save_to_phone;
   s_unnamed_star[idx] = -1;
   s_count++;
   assign_unnamed_star_for_duration(idx, t->duration);
@@ -2305,7 +2362,7 @@ static void start_as_new(int32_t secs, bool save_to_phone, const char *name) {
 static void apply_overwrite_only(int idx, int32_t secs, const char *name) {
   if (idx < 0 || idx >= s_count) { return; }
   if (secs < 0) { secs = 0; }
-  bool was_ephemeral = s_ephemeral[idx];
+  bool was_delete_on_finish = s_delete_on_finish[idx];
   Timer *t = &s_timers[idx];
   if (name) {
     strncpy(t->name, name, NAME_LEN);
@@ -2316,9 +2373,9 @@ static void apply_overwrite_only(int idx, int32_t secs, const char *name) {
   if (t->state == TS_DONE) { t->remaining = 0; }
   t->last_used = now_s();
   assign_unnamed_star_for_duration(idx, t->duration);
-  s_ephemeral[idx] = was_ephemeral;
+  s_delete_on_finish[idx] = was_delete_on_finish;
   persist_all(); rearm_wakeup(); reload_ui();
-  if (!was_ephemeral) { send_update_timer(idx, secs, name); }
+  if (!was_delete_on_finish) { send_update_timer(idx, secs, name); }
   window_stack_remove(s_detail_window, true);
 }
 
@@ -2335,7 +2392,7 @@ static void create_new_timer(void) {
   t->state = TS_IDLE;
   t->custom = true;                        // survive a mid-draft config reconcile
   t->last_used = now_s();
-  s_ephemeral[idx] = false;                // draft: unsaved but not a "start as new" ephemeral run
+  s_delete_on_finish[idx] = s_default_finish_delete; // seeded from the "Default action after timer finishes" setting
   s_unnamed_star[idx] = -1;
   s_count++;
   s_new_timer_idx = idx;
@@ -2444,16 +2501,17 @@ static void main_disappear(Window *w) {
 static void init(void) {
   s_app_launch_s = now_s();
   s_count = store_load(s_timers);
-  memset(s_ephemeral, 0, sizeof(s_ephemeral));
+  memset(s_delete_on_finish, 0, sizeof(s_delete_on_finish));
   for (int i = 0; i < MAX_TIMERS; i++) { s_unnamed_star[i] = -1; }
-  uint32_t em = store_load_ephemeral_mask();
+  uint32_t em = store_load_delete_on_finish_mask();
   for (int i = 0; i < s_count && i < 32; i++) {
-    s_ephemeral[i] = (em & (1u << i)) != 0;
+    s_delete_on_finish[i] = (em & (1u << i)) != 0;
     ensure_unnamed_star(i);
   }
   s_sort = (SortMode)store_load_sort();
   s_auto_return = store_load_autoreturn();
   s_running_first = store_load_runningfirst();
+  s_default_finish_delete = store_load_default_finish_delete();
   s_idle_timeout_sec = store_load_idleexit();
   s_launch_sync = store_load_launchsync();
 #ifdef SCREENSHOT_FIXTURES
