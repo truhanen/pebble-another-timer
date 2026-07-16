@@ -121,9 +121,7 @@ static int32_t launch_adjust_start_secs(int32_t base) {
 static bool launch_sync_applies_for_timer(const Timer *t) {
   if (!s_launch_sync || s_app_launch_s <= 0) { return false; }
   if (!t) { return true; }
-  // If this paused timer was paused during the current app run, don't apply
-  // launch-sync again until the app has been relaunched.
-  if (t->state == TS_PAUSED && t->last_used >= s_app_launch_s) { return false; }
+  if (t->state == TS_PAUSED) { return false; }
   return true;
 }
 
