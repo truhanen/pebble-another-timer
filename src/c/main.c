@@ -170,7 +170,7 @@ static void draw_bottom_bar(GContext *gctx, GRect bounds) {
   char elapsed[16];
   tc_format_remaining(elapsed, sizeof(elapsed), raw_launch_elapsed_s());
   char right[24];
-  snprintf(right, sizeof(right), "-%s", elapsed);
+  snprintf(right, sizeof(right), "%s", elapsed);
 
   const GFont f = bottom_bar_font_for_width(bounds.size.w);
   const int th = bottom_bar_text_h_for_width(bounds.size.w);
