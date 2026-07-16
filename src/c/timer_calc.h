@@ -19,7 +19,6 @@ typedef enum {
   DACT_STOP,        // running/paused -> reset to IDLE
   DACT_PAUSE,       // running -> pause
   DACT_START,       // idle/done/paused -> start or resume in place
-  DACT_SAVE_START,  // idle/done with a tuned time -> create a new custom timer + start
   DACT_PLUS,        // +1 min
   DACT_MINUS,       // -1 min
   DACT_DELETE,      // delete this timer (after a confirm screen)
@@ -84,11 +83,6 @@ bool tc_check_expiry(Timer *t, int64_t now);
 // absorbs them by position.
 int tc_reconcile(const Timer *cur, int curN, const Timer *cfg, int cfgN, Timer *out);
 
-// True when an idle/done timer's start time was tuned away from its template
-// duration (i.e. the user pressed +/- before starting), so "Start & Save" is
-// meaningful. Always false for RUNNING/PAUSED.
-bool tc_detail_changed(const Timer *t);
-
 // Fill `out` (capacity >= 7) with the ordered detail-window actions for a timer in
-// state `st` whose duration was/was not `changed`. Returns the number written.
-int tc_detail_actions(TimerState st, bool changed, DetailAction *out);
+// state `st`. Returns the number written.
+int tc_detail_actions(TimerState st, DetailAction *out);

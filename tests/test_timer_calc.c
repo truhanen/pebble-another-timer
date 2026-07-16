@@ -180,38 +180,22 @@ int main(void) {
   tc_start(&sr, 1000);
   assert(sr.end_time == 1300);
 
-  // --- tc_detail_changed: only idle/done with a tuned remaining count as "changed" ---
-  Timer dc; memset(&dc, 0, sizeof(dc)); dc.duration = 300;
-  dc.state = TS_IDLE; dc.remaining = 300; assert(tc_detail_changed(&dc) == false);
-  dc.remaining = 360; assert(tc_detail_changed(&dc) == true);   // +1 min
-  dc.state = TS_DONE; dc.remaining = 0;   assert(tc_detail_changed(&dc) == false); // done untouched -> falls back to duration
-  dc.remaining = 60;  assert(tc_detail_changed(&dc) == true);
-  dc.state = TS_RUNNING; dc.remaining = 999; assert(tc_detail_changed(&dc) == false); // running never "changed"
-  dc.state = TS_PAUSED;  assert(tc_detail_changed(&dc) == false);
-
   // --- tc_detail_actions: ordered list per state ---
   DetailAction acts[7]; int an;
-  an = tc_detail_actions(TS_RUNNING, false, acts);
+  an = tc_detail_actions(TS_RUNNING, acts);
   assert(an == 4 && acts[0] == DACT_STOP && acts[1] == DACT_PAUSE &&
          acts[2] == DACT_PLUS && acts[3] == DACT_MINUS);
-  an = tc_detail_actions(TS_PAUSED, false, acts);
+  an = tc_detail_actions(TS_PAUSED, acts);
   assert(an == 4 && acts[0] == DACT_STOP && acts[1] == DACT_START &&
          acts[2] == DACT_PLUS && acts[3] == DACT_MINUS);
-  an = tc_detail_actions(TS_IDLE, false, acts);   // unchanged -> no Save row
+  an = tc_detail_actions(TS_IDLE, acts);
   assert(an == 4 && acts[0] == DACT_START && acts[1] == DACT_PLUS &&
          acts[2] == DACT_MINUS && acts[3] == DACT_DELETE);
-  an = tc_detail_actions(TS_IDLE, true, acts);    // changed -> Save row at index 1
-  assert(an == 5 && acts[0] == DACT_START && acts[1] == DACT_SAVE_START &&
-         acts[2] == DACT_PLUS && acts[3] == DACT_MINUS && acts[4] == DACT_DELETE);
   // DONE finished timer: Stop (reset to idle, dismisses the red 00:00:00) first,
   // then Start (re-run), so the lingering finished row can be cleared from the list.
-  an = tc_detail_actions(TS_DONE, false, acts);   // unchanged -> no Save row
+  an = tc_detail_actions(TS_DONE, acts);
   assert(an == 5 && acts[0] == DACT_STOP && acts[1] == DACT_START &&
          acts[2] == DACT_PLUS && acts[3] == DACT_MINUS && acts[4] == DACT_DELETE);
-  an = tc_detail_actions(TS_DONE, true, acts);    // time tuned with +/- -> Save row after Start
-  assert(an == 6 && acts[0] == DACT_STOP && acts[1] == DACT_START &&
-         acts[2] == DACT_SAVE_START && acts[3] == DACT_PLUS &&
-         acts[4] == DACT_MINUS && acts[5] == DACT_DELETE);
 
   printf("All timer_calc tests passed\n");
   return 0;

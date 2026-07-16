@@ -203,13 +203,7 @@ int tc_reconcile(const Timer *cur, int curN, const Timer *cfg, int cfgN, Timer *
   return n;
 }
 
-bool tc_detail_changed(const Timer *t) {
-  if (t->state != TS_IDLE && t->state != TS_DONE) { return false; }
-  int32_t intended = (t->remaining >= 1) ? t->remaining : t->duration;
-  return intended != t->duration;
-}
-
-int tc_detail_actions(TimerState st, bool changed, DetailAction *out) {
+int tc_detail_actions(TimerState st, DetailAction *out) {
   int n = 0;
   bool allow_delete = true;
   if (st == TS_RUNNING) {
@@ -223,10 +217,8 @@ int tc_detail_actions(TimerState st, bool changed, DetailAction *out) {
   } else if (st == TS_DONE) {
     out[n++] = DACT_STOP;    // finished -> reset to idle, dismissing the red 00:00:00 row
     out[n++] = DACT_START;   // re-run from full duration
-    if (changed) { out[n++] = DACT_SAVE_START; }
   } else {                   // TS_IDLE
     out[n++] = DACT_START;
-    if (changed) { out[n++] = DACT_SAVE_START; }
   }
   out[n++] = DACT_PLUS;
   out[n++] = DACT_MINUS;

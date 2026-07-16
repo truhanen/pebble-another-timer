@@ -37,7 +37,8 @@
       "IdleExitSec",
       "CfgOpen",
       "LaunchSync",
-      "DefaultFinishAction"
+      "DefaultFinishAction",
+      "RunOnCreate"
     ],
     "resources": {
       "media": [

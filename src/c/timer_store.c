@@ -106,3 +106,12 @@ bool store_load_default_finish_delete(void) {
 void store_save_default_finish_delete(bool on) {
   persist_write_bool(PERSIST_KEY_DEFAULT_FINISH_DELETE, on);
 }
+
+bool store_load_runoncreate(void) {
+  if (!persist_exists(PERSIST_KEY_RUNONCREATE)) { return true; }   // default ON
+  return persist_read_bool(PERSIST_KEY_RUNONCREATE);
+}
+
+void store_save_runoncreate(bool on) {
+  persist_write_bool(PERSIST_KEY_RUNONCREATE, on);
+}

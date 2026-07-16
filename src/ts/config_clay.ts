@@ -56,6 +56,10 @@ const config = [
         label: 'Launch-sync timer starts',
         description: 'When on, the start of a timer subtracts the elapsed time since app launch from the started timer.',
         defaultValue: false },
+      { type: 'toggle', messageKey: 'RunOnCreate',
+        label: 'Run timer when created',
+        description: 'When off, a newly created timer starts out stopped instead of running immediately.',
+        defaultValue: true },
       // radiogroup values MUST be strings (Clay gotcha); index.ts parseInts on save.
       { type: 'radiogroup', messageKey: 'DefaultFinishAction', label: 'Default action after timer finishes',
         description: 'Default for newly created timers. Can be changed per timer from the watch\'s ' +

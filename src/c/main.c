@@ -46,6 +46,7 @@ static bool s_auto_return = false; // config: pop to watchface after a start/res
 static bool s_running_first = true; // config: group RUNNING first, then PAUSED
 static bool s_default_finish_delete = true; // config: "Default action after timer finishes" default for new timers
 static bool s_launch_sync = false; // config: subtract elapsed-from-launch on starts
+static bool s_run_on_create = true; // config: start a newly created timer immediately
 static int64_t s_app_launch_s = 0; // app launch timestamp for launch-sync elapsed
 
 // ---- per-timer detail window: long-press menu workflow ----
@@ -998,7 +999,7 @@ static void dial_window_unload(Window *w) {
 static void dl_rebuild_actions(void) {
   if (s_detail_idx < 0 || s_detail_idx >= s_count) { s_detail_act_count = 0; return; }
   Timer *t = &s_timers[s_detail_idx];
-  s_detail_act_count = tc_detail_actions(t->state, tc_detail_changed(t), s_detail_acts);
+  s_detail_act_count = tc_detail_actions(t->state, s_detail_acts);
 }
 
 static const char *dl_legacy_action_label(DetailAction a) {
@@ -1010,7 +1011,6 @@ static const char *dl_legacy_action_label(DetailAction a) {
         return "Continue";
       }
       return "Start";
-    case DACT_SAVE_START: return "Run & save";
     case DACT_PLUS:       return "+1 min";
     case DACT_MINUS:      return "-1 min";
     case DACT_DELETE:     return "Delete";
@@ -1132,11 +1132,6 @@ static void dl_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
         else { menu_layer_reload_data(s_detail_menu); }
         break;
         }
-      case DACT_SAVE_START: {
-        int32_t rem = tc_remaining_now(t, now_s());
-        start_as_new(rem >= 1 ? rem : t->duration, true, NULL);
-        break;
-      }
       case DACT_STOP: {
         bool was_delete_on_finish = s_delete_on_finish[idx];
         if (was_delete_on_finish) { remove_timer_at(idx); }
@@ -1270,19 +1265,23 @@ static void new_timer_label_result(const char *text, void *context) {
     }
     t->last_used = now_s();
     if (s_label_return_style == DSTYLE_LONG_NEW) {
-      // New-timer flow: always start immediately, no Run/Save menu. Only
-      // phone-sync it when the effective mode is "Save" (After finished).
+      // New-timer flow: no Run/Save menu. Starts immediately unless "Run timer
+      // when created" is off, in which case it's left idle for a manual start.
+      // Phone-sync it when the effective mode is "Save" (After finished).
       t->duration = s_detail_edit_secs;
       t->remaining = s_detail_edit_secs;
       t->custom = true;
-      start_with_secs(t, launch_adjust_start_secs(s_detail_edit_secs));
+      bool fired = false;
+      if (s_run_on_create) {
+        start_with_secs(t, launch_adjust_start_secs(s_detail_edit_secs));
+        fired = finish_start_tail();
+      }
       assign_unnamed_star_for_duration(idx, t->duration);
       if (!s_delete_on_finish[idx]) { send_add_timer(t->duration, t->name); }
       s_new_timer_idx = -1;
-      bool fired = finish_start_tail();
       if (fired) { return; }
       select_timer_row(idx);
-      if (s_auto_return) { show_start_confirmation(idx); }
+      if (s_run_on_create && s_auto_return) { show_start_confirmation(idx); }
       else if (s_detail_window && window_stack_contains_window(s_detail_window)) {
         window_stack_remove(s_detail_window, true);
       }
@@ -2004,8 +2003,9 @@ static void ml_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
   bool is_new = false;
   if (!ml_resolve_selected_target(ci->row, &idx, &is_new)) { return; }
   if (is_new) { create_new_timer(); return; }
-  // An unstarted (idle) timer has only one useful action — skip the menu, just start.
-  if (s_timers[idx].state == TS_IDLE) {
+  // An unstarted (idle) or finished (done) timer has only one useful action —
+  // skip the menu, just (re)start it from full duration.
+  if (s_timers[idx].state == TS_IDLE || s_timers[idx].state == TS_DONE) {
     int32_t base = s_timers[idx].remaining;
     if (base < 1) { base = s_timers[idx].duration; }
     start_with_secs(&s_timers[idx], launch_adjust_start_secs(base));
@@ -2113,6 +2113,11 @@ static void inbox_received(DictionaryIterator *iter, void *ctx) {
   if (deffin) {
     s_default_finish_delete = deffin->value->int32 != 0;
     store_save_default_finish_delete(s_default_finish_delete);
+  }
+  Tuple *runoncreate = dict_find(iter, MESSAGE_KEY_RunOnCreate);
+  if (runoncreate) {
+    s_run_on_create = runoncreate->value->int32 != 0;
+    store_save_runoncreate(s_run_on_create);
   }
   Tuple *idle = dict_find(iter, MESSAGE_KEY_IdleExitSec);
   int isec = idle_read_seconds(idle);
@@ -2346,12 +2351,15 @@ static void start_as_new(int32_t secs, bool save_to_phone, const char *name) {
   s_unnamed_star[idx] = -1;
   s_count++;
   assign_unnamed_star_for_duration(idx, t->duration);
-  start_with_secs(t, launch_adjust_start_secs_for_timer(t, secs));
-  bool fired = finish_start_tail();
+  bool fired = false;
+  if (s_run_on_create) {
+    start_with_secs(t, launch_adjust_start_secs_for_timer(t, secs));
+    fired = finish_start_tail();
+  }
   if (save_to_phone) { send_add_timer(secs, t->name); }
   if (fired) { return; }
   select_timer_row(idx);
-  if (s_auto_return) { show_start_confirmation(idx); }   // flash -> watchface
+  if (s_run_on_create && s_auto_return) { show_start_confirmation(idx); }   // flash -> watchface
   else if (s_detail_window && window_stack_contains_window(s_detail_window)) {
     window_stack_remove(s_detail_window, true);           // back to the list
   }
@@ -2510,6 +2518,7 @@ static void init(void) {
   s_auto_return = store_load_autoreturn();
   s_running_first = store_load_runningfirst();
   s_default_finish_delete = store_load_default_finish_delete();
+  s_run_on_create = store_load_runoncreate();
   s_idle_timeout_sec = store_load_idleexit();
   s_launch_sync = store_load_launchsync();
 #ifdef SCREENSHOT_FIXTURES

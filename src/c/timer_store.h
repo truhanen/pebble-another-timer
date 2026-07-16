@@ -14,6 +14,7 @@
 #define PERSIST_KEY_EPHEMERAL 8      // bit i => timer i is deleted (not kept) once it finishes/stops
 #define PERSIST_KEY_LAUNCHSYNC 9     // launch-sync starts (0/1)
 #define PERSIST_KEY_DEFAULT_FINISH_DELETE 10 // default "delete on finish" for newly created timers
+#define PERSIST_KEY_RUNONCREATE 11   // run a newly created timer immediately (0/1)
 #define PERSIST_KEY_TIMER_BASE 100   // timer i -> key 100+i (one Timer per key; 256B/key cap)
 #define STORE_SCHEMA 2
 
@@ -45,3 +46,6 @@ void store_save_launchsync(bool on);
 // Default "delete on finish" for newly created timers (defaults to true/Delete when unset).
 bool store_load_default_finish_delete(void);
 void store_save_default_finish_delete(bool on);
+// Run a newly created timer immediately (defaults to true when unset).
+bool store_load_runoncreate(void);
+void store_save_runoncreate(bool on);
