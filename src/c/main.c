@@ -95,6 +95,15 @@ static bool s_confirm_named;
 static Window  *s_del_window;
 static Layer   *s_del_layer;
 static char     s_del_name[NAME_LEN + 1];
+static bool     s_del_confirm_stay_on_detail; // true: cancel just closes the confirm, detail menu stays open
+// DELCONF_ACTION: a direct delete action (legacy row / dial long-press) -> Select
+// deletes now. DELCONF_EXIT_STOPPED: leaving the menu with delete-on-finish set on
+// an already-stopped timer -> Select deletes now (no future finish/stop transition
+// left to apply it). DELCONF_EXIT_RUNNING: leaving the menu with delete-on-finish
+// set on a still-running timer -> Select just leaves (deletion is deferred to that
+// timer's natural finish/stop).
+typedef enum { DELCONF_ACTION, DELCONF_EXIT_STOPPED, DELCONF_EXIT_RUNNING } DelConfirmKind;
+static DelConfirmKind s_del_confirm_kind;
 
 static int64_t now_s(void) { return (int64_t)time(NULL); }
 
@@ -388,7 +397,7 @@ static void open_detail_window(int timer_idx, DetailStyle style);  // defined be
 static void open_dial_window(int timer_idx, DetailStyle style);    // defined below; used by long/new flows
 static void dial_touch_selected(uint8_t hours, uint8_t minutes, uint8_t seconds);
 static void main_touch_selected(uint8_t hours, uint8_t minutes, uint8_t seconds);
-static void open_delete_confirm(void);                              // defined below; delete confirm modal
+static void open_delete_confirm(bool stay_on_detail_on_cancel, DelConfirmKind kind); // defined below; delete confirm modal
 static void remove_timer_at(int idx); // defined below; used by alarm stop/delete paths
 static int sweep_expiries(void); // defined below; used by tick/start helpers
 static void trigger_alarm(int idx, int count); // defined below; alarm UI path
@@ -971,7 +980,7 @@ static void dial_down_long_end(ClickRecognizerRef rec, void *ctx) {
 static void dial_select_long(ClickRecognizerRef rec, void *ctx) {
   if (s_detail_style != DSTYLE_LONG_EXISTING || s_dial_existing_duration_edit) { return; }
   idle_reset();
-  open_delete_confirm();
+  open_delete_confirm(false, DELCONF_ACTION);
 }
 
 static void dial_click_config(void *ctx) {
@@ -1092,7 +1101,7 @@ static void apply_overwrite_only(int idx, int32_t secs, const char *name);    //
 static void send_add_timer(int32_t secs, const char *name);          // defined below (phone sync)
 static void send_update_timer(int32_t idx, int32_t secs, const char *name); // defined below (phone sync)
 static void create_new_timer(void);                // defined below ("+ New timer" row)
-static void open_delete_confirm(void);             // defined below (delete path)
+static void open_delete_confirm(bool stay_on_detail_on_cancel, DelConfirmKind kind); // defined below (delete path)
 static void send_delete_timer(int32_t idx);        // defined below (delete path)
 static void show_start_confirmation(int idx);      // defined below (auto-return tail)
 static void open_label_input_for_new_timer(int idx); // defined below
@@ -1165,7 +1174,7 @@ static void dl_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
         break;
       }
       case DACT_DELETE:
-        open_delete_confirm();
+        open_delete_confirm(false, DELCONF_ACTION);
         break;
     }
     return;
@@ -1186,15 +1195,6 @@ static void dl_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
       s_delete_on_finish[idx] = !s_delete_on_finish[idx];
       if (s_delete_on_finish[idx]) {
         send_delete_timer(idx);   // now watch-local only: drop it from the phone
-        // Already stopped: there's no future finish/stop transition left to catch
-        // it, so apply "delete" right away instead of leaving it in the list.
-        if (t->state == TS_IDLE || t->state == TS_DONE) {
-          remove_timer_at(idx);
-          persist_all(); rearm_wakeup(); reload_ui();
-          s_detail_idx = -1;
-          window_stack_remove(s_detail_window, true);
-          return;
-        }
       } else {
         t->custom = true;
         send_add_timer(t->duration, t->name);   // now "kept": add it to the phone
@@ -1224,10 +1224,35 @@ static void detail_select_click(ClickRecognizerRef rec, void *ctx) {
   dl_select(s_detail_menu, &sel, NULL);
 }
 
+static void detail_back_click(ClickRecognizerRef rec, void *ctx) {
+  idle_reset();
+  int idx = s_detail_idx;
+  // Leaving the menu with delete-on-finish set: confirm before exiting. A stopped
+  // timer has no future finish/stop transition left to apply it (Select deletes
+  // now); a running timer will still apply it naturally when it finishes/stops
+  // (Select just leaves).
+  if (s_detail_style == DSTYLE_LONG_EXISTING && idx >= 0 && idx < s_count
+      && s_delete_on_finish[idx]) {
+    TimerState st = s_timers[idx].state;
+    if (st == TS_IDLE || st == TS_DONE) {
+      open_delete_confirm(true, DELCONF_EXIT_STOPPED);
+      return;
+    }
+    if (st == TS_RUNNING) {
+      open_delete_confirm(true, DELCONF_EXIT_RUNNING);
+      return;
+    }
+  }
+  if (s_detail_window && window_stack_contains_window(s_detail_window)) {
+    window_stack_remove(s_detail_window, true);
+  }
+}
+
 static void detail_click_config(void *ctx) {
   window_single_click_subscribe(BUTTON_ID_SELECT, detail_select_click);
   window_single_click_subscribe(BUTTON_ID_UP, detail_up_click);
   window_single_click_subscribe(BUTTON_ID_DOWN, detail_down_click);
+  window_single_click_subscribe(BUTTON_ID_BACK, detail_back_click);
 }
 
 static void new_timer_label_result(const char *text, void *context) {
@@ -1372,12 +1397,15 @@ static void del_update_proc(Layer *layer, GContext *gctx) {
   GRect b = layer_get_bounds(layer);
   int cy = b.size.h / 2;
   graphics_context_set_text_color(gctx, GColorBlack);
-  graphics_draw_text(gctx, "Delete?", fonts_get_system_font(FONT_KEY_GOTHIC_28_BOLD),
-    GRect(4, cy - 52, b.size.w - 8, 32), GTextOverflowModeFill, GTextAlignmentCenter, NULL);
+  bool exit_running = (s_del_confirm_kind == DELCONF_EXIT_RUNNING);
+  const char *header = exit_running ? "Delete after\nfinished?" : "Delete?";
+  const char *instructions = exit_running ? "SELECT confirm\nBACK cancel" : "SELECT delete\nBACK cancel";
+  graphics_draw_text(gctx, header, fonts_get_system_font(FONT_KEY_GOTHIC_28_BOLD),
+    GRect(4, cy - 70, b.size.w - 8, 60), GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
   graphics_draw_text(gctx, s_del_name, fonts_get_system_font(FONT_KEY_GOTHIC_24),
-    GRect(4, cy - 16, b.size.w - 8, 30), GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter, NULL);
-  graphics_draw_text(gctx, "SELECT delete\nBACK cancel", fonts_get_system_font(FONT_KEY_GOTHIC_18),
-    GRect(4, cy + 22, b.size.w - 8, 44), GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
+    GRect(4, cy - 6, b.size.w - 8, 30), GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter, NULL);
+  graphics_draw_text(gctx, instructions, fonts_get_system_font(FONT_KEY_GOTHIC_18),
+    GRect(4, cy + 28, b.size.w - 8, 44), GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
 }
 
 static void del_window_load(Window *w) {
@@ -1395,6 +1423,14 @@ static void del_window_unload(Window *w) {
 // the detail window so we land back on the LIST (delete is management, not an exit).
 static void del_confirm_select(ClickRecognizerRef rec, void *ctx) {
   int idx = s_detail_idx;
+  if (s_del_confirm_kind == DELCONF_EXIT_RUNNING) {
+    // delete-on-finish is already set; the timer is still running, so deletion
+    // applies naturally at its next finish/stop. Just leave.
+    window_stack_remove(s_del_window, false);
+    s_detail_idx = -1;
+    window_stack_remove(s_detail_window, true);
+    return;
+  }
   if (idx >= 0 && idx < s_count) {
     if (idx == s_new_timer_idx || s_delete_on_finish[idx]) { s_new_timer_idx = -1; }  // never synced -> no phone delete
     else { send_delete_timer(idx); }
@@ -1410,8 +1446,11 @@ static void del_confirm_select(ClickRecognizerRef rec, void *ctx) {
 }
 
 static void del_confirm_back(ClickRecognizerRef rec, void *ctx) {
-  bool exit_edit_flow = (s_detail_style == DSTYLE_LONG_EXISTING);
+  bool stay_on_detail = s_del_confirm_stay_on_detail;
+  s_del_confirm_stay_on_detail = false;
   window_stack_remove(s_del_window, false);
+  if (stay_on_detail) { return; }
+  bool exit_edit_flow = (s_detail_style == DSTYLE_LONG_EXISTING);
   if (!exit_edit_flow) { return; }
   if (s_dial_window && window_stack_contains_window(s_dial_window)) {
     window_stack_remove(s_dial_window, false);
@@ -1426,8 +1465,10 @@ static void del_click_config(void *ctx) {
   window_single_click_subscribe(BUTTON_ID_BACK, del_confirm_back);
 }
 
-static void open_delete_confirm(void) {
+static void open_delete_confirm(bool stay_on_detail_on_cancel, DelConfirmKind kind) {
   if (s_detail_idx < 0 || s_detail_idx >= s_count) { return; }
+  s_del_confirm_stay_on_detail = stay_on_detail_on_cancel;
+  s_del_confirm_kind = kind;
   Timer *t = &s_timers[s_detail_idx];
   if (t->name[0]) {
     snprintf(s_del_name, sizeof(s_del_name), "%s", t->name);
