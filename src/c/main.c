@@ -47,6 +47,8 @@ static bool s_running_first = true; // config: group RUNNING first, then PAUSED
 static bool s_default_finish_delete = true; // config: "Default action after timer finishes" default for new timers
 static bool s_launch_sync = false; // config: subtract elapsed-from-launch on starts
 static bool s_run_on_create = true; // config: start a newly created timer immediately
+static bool s_keyboard_on_new_timer = true; // config: show label keyboard after "+ New timer" dial confirm
+static bool s_keyboard_on_main_touch = false; // config: show label keyboard after main-view touch dial
 static int64_t s_app_launch_s = 0; // app launch timestamp for launch-sync elapsed
 
 // ---- per-timer detail window: long-press menu workflow ----
@@ -1415,7 +1417,14 @@ static void new_flow_open_label_cb(void *ctx) {
   int idx = s_new_flow_label_idx;
   s_new_flow_label_idx = -1;
   if (idx >= 0 && idx < s_count && s_detail_style == DSTYLE_LONG_NEW) {
-    open_label_input_for_new_timer(idx);
+    if (s_keyboard_on_new_timer) {
+      open_label_input_for_new_timer(idx);
+    } else {
+      // Keyboard disabled: commit the draft with an empty label, same path as
+      // confirming the keyboard with no text entered.
+      s_label_return_style = s_detail_style;
+      new_timer_label_result("", (void *)(intptr_t)idx);
+    }
   }
 }
 
@@ -1706,9 +1715,19 @@ static void dial_touch_selected(uint8_t hours, uint8_t minutes, uint8_t seconds)
   }
 }
 
+static void main_touch_label_result(const char *text, void *context) {
+  (void)context;
+  if (!text) { return; }   // cancelled: abort creation entirely, nothing to undo yet
+  start_as_new(s_main_touch_secs, !s_default_finish_delete, text[0] ? text : NULL);
+}
+
 static void main_touch_confirm_cb(void *data) {
   s_main_touch_confirm_timer = NULL;
-  start_as_new(s_main_touch_secs, false, NULL);
+  if (s_keyboard_on_main_touch) {
+    multitap_keyboard_window_push_ex(main_touch_label_result, NULL, NAME_LEN, NULL);
+    return;
+  }
+  start_as_new(s_main_touch_secs, !s_default_finish_delete, NULL);
 }
 
 // start_as_new() may push the "Started" confirmation window (or otherwise
@@ -2257,6 +2276,16 @@ static void inbox_received(DictionaryIterator *iter, void *ctx) {
     s_run_on_create = runoncreate->value->int32 != 0;
     store_save_runoncreate(s_run_on_create);
   }
+  Tuple *kbnew = dict_find(iter, MESSAGE_KEY_KeyboardOnNewTimer);
+  if (kbnew) {
+    s_keyboard_on_new_timer = kbnew->value->int32 != 0;
+    store_save_keyboard_new_timer(s_keyboard_on_new_timer);
+  }
+  Tuple *kbtouch = dict_find(iter, MESSAGE_KEY_KeyboardOnMainTouch);
+  if (kbtouch) {
+    s_keyboard_on_main_touch = kbtouch->value->int32 != 0;
+    store_save_keyboard_main_touch(s_keyboard_on_main_touch);
+  }
   Tuple *idle = dict_find(iter, MESSAGE_KEY_IdleExitSec);
   int isec = idle_read_seconds(idle);
   if (isec >= 0) {
@@ -2660,6 +2689,8 @@ static void init(void) {
   s_running_first = store_load_runningfirst();
   s_default_finish_delete = store_load_default_finish_delete();
   s_run_on_create = store_load_runoncreate();
+  s_keyboard_on_new_timer = store_load_keyboard_new_timer();
+  s_keyboard_on_main_touch = store_load_keyboard_main_touch();
   s_idle_timeout_sec = store_load_idleexit();
   s_launch_sync = store_load_launchsync();
 #ifdef SCREENSHOT_FIXTURES

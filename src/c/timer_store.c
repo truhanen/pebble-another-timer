@@ -115,3 +115,21 @@ bool store_load_runoncreate(void) {
 void store_save_runoncreate(bool on) {
   persist_write_bool(PERSIST_KEY_RUNONCREATE, on);
 }
+
+bool store_load_keyboard_new_timer(void) {
+  if (!persist_exists(PERSIST_KEY_KEYBOARD_NEW_TIMER)) { return true; }   // default ON
+  return persist_read_bool(PERSIST_KEY_KEYBOARD_NEW_TIMER);
+}
+
+void store_save_keyboard_new_timer(bool on) {
+  persist_write_bool(PERSIST_KEY_KEYBOARD_NEW_TIMER, on);
+}
+
+bool store_load_keyboard_main_touch(void) {
+  if (!persist_exists(PERSIST_KEY_KEYBOARD_MAIN_TOUCH)) { return false; }   // default OFF
+  return persist_read_bool(PERSIST_KEY_KEYBOARD_MAIN_TOUCH);
+}
+
+void store_save_keyboard_main_touch(bool on) {
+  persist_write_bool(PERSIST_KEY_KEYBOARD_MAIN_TOUCH, on);
+}

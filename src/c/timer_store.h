@@ -15,6 +15,8 @@
 #define PERSIST_KEY_LAUNCHSYNC 9     // launch-sync starts (0/1)
 #define PERSIST_KEY_DEFAULT_FINISH_DELETE 10 // default "delete on finish" for newly created timers
 #define PERSIST_KEY_RUNONCREATE 11   // run a newly created timer immediately (0/1)
+#define PERSIST_KEY_KEYBOARD_NEW_TIMER 12  // show label keyboard after "+ New timer" dial confirm (0/1)
+#define PERSIST_KEY_KEYBOARD_MAIN_TOUCH 13 // show label keyboard after main-view touch dial (0/1)
 #define PERSIST_KEY_TIMER_BASE 100   // timer i -> key 100+i (one Timer per key; 256B/key cap)
 #define STORE_SCHEMA 4
 
@@ -49,3 +51,9 @@ void store_save_default_finish_delete(bool on);
 // Run a newly created timer immediately (defaults to true when unset).
 bool store_load_runoncreate(void);
 void store_save_runoncreate(bool on);
+// Show label keyboard after "+ New timer" dial confirm (defaults to true when unset).
+bool store_load_keyboard_new_timer(void);
+void store_save_keyboard_new_timer(bool on);
+// Show label keyboard after main-view touch dial (defaults to false when unset).
+bool store_load_keyboard_main_touch(void);
+void store_save_keyboard_main_touch(bool on);

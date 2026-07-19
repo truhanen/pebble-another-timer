@@ -21,6 +21,8 @@ export function resendDict(get: (k: string) => string | null): Record<string, an
   const ls = get('launch_sync');
   const dfa = get('default_finish_action');
   const roc = get('run_on_create');
+  const kbnew = get('keyboard_on_new_timer');
+  const kbtouch = get('keyboard_on_main_touch');
   return {
     TimerConfig: tc,
     SortOrder: parseInt(get('sort_order') || '0', 10) || 0,
@@ -30,5 +32,7 @@ export function resendDict(get: (k: string) => string | null): Record<string, an
     LaunchSync: ls === null ? 0 : (parseInt(ls, 10) ? 1 : 0),
     DefaultFinishAction: dfa === null ? 1 : (parseInt(dfa, 10) ? 1 : 0),
     RunOnCreate: roc === null ? 1 : (parseInt(roc, 10) ? 1 : 0),
+    KeyboardOnNewTimer: kbnew === null ? 1 : (parseInt(kbnew, 10) ? 1 : 0),
+    KeyboardOnMainTouch: kbtouch === null ? 0 : (parseInt(kbtouch, 10) ? 1 : 0),
   };
 }

@@ -5,6 +5,14 @@
 // component (messageKey 'TimerList') is a Clay-only key (NOT in package.json
 // messageKeys) — index.ts serializes it to the real CString key 'TimerConfig'
 // on save, exactly as TimeStyle maps WidgetList -> SettingWidgetList.
+// `KeyboardOptions` (checkboxgroup) is the same trick, for a different reason:
+// autoHandleEvents is off, so we build the AppMessage dict ourselves instead of
+// letting Clay's own `prepareSettingsForAppMessage` split an array-syntax
+// messageKey into consecutive int keys — a raw array value assigned to one key
+// on a manually-built dict is sent as a single array-typed AppMessage tuple,
+// not split, so it must NOT be declared as an array-syntax key in package.json.
+// index.ts decomposes the boolean array into two real scalar keys instead:
+// KeyboardOnNewTimer / KeyboardOnMainTouch.
 const config = [
   {
     type: 'section',
@@ -31,6 +39,11 @@ const config = [
         ] },
       { type: 'toggle', messageKey: 'RunningFirst',
         label: 'Show running timers at the top', defaultValue: true },
+      { type: 'checkboxgroup', messageKey: 'KeyboardOptions',
+        label: 'Show label keyboard',
+        description: 'Prompt for label after picking duration for a new timer',
+        defaultValue: [true, false],
+        options: ['"+ New timer"', 'Main view touch dial'] },
     ],
   },
   {

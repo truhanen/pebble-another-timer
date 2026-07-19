@@ -78,6 +78,12 @@ Pebble.addEventListener('webviewclosed', (e: any) => {
   dict.LaunchSync = s.LaunchSync ? 1 : 0;
   dict.DefaultFinishAction = parseInt(s.DefaultFinishAction, 10) || 0;
   dict.RunOnCreate = s.RunOnCreate ? 1 : 0;
+  // checkboxgroup .get() returns an array of booleans for the Clay-only
+  // 'KeyboardOptions' key (see config_clay.ts); decompose into the two real
+  // scalar AppMessage keys instead of sending the array itself.
+  const keyboardOptions: boolean[] = Array.isArray(s.KeyboardOptions) ? s.KeyboardOptions : [true, false];
+  dict.KeyboardOnNewTimer = keyboardOptions[0] ? 1 : 0;
+  dict.KeyboardOnMainTouch = keyboardOptions[1] ? 1 : 0;
   // persist so we can re-send when the watchapp later launches and asks (above)
   window.localStorage.setItem('timer_config', dict.TimerConfig);
   window.localStorage.setItem('sort_order', String(dict.SortOrder));
@@ -87,7 +93,9 @@ Pebble.addEventListener('webviewclosed', (e: any) => {
   window.localStorage.setItem('launch_sync', String(dict.LaunchSync));
   window.localStorage.setItem('default_finish_action', String(dict.DefaultFinishAction));
   window.localStorage.setItem('run_on_create', String(dict.RunOnCreate));
-  console.log('Sending TimerConfig: ' + JSON.stringify(dict.TimerConfig) + ' sort=' + dict.SortOrder + ' autoReturn=' + dict.AutoReturn + ' runningFirst=' + dict.RunningFirst + ' idleExit=' + dict.IdleExitSec + ' launchSync=' + dict.LaunchSync + ' defaultFinishAction=' + dict.DefaultFinishAction + ' runOnCreate=' + dict.RunOnCreate);
+  window.localStorage.setItem('keyboard_on_new_timer', String(dict.KeyboardOnNewTimer));
+  window.localStorage.setItem('keyboard_on_main_touch', String(dict.KeyboardOnMainTouch));
+  console.log('Sending TimerConfig: ' + JSON.stringify(dict.TimerConfig) + ' sort=' + dict.SortOrder + ' autoReturn=' + dict.AutoReturn + ' runningFirst=' + dict.RunningFirst + ' idleExit=' + dict.IdleExitSec + ' launchSync=' + dict.LaunchSync + ' defaultFinishAction=' + dict.DefaultFinishAction + ' runOnCreate=' + dict.RunOnCreate + ' keyboardOnNewTimer=' + dict.KeyboardOnNewTimer + ' keyboardOnMainTouch=' + dict.KeyboardOnMainTouch);
   Pebble.sendAppMessage(dict, () => { console.log('config sent'); },
     () => { console.log('config send failed'); });
 });

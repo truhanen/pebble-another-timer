@@ -38,7 +38,9 @@
       "CfgOpen",
       "LaunchSync",
       "DefaultFinishAction",
-      "RunOnCreate"
+      "RunOnCreate",
+      "KeyboardOnNewTimer",
+      "KeyboardOnMainTouch"
     ],
     "resources": {
       "media": [
