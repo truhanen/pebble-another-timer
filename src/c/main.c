@@ -1551,7 +1551,7 @@ static void open_delete_confirm(bool stay_on_detail_on_cancel, DelConfirmKind ki
   if (t->name[0]) {
     snprintf(s_del_name, sizeof(s_del_name), "%s", t->name);
   } else {
-    tc_format_remaining(s_del_name, sizeof(s_del_name), tc_remaining_now(t, now_s()));
+    tc_format_remaining(s_del_name, sizeof(s_del_name), t->duration);
   }
   if (!s_del_window) {
     s_del_window = window_create();
