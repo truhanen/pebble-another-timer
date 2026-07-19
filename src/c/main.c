@@ -70,6 +70,8 @@ static bool s_detail_advancing = false; // true while pushing a modal from detai
 static bool s_new_flow_open_label_after_dial = false; // chain new timer: dial -> label -> menu
 static AppTimer *s_new_flow_label_timer = NULL;
 static AppTimer *s_dial_touch_confirm_timer = NULL;
+static AppTimer *s_main_touch_confirm_timer = NULL;
+static int32_t s_main_touch_secs = 0;
 static int16_t s_new_flow_label_idx = -1;
 static bool s_dial_existing_duration_edit = false; // true while editing existing timer duration from edit menu
 
@@ -1633,6 +1635,18 @@ static void dial_touch_selected(uint8_t hours, uint8_t minutes, uint8_t seconds)
   }
 }
 
+static void main_touch_confirm_cb(void *data) {
+  s_main_touch_confirm_timer = NULL;
+  start_as_new(s_main_touch_secs, false, NULL);
+}
+
+// start_as_new() may push the "Started" confirmation window (or otherwise
+// tear down the main window), which destroys the touch dial's layer via
+// main_disappear -> dial_touch_destroy(). This callback fires from inside
+// touch_dial/touch.c's own touch-event handler, which still has work left to
+// do (finish()) after this returns - tearing the layer down synchronously
+// here is the same use-after-free class as dial_touch_selected's deferral
+// below. Defer to a fresh app timer so it runs after that handler returns.
 static void main_touch_selected(uint8_t hours, uint8_t minutes, uint8_t seconds) {
   int h = (int)hours;
   int m = (int)minutes;
@@ -1640,8 +1654,9 @@ static void main_touch_selected(uint8_t hours, uint8_t minutes, uint8_t seconds)
   if (h > 100) { h = 100; }
   m = ((m % 60) + 60) % 60;
   s = ((s % 60) + 60) % 60;
-  int32_t secs = h * 3600 + m * 60 + s;
-  start_as_new(secs, false, NULL);
+  s_main_touch_secs = h * 3600 + m * 60 + s;
+  if (s_main_touch_confirm_timer) { app_timer_cancel(s_main_touch_confirm_timer); }
+  s_main_touch_confirm_timer = app_timer_register(10, main_touch_confirm_cb, NULL);
 }
 
 // ---- MenuLayer callbacks ----
@@ -2549,6 +2564,10 @@ static void main_disappear(Window *w) {
   idle_disappear(w);
   dial_touch_enable(false);
   dial_touch_destroy();
+  if (s_main_touch_confirm_timer) {
+    app_timer_cancel(s_main_touch_confirm_timer);
+    s_main_touch_confirm_timer = NULL;
+  }
 }
 
 static void init(void) {
