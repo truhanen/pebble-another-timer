@@ -6,14 +6,14 @@
 // messageKeys) — index.ts serializes it to the real CString key 'TimerConfig'
 // on save, exactly as TimeStyle maps WidgetList -> SettingWidgetList.
 const config = [
-  { type: 'heading', defaultValue: 'Countdown timer' },
   {
     type: 'section',
     items: [
       { type: 'heading', defaultValue: 'Saved timers' },
       { type: 'text', defaultValue:
-        'Add & label saved timers below. Saved timers are not deleted after they ' +
-        'finish, and can be reused.'
+        'Add & label saved timers below.<br><br>' +
+        'Saved timers are not deleted after they finish, and can be reused.<br><br>' +
+        'Can be configured also on the watch.'
       },
       { type: 'timerList', messageKey: 'TimerList', defaultValue: [{ name: '', seconds: 0 }] },
     ],
@@ -36,7 +36,29 @@ const config = [
   {
     type: 'section',
     items: [
-      { type: 'heading', defaultValue: 'Behavior' },
+      { type: 'heading', defaultValue: 'Timer behavior' },
+      { type: 'toggle', messageKey: 'LaunchSync',
+        label: 'Launch-sync timer starts',
+        description: 'When on, starting a timer subtracts the elapsed time since app launch from the timer.',
+        defaultValue: false },
+      { type: 'toggle', messageKey: 'RunOnCreate',
+        label: 'Run timer when created',
+        description: 'When off, a newly created timer starts out stopped instead of running immediately.',
+        defaultValue: true },
+      // radiogroup values MUST be strings (Clay gotcha); index.ts parseInts on save.
+      { type: 'radiogroup', messageKey: 'DefaultFinishAction', label: 'Default action after timer finishes',
+        description: 'Default for newly created timers. Can be changed per timer from the watch\'s ' +
+          'timer edit menu.',
+        defaultValue: '1', options: [
+          { label: 'Save timer', value: '0' },
+          { label: 'Delete timer', value: '1' },
+        ] },
+    ],
+  },
+  {
+    type: 'section',
+    items: [
+      { type: 'heading', defaultValue: 'App behavior' },
       { type: 'toggle', messageKey: 'AutoReturn',
         label: 'Return to watchface after starting or stopping a timer',
         description: 'When on, the app closes back to the watchface once you start or stop a timer.',
@@ -51,22 +73,6 @@ const config = [
           { label: '15 seconds', value: '15' },
           { label: '30 seconds', value: '30' },
           { label: '60 seconds', value: '60' },
-        ] },
-      { type: 'toggle', messageKey: 'LaunchSync',
-        label: 'Launch-sync timer starts',
-        description: 'When on, the start of a timer subtracts the elapsed time since app launch from the started timer.',
-        defaultValue: false },
-      { type: 'toggle', messageKey: 'RunOnCreate',
-        label: 'Run timer when created',
-        description: 'When off, a newly created timer starts out stopped instead of running immediately.',
-        defaultValue: true },
-      // radiogroup values MUST be strings (Clay gotcha); index.ts parseInts on save.
-      { type: 'radiogroup', messageKey: 'DefaultFinishAction', label: 'Default action after timer finishes',
-        description: 'Default for newly created timers. Can be changed per timer from the watch\'s ' +
-          'timer edit menu.',
-        defaultValue: '1', options: [
-          { label: 'Save timer', value: '0' },
-          { label: 'Delete timer', value: '1' },
         ] },
     ],
   },
