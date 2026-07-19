@@ -4,13 +4,14 @@
 import Clay from 'pebble-clay';
 import clayConfig from './config_clay';
 import timerListComponent from './config_timer_list';
+import pinSaveButtonToBottom from './config_pin_save';
 import { timerListToString } from './timer_config';
 import { resendDict } from './config_sync';
 import { appendCustomTimer } from './add_timer';
 import { deleteTimer } from './delete_timer';
 import { updateTimer } from './update_timer';
 
-const clay = new Clay(clayConfig, null, { autoHandleEvents: false });
+const clay = new Clay(clayConfig, pinSaveButtonToBottom, { autoHandleEvents: false });
 clay.registerComponent(timerListComponent);
 
 // Inbound from the watch: either a custom timer to save (AddTimer), or the launch
