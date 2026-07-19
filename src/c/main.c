@@ -58,6 +58,10 @@ static DetailAction s_detail_acts[7];
 static int8_t s_detail_act_count = 0;
 static int16_t s_new_timer_idx = -1;  // index in s_timers of an un-started draft new timer, or -1
 static int32_t s_detail_edit_secs = 60;
+// After-finished state ("Save", i.e. delete_on_finish == false) as of when the
+// LONG_EXISTING detail menu was opened for s_detail_idx -- used to only confirm
+// on exit if it was actually changed Save -> Delete during this menu visit.
+static bool s_detail_del_on_finish_was_save;
 typedef enum { DSTYLE_LEGACY = 0, DSTYLE_LONG_EXISTING = 1, DSTYLE_LONG_NEW = 2 } DetailStyle;
 static DetailStyle s_detail_style = DSTYLE_LEGACY;
 static int16_t s_label_target_idx = -1; // timer index receiving keyboard-entered label
@@ -1227,12 +1231,13 @@ static void detail_select_click(ClickRecognizerRef rec, void *ctx) {
 static void detail_back_click(ClickRecognizerRef rec, void *ctx) {
   idle_reset();
   int idx = s_detail_idx;
-  // Leaving the menu with delete-on-finish set: confirm before exiting. A stopped
-  // timer has no future finish/stop transition left to apply it (Select deletes
-  // now); a running timer will still apply it naturally when it finishes/stops
-  // (Select just leaves).
+  // Leaving the menu after changing After-finished from Save to Delete during this
+  // visit: confirm before exiting. A stopped timer has no future finish/stop
+  // transition left to apply it (Select deletes now); a running timer will still
+  // apply it naturally when it finishes/stops (Select just leaves). If it was
+  // already Delete when the menu opened, there's nothing new to confirm.
   if (s_detail_style == DSTYLE_LONG_EXISTING && idx >= 0 && idx < s_count
-      && s_delete_on_finish[idx]) {
+      && s_delete_on_finish[idx] && s_detail_del_on_finish_was_save) {
     TimerState st = s_timers[idx].state;
     if (st == TS_IDLE || st == TS_DONE) {
       open_delete_confirm(true, DELCONF_EXIT_STOPPED);
@@ -1549,6 +1554,7 @@ static void open_detail_window(int timer_idx, DetailStyle style) {
       s_detail_edit_secs = rem >= 1 ? rem : t->duration;
     } else if (style == DSTYLE_LONG_EXISTING) {
       s_detail_edit_secs = t->duration;
+      s_detail_del_on_finish_was_save = !s_delete_on_finish[timer_idx];
     }
     if (s_detail_edit_secs < 0) { s_detail_edit_secs = 0; }
   }
