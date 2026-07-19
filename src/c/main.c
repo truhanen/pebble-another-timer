@@ -23,6 +23,7 @@ static TextLayer *s_alarm_title;
 static TextLayer *s_alarm_sub;
 static TextLayer *s_alarm_lbl_up;    // "+1 Min" next to the UP button
 static TextLayer *s_alarm_lbl_down;  // "Stop"  next to the DOWN button
+static TextLayer *s_alarm_lbl_back;  // "Run overtime" next to the BACK button
 static int s_alarm_idx = -1;                 // config index the alarm screen is for
 static char s_alarm_title_buf[NAME_LEN + 1]; // big name (or time if unnamed)
 static char s_alarm_sub_buf[48];
@@ -41,7 +42,6 @@ static int8_t s_unnamed_star[MAX_TIMERS]; // unnamed timers: per-duration creati
 static int s_count = 0;
 static int s_order[MAX_TIMERS];   // display order, rebuilt on reload per s_sort
 static SortMode s_sort = SORT_MRU;
-static int s_last_fired_idx = -1; // first timer that newly expired in the latest sweep
 static bool s_auto_return = false; // config: pop to watchface after a start/resume
 static bool s_running_first = true; // config: group RUNNING first, then PAUSED
 static bool s_default_finish_delete = true; // config: "Default action after timer finishes" default for new timers
@@ -266,8 +266,9 @@ static void idle_disappear(Window *w) { idle_cancel(); }
 static void rearm_wakeup(void) {
   int32_t old = store_load_wakeup_id();
   int64_t soon;
-  if (!tc_soonest_end(s_timers, s_count, &soon)) {
-    // No running timers: drop any armed wakeup.
+  if (!tc_soonest_end(s_timers, s_count, now_s(), &soon)) {
+    // No running timers with a future end_time (none running, or all sitting
+    // in overtime): drop any armed wakeup.
     if (old >= 0) { wakeup_cancel(old); store_save_wakeup_id(-1); }
     return;
   }
@@ -407,6 +408,7 @@ static void open_delete_confirm(bool stay_on_detail_on_cancel, DelConfirmKind ki
 static void remove_timer_at(int idx); // defined below; used by alarm stop/delete paths
 static int sweep_expiries(void); // defined below; used by tick/start helpers
 static void trigger_alarm(int idx, int count); // defined below; alarm UI path
+static bool show_next_pending_alarm(void); // defined below; alarm-queue chaining
 static int ml_row_for_timer_primary(int timer_idx, int selected_idx); // defined below; list row mapping
 static int ml_row_for_new(int selected_idx); // defined below; list row mapping for trailing + New timer row
 static bool ml_block_for_selection(int selected_idx, int *out_y, int *out_h); // defined below; highlight block
@@ -421,22 +423,45 @@ static void start_with_secs(Timer *t, int32_t secs) {
 static bool finish_start_tail(void) {
   int fired = sweep_expiries();
   persist_all(); rearm_wakeup(); ensure_ticking(); reload_ui();
-  if (fired) { trigger_alarm(s_last_fired_idx, fired); return true; }
+  if (fired) { show_next_pending_alarm(); return true; }
   return false;
 }
 
-// Mark every expired RUNNING timer DONE. Returns the count that NEWLY expired and
-// sets s_last_fired_idx to the first of them (drives the alarm screen). No UI here.
+// Mark every newly-expired RUNNING timer alarm_pending (still RUNNING - now in
+// overtime). Returns the count that NEWLY expired this sweep. No UI here.
 static int sweep_expiries(void) {
   int fired = 0;
   int64_t now = now_s();
   for (int i = 0; i < s_count; i++) {
-    if (tc_check_expiry(&s_timers[i], now)) {
-      if (fired == 0) { s_last_fired_idx = i; }
-      fired++;
-    }
+    if (tc_check_expiry(&s_timers[i], now)) { fired++; }
   }
   return fired;
+}
+
+// First timer still awaiting an alarm-screen acknowledgement, or -1.
+static int first_pending_alarm_idx(void) {
+  for (int i = 0; i < s_count; i++) {
+    if (s_timers[i].alarm_pending) { return i; }
+  }
+  return -1;
+}
+
+static int pending_alarm_count(void) {
+  int n = 0;
+  for (int i = 0; i < s_count; i++) {
+    if (s_timers[i].alarm_pending) { n++; }
+  }
+  return n;
+}
+
+// Show the alarm screen for the next timer still awaiting acknowledgement, if
+// any (chains through every expired timer instead of just the first). Returns
+// whether one was shown.
+static bool show_next_pending_alarm(void) {
+  int idx = first_pending_alarm_idx();
+  if (idx < 0) { return false; }
+  trigger_alarm(idx, pending_alarm_count());
+  return true;
 }
 
 // ---- full-screen alarm when a timer finishes ----
@@ -469,25 +494,30 @@ static void alarm_buzz_stop(void) {
 }
 
 static void alarm_stop(ClickRecognizerRef rec, void *ctx) {
-  // Stop: reset the finished timer directly from the alarm, then close the app
-  // (-> watchface). The alarm often fires while the app is closed (wakeup-launched),
-  // so after dismissing the user wants the watchface, not to be left in the app.
+  // Stop: reset (or delete) the finished timer directly from the alarm, then
+  // chain to the next queued alarm if another timer also expired; only close
+  // the app (-> watchface) once the queue is empty. The alarm often fires
+  // while the app is closed (wakeup-launched), so once nothing is left to
+  // show, the user wants the watchface, not to be left in the app.
   if (s_alarm_idx >= 0 && s_alarm_idx < s_count) {
     if (s_delete_on_finish[s_alarm_idx]) { remove_timer_at(s_alarm_idx); }
     else { tc_reset(&s_timers[s_alarm_idx], now_s()); }
     persist_all(); rearm_wakeup(); reload_ui();
   }
+  if (show_next_pending_alarm()) { return; }
   close_to_watchface();
 }
 
 static void alarm_add_minute(ClickRecognizerRef rec, void *ctx) {
-  // Snooze: run the finished timer for 1 more minute, dismiss the alarm, and land on
-  // that timer's own detail window. Push the detail window over the alarm first, then
-  // silently drop the alarm from beneath it (no flash back to the list).
+  // Snooze: run the finished timer for 1 more minute. If another timer is
+  // also queued, chain to its alarm screen instead. Otherwise land on this
+  // timer's own detail window (push it over the alarm first, then silently
+  // drop the alarm from beneath it - no flash back to the list).
   int idx = s_alarm_idx;
   if (idx >= 0 && idx < s_count) {
     tc_extend(&s_timers[idx], 60, now_s());
     persist_all(); rearm_wakeup(); ensure_ticking(); reload_ui();
+    if (show_next_pending_alarm()) { return; }
     open_detail_window(idx, DSTYLE_LEGACY);
     window_stack_remove(s_alarm_window, false);
   } else {
@@ -495,10 +525,23 @@ static void alarm_add_minute(ClickRecognizerRef rec, void *ctx) {
   }
 }
 
+static void alarm_run_overtime(ClickRecognizerRef rec, void *ctx) {
+  // "Overtime": acknowledge this alarm without stopping the timer - it keeps
+  // counting in the background (red/orange row, offered Stop/Start in its
+  // detail menu) - then chain to the next queued alarm, or close to the
+  // watchface if none remain.
+  if (s_alarm_idx >= 0 && s_alarm_idx < s_count) {
+    s_timers[s_alarm_idx].alarm_pending = false;
+    persist_all();
+  }
+  if (show_next_pending_alarm()) { return; }
+  close_to_watchface();
+}
+
 static void alarm_click_config(void *ctx) {
-  window_single_click_subscribe(BUTTON_ID_DOWN, alarm_stop);        // Stop: reset + dismiss
-  window_single_click_subscribe(BUTTON_ID_UP, alarm_add_minute);    // +1 Min: snooze + dismiss
-  window_single_click_subscribe(BUTTON_ID_BACK, alarm_add_minute);  // Back = snooze (matches stock)
+  window_single_click_subscribe(BUTTON_ID_DOWN, alarm_stop);          // Stop: reset + dismiss
+  window_single_click_subscribe(BUTTON_ID_UP, alarm_add_minute);      // +1 Min: snooze + dismiss
+  window_single_click_subscribe(BUTTON_ID_BACK, alarm_run_overtime);  // Overtime: dismiss, keep counting
 }
 
 // Pick the largest title font whose word-wrapped layout fits within box_h (the
@@ -553,11 +596,11 @@ static void alarm_window_load(Window *w) {
   GRect b = layer_get_bounds(root);
   const int h = b.size.h, wd = b.size.w;
 
-  // "+N more" — small, top-centre (free space; the UP label is right-aligned).
-  s_alarm_sub = text_layer_create(GRect(4, 2, wd - 8, 22));
+  // "+N more" — top-centre (free space; the UP/BACK labels flank it left+right).
+  s_alarm_sub = text_layer_create(GRect(4, 2, wd - 8, 28));
   text_layer_set_background_color(s_alarm_sub, GColorClear);
   text_layer_set_text_color(s_alarm_sub, GColorWhite);
-  text_layer_set_font(s_alarm_sub, fonts_get_system_font(FONT_KEY_GOTHIC_18));
+  text_layer_set_font(s_alarm_sub, fonts_get_system_font(FONT_KEY_GOTHIC_24));
   text_layer_set_text_alignment(s_alarm_sub, GTextAlignmentCenter);
   text_layer_set_text(s_alarm_sub, s_alarm_sub_buf);
   layer_add_child(root, text_layer_get_layer(s_alarm_sub));
@@ -570,6 +613,18 @@ static void alarm_window_load(Window *w) {
   text_layer_set_text_alignment(s_alarm_lbl_up, GTextAlignmentRight);
   text_layer_set_text(s_alarm_lbl_up, "+1 Min");
   layer_add_child(root, text_layer_get_layer(s_alarm_lbl_up));
+
+  // "Overtime" — big bold, LEFT-aligned, mirrors "+1 Min" on the opposite
+  // side, same vertical band, for the BACK button. Word-wraps if it doesn't
+  // fit the left half on one line.
+  s_alarm_lbl_back = text_layer_create(GRect(6, h * 22 / 100 - 16, wd / 2 - 6, 48));
+  text_layer_set_background_color(s_alarm_lbl_back, GColorClear);
+  text_layer_set_text_color(s_alarm_lbl_back, GColorWhite);
+  text_layer_set_font(s_alarm_lbl_back, fonts_get_system_font(FONT_KEY_GOTHIC_28_BOLD));
+  text_layer_set_text_alignment(s_alarm_lbl_back, GTextAlignmentLeft);
+  text_layer_set_overflow_mode(s_alarm_lbl_back, GTextOverflowModeWordWrap);
+  text_layer_set_text(s_alarm_lbl_back, "Overtime");
+  layer_add_child(root, text_layer_get_layer(s_alarm_lbl_back));
 
   // Title — large bold, centred in the band between the +1 Min and Stop labels
   // (timer name, or time if unnamed). The font auto-shrinks for long, wrapping
@@ -600,10 +655,13 @@ static void alarm_window_unload(Window *w) {
   text_layer_destroy(s_alarm_sub); s_alarm_sub = NULL;
   text_layer_destroy(s_alarm_lbl_up); s_alarm_lbl_up = NULL;
   text_layer_destroy(s_alarm_lbl_down); s_alarm_lbl_down = NULL;
+  text_layer_destroy(s_alarm_lbl_back); s_alarm_lbl_back = NULL;
 }
 
-// Show the alarm for timer `idx` (first of `count` that just finished): big name,
-// long vibration, backlight on briefly; Select resets it.
+// Show the alarm for timer `idx` (the next one still awaiting acknowledgement;
+// `count` is the total still pending, including this one): big name, long
+// vibration, backlight on briefly. If already showing (chaining to the next
+// queued timer), refreshes the text in place instead of re-pushing the window.
 static void trigger_alarm(int idx, int count) {
   if (idx < 0 || idx >= s_count) { return; }
   s_alarm_idx = idx;
@@ -656,7 +714,7 @@ static void tick_cb(void *ctx) {
       && detail_style_has_bottom_bar()) {
     layer_mark_dirty(s_detail_bottom_bar_layer);
   }
-  if (fired) { persist_all(); rearm_wakeup(); trigger_alarm(s_last_fired_idx, fired); }
+  if (fired) { persist_all(); rearm_wakeup(); show_next_pending_alarm(); }
   s_tick = app_timer_register(1000, tick_cb, NULL);
 }
 
@@ -1014,7 +1072,7 @@ static void dial_window_unload(Window *w) {
 static void dl_rebuild_actions(void) {
   if (s_detail_idx < 0 || s_detail_idx >= s_count) { s_detail_act_count = 0; return; }
   Timer *t = &s_timers[s_detail_idx];
-  s_detail_act_count = tc_detail_actions(t->state, s_detail_acts);
+  s_detail_act_count = tc_detail_actions(t->state, tc_is_overtime(t, now_s()), s_detail_acts);
 }
 
 static const char *dl_legacy_action_label(DetailAction a) {
@@ -1132,7 +1190,9 @@ static void dl_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
       case DACT_START:
         {
         bool was_paused = (t->state == TS_PAUSED);
-        int32_t base = t->remaining;
+        // RUNNING here means an overtime restart: t->remaining is stale while
+        // running (end_time drives it), so use the full duration instead.
+        int32_t base = (t->state == TS_RUNNING) ? t->duration : t->remaining;
         if (base < 1) { base = t->duration; }
         start_with_secs(t, launch_adjust_start_secs_for_timer(t, base));
         ensure_unnamed_star(idx);
@@ -1240,12 +1300,13 @@ static void detail_back_click(ClickRecognizerRef rec, void *ctx) {
   // already Delete when the menu opened, there's nothing new to confirm.
   if (s_detail_style == DSTYLE_LONG_EXISTING && idx >= 0 && idx < s_count
       && s_delete_on_finish[idx] && s_detail_del_on_finish_was_save) {
-    TimerState st = s_timers[idx].state;
-    if (st == TS_IDLE || st == TS_DONE) {
+    Timer *t = &s_timers[idx];
+    bool overtime = tc_is_overtime(t, now_s());
+    if (t->state == TS_IDLE || overtime) {
       open_delete_confirm(true, DELCONF_EXIT_STOPPED);
       return;
     }
-    if (st == TS_RUNNING) {
+    if (t->state == TS_RUNNING && !overtime) {
       open_delete_confirm(true, DELCONF_EXIT_RUNNING);
       return;
     }
@@ -1794,21 +1855,22 @@ static void ml_scroll_item_bounds_into_view(int item_y, int item_h) {
   scroll_layer_set_content_offset(sl, GPoint(0, -target_top), false);
 }
 
-static void ml_row_colors(const Timer *t, bool selected, GColor *bg, GColor *fg) {
+static void ml_row_colors(const Timer *t, bool selected, int64_t now, GColor *bg, GColor *fg) {
+  bool overtime = tc_is_overtime(t, now);
   if (selected) {
     *fg = GColorWhite;
-    switch (t->state) {
+    if (overtime) { *bg = PBL_IF_COLOR_ELSE(GColorDarkCandyAppleRed, GColorBlack); }
+    else switch (t->state) {
       case TS_RUNNING: *bg = PBL_IF_COLOR_ELSE(GColorDarkGreen, GColorBlack); break;
       case TS_PAUSED:  *bg = PBL_IF_COLOR_ELSE(GColorArmyGreen, GColorBlack); break;
-      case TS_DONE:    *bg = PBL_IF_COLOR_ELSE(GColorDarkCandyAppleRed, GColorBlack); break;
       default:         *bg = GColorBlack; break;   // TS_IDLE
     }
   } else {
     *fg = GColorBlack;
-    switch (t->state) {
+    if (overtime) { *bg = PBL_IF_COLOR_ELSE(GColorSunsetOrange, GColorWhite); }
+    else switch (t->state) {
       case TS_RUNNING: *bg = PBL_IF_COLOR_ELSE(GColorMediumSpringGreen, GColorWhite); break;
       case TS_PAUSED:  *bg = PBL_IF_COLOR_ELSE(GColorYellow, GColorWhite); break;
-      case TS_DONE:    *bg = PBL_IF_COLOR_ELSE(GColorSunsetOrange, GColorWhite); break;
       default:         *bg = GColorWhite; break;   // TS_IDLE
     }
   }
@@ -1883,10 +1945,11 @@ static void ml_draw_row(GContext *gctx, const Layer *cell, MenuIndex *ci, void *
   // row uses a DARK shade of the same hue + white text so it still reads as the
   // cursor AND keeps its state colour; idle selected stays the plain black highlight.
   bool selected = (s_menu_selected_timer_idx == info.timer_idx);
+  int64_t now = now_s();
   GColor bg, fg, sel_bg, unused_fg;
-  ml_row_colors(t, false, &bg, &unused_fg);
-  ml_row_colors(t, true, &sel_bg, &unused_fg);
-  ml_row_colors(t, selected, &unused_fg, &fg);
+  ml_row_colors(t, false, now, &bg, &unused_fg);
+  ml_row_colors(t, true, now, &sel_bg, &unused_fg);
+  ml_row_colors(t, selected, now, &unused_fg, &fg);
   graphics_context_set_fill_color(gctx, bg);
   graphics_fill_rect(gctx, layer_get_bounds(cell), 0, GCornerNone);
   int hy, hh;
@@ -2065,12 +2128,15 @@ static void ml_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
   bool is_new = false;
   if (!ml_resolve_selected_target(ci->row, &idx, &is_new)) { return; }
   if (is_new) { create_new_timer(); return; }
-  // An unstarted (idle) or finished (done) timer has only one useful action —
-  // skip the menu, just (re)start it from full duration.
-  if (s_timers[idx].state == TS_IDLE || s_timers[idx].state == TS_DONE) {
-    int32_t base = s_timers[idx].remaining;
-    if (base < 1) { base = s_timers[idx].duration; }
-    start_with_secs(&s_timers[idx], launch_adjust_start_secs(base));
+  // An unstarted (idle) timer has only one useful action — skip the menu,
+  // just start it from full duration. A finished (overtime) timer already
+  // has real choices (Stop/Start/+1/-1/Delete), so it opens the run control
+  // menu like any other RUNNING/PAUSED timer instead of restarting blind.
+  Timer *sel_t = &s_timers[idx];
+  if (sel_t->state == TS_IDLE) {
+    int32_t base = sel_t->remaining;
+    if (base < 1) { base = sel_t->duration; }
+    start_with_secs(sel_t, launch_adjust_start_secs(base));
     ensure_unnamed_star(idx);
     bool fired = finish_start_tail();
     if (fired) { return; }
@@ -2285,7 +2351,7 @@ static void inbox_received(DictionaryIterator *iter, void *ctx) {
     // to "After finished: Delete". If one's already stopped, there's no future
     // finish/stop to catch it - drop it outright instead of re-listing it.
     for (int i = 0; i < on && s_count < MAX_TIMERS; i++) {
-      if (orphans[i].state == TS_IDLE || orphans[i].state == TS_DONE) { continue; }
+      if (orphans[i].state == TS_IDLE || tc_is_overtime(&orphans[i], now_s())) { continue; }
       Timer *t = &s_timers[s_count];
       *t = orphans[i];
       t->custom = true;
@@ -2302,7 +2368,7 @@ static void inbox_received(DictionaryIterator *iter, void *ctx) {
     for (int i = 0; i < s_count; i++) {
       if (draft_new[i]) { s_new_timer_idx = i; break; }
     }
-    sweep_expiries();   // mark stale expiries DONE; no alarm for a config reconcile
+    sweep_expiries();   // catch stale expiries (overtime); no alarm for a config reconcile
     persist_all(); rearm_wakeup(); ensure_ticking();
     // reload_ui() below only refreshes the main list - if the per-timer edit menu
     // is open (e.g. showing "After finished") its label was just built from
@@ -2438,7 +2504,6 @@ static void apply_overwrite_only(int idx, int32_t secs, const char *name) {
   }
   t->duration = secs;
   if (t->state == TS_IDLE) { t->remaining = secs; }
-  if (t->state == TS_DONE) { t->remaining = 0; }
   t->last_used = now_s();
   assign_unnamed_star_for_duration(idx, t->duration);
   s_delete_on_finish[idx] = was_delete_on_finish;
@@ -2593,7 +2658,7 @@ static void init(void) {
     memset(s_timers, 0, sizeof(s_timers));
     strcpy(s_timers[0].name, "Egg"); s_timers[0].duration = 300; s_timers[0].state = TS_RUNNING; s_timers[0].end_time = time(NULL) + 184; s_timers[0].last_used = time(NULL);
     strcpy(s_timers[1].name, "Tea"); s_timers[1].duration = 120; s_timers[1].state = TS_PAUSED; s_timers[1].remaining = 75; s_timers[1].last_used = time(NULL) - 10;
-    strcpy(s_timers[2].name, "Laundry"); s_timers[2].duration = 3600; s_timers[2].state = TS_DONE; s_timers[2].remaining = 0; s_timers[2].last_used = 0;
+    strcpy(s_timers[2].name, "Laundry"); s_timers[2].duration = 3600; s_timers[2].state = TS_RUNNING; s_timers[2].end_time = time(NULL) - 300; s_timers[2].last_used = 0;
   }
 #endif
   // If launched by a wakeup, the firing event was already consumed; sweep now.
@@ -2623,7 +2688,7 @@ static void init(void) {
   // counts a RUNNING timer that has just crossed its end_time, so `fired` is a
   // genuine "you may have missed this finish" signal regardless of launch reason.
   (void)by_wakeup;
-  if (fired) { trigger_alarm(s_last_fired_idx, fired); }
+  if (fired) { show_next_pending_alarm(); }
 
 #ifdef SCREENSHOT_FIXTURES
   // (list view fixture: 3 seeded timers above show on the list directly)

@@ -47,37 +47,47 @@ int tc_parse_config(const char *buf, Timer *out, int max) {
   return count;
 }
 
+// Negative `secs` (a timer in overtime) renders with a leading "-" and its
+// magnitude, so overtime counts up from "-0:00" instead of sitting at zero.
 void tc_format_remaining(char *buf, size_t n, int32_t secs) {
-  if (secs < 0) { secs = 0; }
+  const char *sign = "";
+  if (secs < 0) { sign = "-"; secs = -secs; }
   int h = secs / 3600;
   int m = (secs % 3600) / 60;
   int s = secs % 60;
-  if (h > 0) { snprintf(buf, n, "%d:%02d:%02d", h, m, s); }
-  else { snprintf(buf, n, "%d:%02d", m, s); }
+  if (h > 0) { snprintf(buf, n, "%s%d:%02d:%02d", sign, h, m, s); }
+  else { snprintf(buf, n, "%s%d:%02d", sign, m, s); }
 }
 
 void tc_format_fixed(char *buf, size_t n, int32_t secs) {
-  if (secs < 0) { secs = 0; }
+  const char *sign = "";
+  if (secs < 0) { sign = "-"; secs = -secs; }
   int h = secs / 3600;
   int m = (secs % 3600) / 60;
   int s = secs % 60;
-  snprintf(buf, n, "%02d:%02d:%02d", h, m, s);
+  snprintf(buf, n, "%s%02d:%02d:%02d", sign, h, m, s);
 }
 
 int32_t tc_remaining_now(const Timer *t, int64_t now) {
   if (t->state == TS_RUNNING) {
-    int64_t r = t->end_time - now;
-    if (r < 0) { r = 0; }
-    return (int32_t)r;
+    // May be negative when in overtime (end_time already passed) - callers
+    // that want a floor of 0 (e.g. a restart-from-duration fallback) already
+    // guard for that themselves.
+    return (int32_t)(t->end_time - now);
   }
   return t->remaining;
 }
 
-bool tc_soonest_end(const Timer *t, int count, int64_t *out) {
+bool tc_soonest_end(const Timer *t, int count, int64_t now, int64_t *out) {
   bool found = false;
   int64_t best = 0;
   for (int i = 0; i < count; i++) {
-    if (t[i].state == TS_RUNNING) {
+    // Skip timers already in overtime: there's no future moment to wake up
+    // for - end_time is in the past and will stay there until the user
+    // explicitly stops/restarts it. Including it here would make it the
+    // "soonest" forever, re-arming a ~1s-out wakeup on every check and
+    // re-launching the app in a tight loop for as long as it sits unhandled.
+    if (t[i].state == TS_RUNNING && t[i].end_time > now) {
       if (!found || t[i].end_time < best) { best = t[i].end_time; found = true; }
     }
   }
@@ -117,14 +127,18 @@ void tc_display_order(const Timer *t, int count, SortMode mode, int64_t now, int
 }
 
 void tc_start(Timer *t, int64_t now) {
-  // Non-running timers start from `remaining` (PAUSED resume, or an IDLE/DONE
-  // timer whose duration was tuned with +/- before starting). Fall back to the
-  // full duration when remaining is unset/zero, so a plain Start is unchanged.
+  // Non-running timers start from `remaining` (PAUSED resume, or an IDLE
+  // timer whose duration was tuned with +/- before starting). A RUNNING
+  // timer (restarting from overtime) always starts from the full duration.
+  // Fall back to the full duration when remaining is unset/zero, so a plain
+  // Start is unchanged.
   int32_t rem = (t->state == TS_RUNNING) ? t->duration : t->remaining;
   if (rem < 1) { rem = t->duration; }
   t->end_time = now + rem;
   t->state = TS_RUNNING;
   t->last_used = now;
+  t->alarm_pending = false;
+  t->alarm_notified = false;
 }
 
 void tc_pause(Timer *t, int64_t now) {
@@ -142,12 +156,16 @@ void tc_reset(Timer *t, int64_t now) {
   t->remaining = t->duration;
   t->end_time = 0;
   t->last_used = now;
+  t->alarm_pending = false;
+  t->alarm_notified = false;
 }
 
 void tc_extend(Timer *t, int32_t secs, int64_t now) {
   t->state = TS_RUNNING;
   t->end_time = now + secs;
   t->last_used = now;
+  t->alarm_pending = false;
+  t->alarm_notified = false;
 }
 
 void tc_add(Timer *t, int32_t secs, int64_t now) {
@@ -157,15 +175,19 @@ void tc_add(Timer *t, int32_t secs, int64_t now) {
     t->remaining += secs;
     if (t->remaining < 0) { t->remaining = 0; }
   } else {
-    return;   // IDLE/DONE: not applicable
+    return;   // IDLE: not applicable
   }
   t->last_used = now;
 }
 
+bool tc_is_overtime(const Timer *t, int64_t now) {
+  return t->state == TS_RUNNING && t->end_time <= now;
+}
+
 bool tc_check_expiry(Timer *t, int64_t now) {
-  if (t->state == TS_RUNNING && t->end_time <= now) {
-    t->state = TS_DONE;
-    t->remaining = 0;
+  if (t->state == TS_RUNNING && t->end_time <= now && !t->alarm_notified) {
+    t->alarm_notified = true;
+    t->alarm_pending = true;
     return true;
   }
   return false;
@@ -203,10 +225,13 @@ int tc_reconcile(const Timer *cur, int curN, const Timer *cfg, int cfgN, Timer *
   return n;
 }
 
-int tc_detail_actions(TimerState st, DetailAction *out) {
+int tc_detail_actions(TimerState st, bool overtime, DetailAction *out) {
   int n = 0;
   bool allow_delete = true;
-  if (st == TS_RUNNING) {
+  if (st == TS_RUNNING && overtime) {
+    out[n++] = DACT_STOP;    // finished -> reset to idle, dismissing the red 00:00:00 row
+    out[n++] = DACT_START;   // re-run from full duration
+  } else if (st == TS_RUNNING) {
     out[n++] = DACT_STOP;
     out[n++] = DACT_PAUSE;
     allow_delete = false;
@@ -214,9 +239,6 @@ int tc_detail_actions(TimerState st, DetailAction *out) {
     out[n++] = DACT_STOP;
     out[n++] = DACT_START;   // resume
     allow_delete = false;
-  } else if (st == TS_DONE) {
-    out[n++] = DACT_STOP;    // finished -> reset to idle, dismissing the red 00:00:00 row
-    out[n++] = DACT_START;   // re-run from full duration
   } else {                   // TS_IDLE
     out[n++] = DACT_START;
   }

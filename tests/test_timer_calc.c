@@ -27,13 +27,14 @@ int main(void) {
   tc_format_remaining(b, sizeof(b), 599);   assert(strcmp(b, "9:59") == 0);
   tc_format_remaining(b, sizeof(b), 3600);  assert(strcmp(b, "1:00:00") == 0);
   tc_format_remaining(b, sizeof(b), 3725);  assert(strcmp(b, "1:02:05") == 0);
+  tc_format_remaining(b, sizeof(b), -65);   assert(strcmp(b, "-1:05") == 0);  // overtime
 
   // --- tc_format_fixed (always HH:MM:SS, leading zeros) ---
   tc_format_fixed(b, sizeof(b), 0);     assert(strcmp(b, "00:00:00") == 0);
   tc_format_fixed(b, sizeof(b), 5);     assert(strcmp(b, "00:00:05") == 0);
   tc_format_fixed(b, sizeof(b), 65);    assert(strcmp(b, "00:01:05") == 0);
   tc_format_fixed(b, sizeof(b), 3725);  assert(strcmp(b, "01:02:05") == 0);
-  tc_format_fixed(b, sizeof(b), -10);   assert(strcmp(b, "00:00:00") == 0);
+  tc_format_fixed(b, sizeof(b), -10);   assert(strcmp(b, "-00:00:10") == 0);
 
   // --- transitions + remaining_now ---
   Timer x; memset(&x, 0, sizeof(x)); x.duration = 300; x.remaining = 300; x.state = TS_IDLE;
@@ -41,7 +42,9 @@ int main(void) {
   assert(x.state == TS_RUNNING && x.end_time == 1300 && x.last_used == 1000);
   assert(tc_remaining_now(&x, 1000) == 300);
   assert(tc_remaining_now(&x, 1290) == 10);
-  assert(tc_remaining_now(&x, 1400) == 0);   // clamps at 0
+  assert(tc_remaining_now(&x, 1400) == -100);   // overtime: negative, not clamped at 0
+  char ob[16]; tc_format_remaining(ob, sizeof(ob), tc_remaining_now(&x, 1400));
+  assert(strcmp(ob, "-1:40") == 0);   // overtime counts up past zero, not stuck at 0:00
   tc_pause(&x, 1290);
   assert(x.state == TS_PAUSED && x.remaining == 10 && x.last_used == 1290);
   tc_start(&x, 2000);
@@ -50,15 +53,30 @@ int main(void) {
   assert(x.state == TS_IDLE && x.remaining == 300 && x.last_used == 2500);
 
   // --- tc_extend: run for N more secs from now, regardless of prior state ---
-  Timer ex; memset(&ex, 0, sizeof(ex)); ex.duration = 300; ex.state = TS_DONE; ex.remaining = 0;
+  // (overtime: RUNNING with end_time already passed, alarm_pending/notified set)
+  Timer ex; memset(&ex, 0, sizeof(ex)); ex.duration = 300; ex.state = TS_RUNNING; ex.end_time = 100;
+  ex.alarm_pending = true; ex.alarm_notified = true;
   tc_extend(&ex, 60, 5000);
   assert(ex.state == TS_RUNNING && ex.end_time == 5060 && ex.last_used == 5000);
+  assert(ex.alarm_pending == false && ex.alarm_notified == false); // extending ends the episode
 
-  // --- expiry ---
+  // --- expiry: no more TS_DONE - the timer stays RUNNING ("overtime"). The
+  // one-shot "just crossed zero" guard is alarm_notified (NOT alarm_pending):
+  // a perpetually-overtime timer keeps end_time <= now forever, so a "Run
+  // overtime" dismissal (which only clears alarm_pending, see below) must not
+  // let it re-fire on the very next sweep. ---
   Timer y; memset(&y, 0, sizeof(y)); y.duration = 60; y.state = TS_RUNNING; y.end_time = 100;
   assert(tc_check_expiry(&y, 50) == false);
-  assert(tc_check_expiry(&y, 100) == true && y.state == TS_DONE && y.remaining == 0);
-  assert(tc_check_expiry(&y, 200) == false); // already DONE, not re-fired
+  assert(tc_check_expiry(&y, 100) == true && y.state == TS_RUNNING);
+  assert(y.alarm_pending == true && y.alarm_notified == true);
+  assert(tc_is_overtime(&y, 100) == true);
+  assert(tc_check_expiry(&y, 200) == false); // already alarm_notified, not re-fired
+  assert(tc_is_overtime(&y, 200) == true);   // still overtime even though not re-fired
+  // "Run overtime" dismissal: clears alarm_pending only, leaving alarm_notified
+  // set - tc_check_expiry must still not re-fire afterwards.
+  y.alarm_pending = false;
+  assert(tc_check_expiry(&y, 300) == false);
+  assert(tc_is_overtime(&y, 300) == true);
 
   // --- soonest_end ---
   Timer s[3]; memset(s, 0, sizeof(s));
@@ -66,9 +84,19 @@ int main(void) {
   s[1].state = TS_PAUSED;  s[1].end_time = 0;
   s[2].state = TS_RUNNING; s[2].end_time = 300;
   int64_t soon;
-  assert(tc_soonest_end(s, 3, &soon) == true && soon == 300);
+  assert(tc_soonest_end(s, 3, 100, &soon) == true && soon == 300);
   Timer none[1]; memset(none, 0, sizeof(none)); none[0].state = TS_IDLE;
-  assert(tc_soonest_end(none, 1, &soon) == false);
+  assert(tc_soonest_end(none, 1, 100, &soon) == false);
+  // overtime (end_time already passed) is excluded - nothing upcoming to wake
+  // up for, and it must not become the "soonest" and trap a wakeup at +1s
+  // forever while it sits unhandled.
+  Timer ov[2]; memset(ov, 0, sizeof(ov));
+  ov[0].state = TS_RUNNING; ov[0].end_time = 50;   // overtime at now=100
+  ov[1].state = TS_RUNNING; ov[1].end_time = 400;  // still counting down
+  assert(tc_soonest_end(ov, 2, 100, &soon) == true && soon == 400);
+  Timer allov[1]; memset(allov, 0, sizeof(allov));
+  allov[0].state = TS_RUNNING; allov[0].end_time = 50;
+  assert(tc_soonest_end(allov, 1, 100, &soon) == false);   // only an overtime timer -> nothing to arm
 
   // --- display_order: SORT_MRU (most-recently-used first, ties by index) ---
   Timer d[3]; memset(d, 0, sizeof(d));
@@ -150,13 +178,16 @@ int main(void) {
   tc_add(&p, 60, 2000);             // +1 min while paused
   assert(p.state == TS_PAUSED && p.remaining == 180 && p.last_used == 2000);
 
-  // idle / done: no-op (state and timing unchanged)
+  // idle: no-op (state and timing unchanged)
   Timer id; memset(&id, 0, sizeof(id)); id.duration = 90; id.state = TS_IDLE; id.remaining = 90;
   tc_add(&id, 600, 3000);
   assert(id.state == TS_IDLE && id.remaining == 90 && id.last_used == 0);
-  Timer dn; memset(&dn, 0, sizeof(dn)); dn.state = TS_DONE; dn.remaining = 0;
+  // overtime (RUNNING, end_time already passed): +/- is now live, same as any
+  // other RUNNING timer - this is what makes the overtime detail menu's +1/-1
+  // rows actually do something (the old DONE state made them a silent no-op).
+  Timer dn; memset(&dn, 0, sizeof(dn)); dn.state = TS_RUNNING; dn.end_time = 100; dn.alarm_pending = true;
   tc_add(&dn, 600, 3000);
-  assert(dn.state == TS_DONE && dn.remaining == 0 && dn.last_used == 0);
+  assert(dn.state == TS_RUNNING && dn.end_time == 700 && dn.last_used == 3000);
 
   // --- tc_start: non-running timers start from `remaining` (one-off adjust) ---
   // idle, remaining bumped above duration -> starts from remaining
@@ -167,33 +198,35 @@ int main(void) {
   Timer sn; memset(&sn, 0, sizeof(sn)); sn.duration = 300; sn.state = TS_IDLE; sn.remaining = 300;
   tc_start(&sn, 1000);
   assert(sn.end_time == 1300);
-  // done, remaining 0 -> falls back to duration
-  Timer sd; memset(&sd, 0, sizeof(sd)); sd.duration = 90; sd.state = TS_DONE; sd.remaining = 0;
-  tc_start(&sd, 1000);
-  assert(sd.end_time == 1090);
-  // done, remaining adjusted up -> starts from remaining
-  Timer sda; memset(&sda, 0, sizeof(sda)); sda.duration = 90; sda.state = TS_DONE; sda.remaining = 150;
-  tc_start(&sda, 1000);
-  assert(sda.end_time == 1150);
-  // RUNNING restarts from duration
+  // RUNNING restarts from duration (regardless of `remaining`, which is stale
+  // while running) - this is exactly what restarting an overtime timer does,
+  // since overtime is just RUNNING with end_time in the past.
   Timer sr; memset(&sr, 0, sizeof(sr)); sr.duration = 300; sr.state = TS_RUNNING; sr.end_time = 9999;
   tc_start(&sr, 1000);
   assert(sr.end_time == 1300);
+  // overtime specifically: end_time already passed, alarm_pending set -> restart
+  // uses full duration and clears alarm_pending
+  Timer sd; memset(&sd, 0, sizeof(sd)); sd.duration = 90; sd.state = TS_RUNNING; sd.end_time = 500;
+  sd.alarm_pending = true;
+  assert(tc_is_overtime(&sd, 1000) == true);
+  tc_start(&sd, 1000);
+  assert(sd.end_time == 1090 && sd.alarm_pending == false);
 
-  // --- tc_detail_actions: ordered list per state ---
+  // --- tc_detail_actions: ordered list per state (+ overtime bool) ---
   DetailAction acts[7]; int an;
-  an = tc_detail_actions(TS_RUNNING, acts);
+  an = tc_detail_actions(TS_RUNNING, false, acts);
   assert(an == 4 && acts[0] == DACT_STOP && acts[1] == DACT_PAUSE &&
          acts[2] == DACT_PLUS && acts[3] == DACT_MINUS);
-  an = tc_detail_actions(TS_PAUSED, acts);
+  an = tc_detail_actions(TS_PAUSED, false, acts);
   assert(an == 4 && acts[0] == DACT_STOP && acts[1] == DACT_START &&
          acts[2] == DACT_PLUS && acts[3] == DACT_MINUS);
-  an = tc_detail_actions(TS_IDLE, acts);
+  an = tc_detail_actions(TS_IDLE, false, acts);
   assert(an == 4 && acts[0] == DACT_START && acts[1] == DACT_PLUS &&
          acts[2] == DACT_MINUS && acts[3] == DACT_DELETE);
-  // DONE finished timer: Stop (reset to idle, dismisses the red 00:00:00) first,
-  // then Start (re-run), so the lingering finished row can be cleared from the list.
-  an = tc_detail_actions(TS_DONE, acts);
+  // overtime (RUNNING, end_time <= now): Stop (reset to idle, dismisses the red
+  // 00:00:00) first, then Start (re-run), so the lingering finished row can be
+  // cleared from the list. Also allows Delete, unlike plain RUNNING.
+  an = tc_detail_actions(TS_RUNNING, true, acts);
   assert(an == 5 && acts[0] == DACT_STOP && acts[1] == DACT_START &&
          acts[2] == DACT_PLUS && acts[3] == DACT_MINUS && acts[4] == DACT_DELETE);
 
