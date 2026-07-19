@@ -495,17 +495,18 @@ static void alarm_buzz_stop(void) {
 
 static void alarm_stop(ClickRecognizerRef rec, void *ctx) {
   // Stop: reset (or delete) the finished timer directly from the alarm, then
-  // chain to the next queued alarm if another timer also expired; only close
-  // the app (-> watchface) once the queue is empty. The alarm often fires
-  // while the app is closed (wakeup-launched), so once nothing is left to
-  // show, the user wants the watchface, not to be left in the app.
+  // chain to the next queued alarm if another timer also expired. Once the
+  // queue is empty, only close the app (-> watchface) if AutoReturn is on -
+  // same as every other stop/start action - otherwise just drop the alarm
+  // and land back on the list.
   if (s_alarm_idx >= 0 && s_alarm_idx < s_count) {
     if (s_delete_on_finish[s_alarm_idx]) { remove_timer_at(s_alarm_idx); }
     else { tc_reset(&s_timers[s_alarm_idx], now_s()); }
     persist_all(); rearm_wakeup(); reload_ui();
   }
   if (show_next_pending_alarm()) { return; }
-  close_to_watchface();
+  if (s_auto_return) { close_to_watchface(); }
+  else { window_stack_remove(s_alarm_window, true); }
 }
 
 static void alarm_add_minute(ClickRecognizerRef rec, void *ctx) {
@@ -528,14 +529,15 @@ static void alarm_add_minute(ClickRecognizerRef rec, void *ctx) {
 static void alarm_run_overtime(ClickRecognizerRef rec, void *ctx) {
   // "Overtime": acknowledge this alarm without stopping the timer - it keeps
   // counting in the background (red/orange row, offered Stop/Start in its
-  // detail menu) - then chain to the next queued alarm, or close to the
-  // watchface if none remain.
+  // detail menu) - then chain to the next queued alarm. Once none remain,
+  // only close to the watchface if AutoReturn is on (see alarm_stop).
   if (s_alarm_idx >= 0 && s_alarm_idx < s_count) {
     s_timers[s_alarm_idx].alarm_pending = false;
     persist_all();
   }
   if (show_next_pending_alarm()) { return; }
-  close_to_watchface();
+  if (s_auto_return) { close_to_watchface(); }
+  else { window_stack_remove(s_alarm_window, true); }
 }
 
 static void alarm_click_config(void *ctx) {
@@ -664,6 +666,14 @@ static void alarm_window_unload(Window *w) {
 // queued timer), refreshes the text in place instead of re-pushing the window.
 static void trigger_alarm(int idx, int count) {
   if (idx < 0 || idx >= s_count) { return; }
+  // A just-started timer can expire almost immediately - while the "Started"
+  // confirmation screen (show_start_confirmation) is still up, racing its own
+  // ~1.1s auto-close. That auto-close (confirm_timer_cb) unconditionally pops
+  // the WHOLE stack, which would rip the alarm out from under the user (no
+  // Stop press, so delete-on-finish never applies either) the instant it
+  // fires. Cancel it here: once a real alarm needs the user's attention, the
+  // confirmation's own timeout must not be the thing that dismisses it.
+  if (s_confirm_timer) { app_timer_cancel(s_confirm_timer); s_confirm_timer = NULL; }
   s_alarm_idx = idx;
   Timer *t = &s_timers[idx];
   if (t->name[0]) {
