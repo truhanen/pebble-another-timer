@@ -224,6 +224,20 @@ static void close_to_watchface(void) {
   window_stack_pop_all(true);
 }
 
+// Alarm actions always resolve back to the main list (or watchface) - never
+// leave a per-timer detail/dial/delete-confirm window sitting on the stack.
+static void close_timer_menus(void) {
+  if (s_del_window && window_stack_contains_window(s_del_window)) {
+    window_stack_remove(s_del_window, false);
+  }
+  if (s_dial_window && window_stack_contains_window(s_dial_window)) {
+    window_stack_remove(s_dial_window, false);
+  }
+  if (s_detail_window && window_stack_contains_window(s_detail_window)) {
+    window_stack_remove(s_detail_window, false);
+  }
+}
+
 // ---- idle auto-exit: return to the watchface after s_idle_timeout_sec of no
 // button press in the list/detail views. Armed in each target window's .appear,
 // cancelled in .disappear (so the alarm / confirm / delete modals pause it for
@@ -509,27 +523,13 @@ static void alarm_stop(ClickRecognizerRef rec, void *ctx) {
   // chain to the next queued alarm if another timer also expired. Once the
   // queue is empty, only close the app (-> watchface) if AutoReturn is on -
   // same as every other stop/start action - otherwise just drop the alarm
-  // and land back on the list.
+  // and land back on the list. Any per-timer menu underneath is always
+  // closed first (see close_timer_menus) so no menu ever survives an alarm.
+  close_timer_menus();
   if (s_alarm_idx >= 0 && s_alarm_idx < s_count) {
-    bool was_delete_on_finish = s_delete_on_finish[s_alarm_idx];
-    // A restarted-then-refired overtime timer can leave its own run-control
-    // detail window still open underneath this alarm (the restart doesn't
-    // close it - see dl_select's DACT_START). Deleting that same timer here
-    // would otherwise leave the revealed detail window showing nothing but
-    // its bottom bar (stale s_detail_idx past the shifted array).
-    bool detail_showed_this_timer = (s_detail_idx == s_alarm_idx);
-    if (was_delete_on_finish) { remove_timer_at(s_alarm_idx); }
+    if (s_delete_on_finish[s_alarm_idx]) { remove_timer_at(s_alarm_idx); }
     else { tc_reset(&s_timers[s_alarm_idx], now_s()); }
     persist_all(); rearm_wakeup(); reload_ui();
-    if (was_delete_on_finish && detail_showed_this_timer
-        && s_detail_window && window_stack_contains_window(s_detail_window)) {
-      window_stack_remove(s_detail_window, false);
-    } else if (!was_delete_on_finish && detail_showed_this_timer
-        && s_detail_menu && s_detail_window && window_stack_contains_window(s_detail_window)) {
-      // Same detail window still open, just reset instead of removed - reload
-      // it now instead of leaving stale (pre-Stop) content up until dismissed.
-      menu_layer_reload_data(s_detail_menu);
-    }
   }
   if (show_next_pending_alarm()) { return; }
   if (s_auto_return) { close_to_watchface(); }
@@ -537,20 +537,18 @@ static void alarm_stop(ClickRecognizerRef rec, void *ctx) {
 }
 
 static void alarm_add_minute(ClickRecognizerRef rec, void *ctx) {
-  // Snooze: run the finished timer for 1 more minute. If another timer is
-  // also queued, chain to its alarm screen instead. Otherwise land on this
-  // timer's own detail window (push it over the alarm first, then silently
-  // drop the alarm from beneath it - no flash back to the list).
+  // Snooze: run the finished timer for 1 more minute, then land back on the
+  // list (or chain to another queued alarm) - same as every other alarm
+  // action, no per-timer menu is ever shown.
+  close_timer_menus();
   int idx = s_alarm_idx;
   if (idx >= 0 && idx < s_count) {
     tc_add(&s_timers[idx], 60, now_s());
     persist_all(); rearm_wakeup(); ensure_ticking(); reload_ui();
-    if (show_next_pending_alarm()) { return; }
-    open_detail_window(idx, DSTYLE_LEGACY);
-    window_stack_remove(s_alarm_window, false);
-  } else {
-    window_stack_remove(s_alarm_window, true);
   }
+  if (show_next_pending_alarm()) { return; }
+  if (s_auto_return) { close_to_watchface(); }
+  else { window_stack_remove(s_alarm_window, true); }
 }
 
 static void alarm_run_overtime(ClickRecognizerRef rec, void *ctx) {
@@ -558,16 +556,10 @@ static void alarm_run_overtime(ClickRecognizerRef rec, void *ctx) {
   // counting in the background (red/orange row, offered Stop/Start in its
   // detail menu) - then chain to the next queued alarm. Once none remain,
   // only close to the watchface if AutoReturn is on (see alarm_stop).
+  close_timer_menus();
   if (s_alarm_idx >= 0 && s_alarm_idx < s_count) {
     s_timers[s_alarm_idx].alarm_pending = false;
     persist_all();
-    // If this timer's own detail window is still open underneath (e.g. an
-    // immediate re-fire pushed the alarm on top of it), refresh it now
-    // instead of leaving stale (pre-alarm) content up until dismissed.
-    if (s_detail_idx == s_alarm_idx && s_detail_menu && s_detail_window
-        && window_stack_contains_window(s_detail_window)) {
-      menu_layer_reload_data(s_detail_menu);
-    }
   }
   if (show_next_pending_alarm()) { return; }
   if (s_auto_return) { close_to_watchface(); }
