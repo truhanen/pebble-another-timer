@@ -131,9 +131,11 @@ static int32_t launch_elapsed_s(void) {
 }
 
 static int32_t launch_adjust_start_secs(int32_t base) {
-  int32_t adjusted = base - launch_elapsed_s();
-  if (adjusted < 1) { adjusted = 1; }
-  return adjusted;
+  // May be <= 0 if launch-elapsed time exceeds `base` - that's fine, it
+  // starts the timer already in overtime (end_time in the past), and the
+  // caller's finish_start_tail() sweep fires the alarm right away instead of
+  // artificially delaying it by flooring to a fake 1s countdown.
+  return base - launch_elapsed_s();
 }
 
 static bool launch_sync_applies_for_timer(const Timer *t) {
@@ -520,6 +522,11 @@ static void alarm_stop(ClickRecognizerRef rec, void *ctx) {
     if (was_delete_on_finish && detail_showed_this_timer
         && s_detail_window && window_stack_contains_window(s_detail_window)) {
       window_stack_remove(s_detail_window, false);
+    } else if (!was_delete_on_finish && detail_showed_this_timer
+        && s_detail_menu && s_detail_window && window_stack_contains_window(s_detail_window)) {
+      // Same detail window still open, just reset instead of removed - reload
+      // it now instead of leaving stale (pre-Stop) content up until dismissed.
+      menu_layer_reload_data(s_detail_menu);
     }
   }
   if (show_next_pending_alarm()) { return; }
@@ -552,6 +559,13 @@ static void alarm_run_overtime(ClickRecognizerRef rec, void *ctx) {
   if (s_alarm_idx >= 0 && s_alarm_idx < s_count) {
     s_timers[s_alarm_idx].alarm_pending = false;
     persist_all();
+    // If this timer's own detail window is still open underneath (e.g. an
+    // immediate re-fire pushed the alarm on top of it), refresh it now
+    // instead of leaving stale (pre-alarm) content up until dismissed.
+    if (s_detail_idx == s_alarm_idx && s_detail_menu && s_detail_window
+        && window_stack_contains_window(s_detail_window)) {
+      menu_layer_reload_data(s_detail_menu);
+    }
   }
   if (show_next_pending_alarm()) { return; }
   if (s_auto_return) { close_to_watchface(); }
@@ -1232,7 +1246,14 @@ static void dl_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
           s_new_timer_idx = -1;
         }
         bool fired = finish_start_tail();
-        if (fired) { break; }
+        if (fired) {
+          // An immediate re-fire (overtime right from the start) pushed the
+          // alarm on top of this still-open detail window instead of
+          // reloading it - without this it would resurface showing stale
+          // pre-Start action labels once the alarm is dismissed.
+          menu_layer_reload_data(s_detail_menu);
+          break;
+        }
         if (was_paused) { window_stack_remove(s_detail_window, true); }
         else if (s_auto_return) { show_start_confirmation(idx); }
         else { menu_layer_reload_data(s_detail_menu); }
@@ -1403,7 +1424,17 @@ static void new_timer_label_result(const char *text, void *context) {
       assign_unnamed_star_for_duration(idx, t->duration);
       if (!s_delete_on_finish[idx]) { send_add_timer(t->duration, t->name); }
       s_new_timer_idx = -1;
-      if (fired) { return; }
+      if (fired) {
+        // An immediate re-fire (overtime right from the start) pushed the alarm
+        // on top of this DSTYLE_LONG_NEW window instead of closing it first -
+        // that style's rows are only ever drawn for a to-be-started draft, so
+        // left lingering underneath the alarm it would resurface as a blank,
+        // scrollable 3-row menu once the alarm is dismissed. Close it now.
+        if (s_detail_window && window_stack_contains_window(s_detail_window)) {
+          window_stack_remove(s_detail_window, true);
+        }
+        return;
+      }
       select_timer_row(idx);
       if (s_run_on_create && s_auto_return) { show_start_confirmation(idx); }
       else if (s_detail_window && window_stack_contains_window(s_detail_window)) {
