@@ -24,9 +24,11 @@ static TextLayer *s_alarm_sub;
 static TextLayer *s_alarm_lbl_up;    // "+1 Min" next to the UP button
 static TextLayer *s_alarm_lbl_down;  // "Stop"  next to the DOWN button
 static TextLayer *s_alarm_lbl_back;  // "Run overtime" next to the BACK button
+static TextLayer *s_alarm_elapsed;   // live "+MM:SS" overtime elapsed, below the title
 static int s_alarm_idx = -1;                 // config index the alarm screen is for
 static char s_alarm_title_buf[NAME_LEN + 1]; // big name (or time if unnamed)
 static char s_alarm_sub_buf[48];
+static char s_alarm_elapsed_buf[24];
 
 // Repeating "alarm clock" buzz: re-fire alarm_vibrate() on a timer until the
 // user dismisses, capped at ALARM_BUZZ_MAX_S so an unattended watch stops
@@ -541,7 +543,7 @@ static void alarm_add_minute(ClickRecognizerRef rec, void *ctx) {
   // drop the alarm from beneath it - no flash back to the list).
   int idx = s_alarm_idx;
   if (idx >= 0 && idx < s_count) {
-    tc_extend(&s_timers[idx], 60, now_s());
+    tc_add(&s_timers[idx], 60, now_s());
     persist_all(); rearm_wakeup(); ensure_ticking(); reload_ui();
     if (show_next_pending_alarm()) { return; }
     open_detail_window(idx, DSTYLE_LEGACY);
@@ -603,9 +605,11 @@ static GFont alarm_title_font(const char *text, int box_w, int box_h, GSize *out
   return chosen;
 }
 
-// (Re)compute the title layer's font + frame from the current name. The available
-// band is between the bottom of the +1 Min label (~22% h) and the top of Stop
-// (~78% h); the text is vertically centred within it. Called on load and on
+// (Re)compute the title layer's font + frame from the current name, and the
+// elapsed-overtime layer's frame below it. The available band is between the
+// bottom of the +1 Min label (~22% h) and the top of Stop (~78% h); the
+// elapsed row is reserved at the bottom of that band, and the title is
+// vertically centred within what's left above it. Called on load and on
 // in-place refresh (a second timer finishing reuses the open alarm window).
 static void layout_alarm_title(void) {
   if (!s_alarm_title || !s_alarm_window) { return; }
@@ -613,8 +617,10 @@ static void layout_alarm_title(void) {
   const int h = b.size.h, wd = b.size.w;
   const int up_bottom = h * 22 / 100 - 16 + 34;   // bottom edge of the +1 Min label
   const int down_top  = h * 78 / 100 - 18;         // top edge of the Stop label
+  const int elapsed_h = 26;
   const int band_top = up_bottom + 2;
-  const int band_h   = down_top - band_top - 2;
+  const int elapsed_y = down_top - elapsed_h;
+  const int band_h   = elapsed_y - 2 - band_top;
   const int box_w = wd - 4;
   GSize sz;
   GFont tf = alarm_title_font(s_alarm_title_buf, box_w, band_h, &sz);
@@ -622,6 +628,9 @@ static void layout_alarm_title(void) {
   const int title_y = band_top + (band_h - used_h) / 2;
   text_layer_set_font(s_alarm_title, tf);
   layer_set_frame(text_layer_get_layer(s_alarm_title), GRect(2, title_y, box_w, used_h + 4));
+  if (s_alarm_elapsed) {
+    layer_set_frame(text_layer_get_layer(s_alarm_elapsed), GRect(2, elapsed_y, box_w, elapsed_h));
+  }
 }
 
 static void alarm_window_load(Window *w) {
@@ -671,6 +680,17 @@ static void alarm_window_load(Window *w) {
   text_layer_set_overflow_mode(s_alarm_title, GTextOverflowModeWordWrap);
   text_layer_set_text(s_alarm_title, s_alarm_title_buf);
   layer_add_child(root, text_layer_get_layer(s_alarm_title));
+
+  // Elapsed overtime — same font as the "+N more" label above, centred right
+  // below the title. Frame is computed in layout_alarm_title() below.
+  s_alarm_elapsed = text_layer_create(GRect(2, 0, wd - 4, 26));
+  text_layer_set_background_color(s_alarm_elapsed, GColorClear);
+  text_layer_set_text_color(s_alarm_elapsed, GColorWhite);
+  text_layer_set_font(s_alarm_elapsed, fonts_get_system_font(FONT_KEY_GOTHIC_24));
+  text_layer_set_text_alignment(s_alarm_elapsed, GTextAlignmentCenter);
+  text_layer_set_text(s_alarm_elapsed, s_alarm_elapsed_buf);
+  layer_add_child(root, text_layer_get_layer(s_alarm_elapsed));
+
   layout_alarm_title();
 
   // "Stop" — big bold, right-aligned, vertically by the DOWN button (~78% h).
@@ -686,6 +706,7 @@ static void alarm_window_load(Window *w) {
 static void alarm_window_unload(Window *w) {
   alarm_buzz_stop();
   text_layer_destroy(s_alarm_title); s_alarm_title = NULL;
+  text_layer_destroy(s_alarm_elapsed); s_alarm_elapsed = NULL;
   text_layer_destroy(s_alarm_sub); s_alarm_sub = NULL;
   text_layer_destroy(s_alarm_lbl_up); s_alarm_lbl_up = NULL;
   text_layer_destroy(s_alarm_lbl_down); s_alarm_lbl_down = NULL;
@@ -696,6 +717,27 @@ static void alarm_window_unload(Window *w) {
 // `count` is the total still pending, including this one): big name, long
 // vibration, backlight on briefly. If already showing (chaining to the next
 // queued timer), refreshes the text in place instead of re-pushing the window.
+// Fills s_alarm_sub_buf: "+N more" when multiple alarms are queued, empty otherwise.
+static void format_alarm_sub(int count) {
+  if (count > 1) {
+    snprintf(s_alarm_sub_buf, sizeof(s_alarm_sub_buf), "+%d more", count - 1);
+  } else {
+    s_alarm_sub_buf[0] = '\0';
+  }
+}
+
+// Fills s_alarm_elapsed_buf with a live "+MM:SS" of how long the shown timer
+// has been in overtime (ticked every second from tick_cb while the alarm
+// window is on top).
+static void format_alarm_elapsed(int idx) {
+  if (idx < 0 || idx >= s_count) { s_alarm_elapsed_buf[0] = '\0'; return; }
+  int32_t elapsed = (int32_t)(now_s() - s_timers[idx].end_time);
+  if (elapsed < 0) { elapsed = 0; }
+  char buf[16];
+  tc_format_remaining(buf, sizeof(buf), elapsed);
+  snprintf(s_alarm_elapsed_buf, sizeof(s_alarm_elapsed_buf), "+%s", buf);
+}
+
 static void trigger_alarm(int idx, int count) {
   if (idx < 0 || idx >= s_count) { return; }
   // A just-started timer can expire almost immediately - while the "Started"
@@ -713,11 +755,8 @@ static void trigger_alarm(int idx, int count) {
   } else {
     tc_format_remaining(s_alarm_title_buf, sizeof(s_alarm_title_buf), t->duration);
   }
-  if (count > 1) {
-    snprintf(s_alarm_sub_buf, sizeof(s_alarm_sub_buf), "+%d more", count - 1);
-  } else {
-    s_alarm_sub_buf[0] = '\0';
-  }
+  format_alarm_sub(count);
+  format_alarm_elapsed(idx);
   light_enable_interaction();   // backlight on for the standard brief window
   alarm_buzz_start();   // repeating buzz until dismissed (cap restarts on each trigger)
   if (!s_alarm_window) {
@@ -730,6 +769,7 @@ static void trigger_alarm(int idx, int count) {
     // already showing (another timer finished): refresh the text in place
     if (s_alarm_title) { text_layer_set_text(s_alarm_title, s_alarm_title_buf); layout_alarm_title(); }
     if (s_alarm_sub) { text_layer_set_text(s_alarm_sub, s_alarm_sub_buf); }
+    if (s_alarm_elapsed) { text_layer_set_text(s_alarm_elapsed, s_alarm_elapsed_buf); }
   } else {
     window_stack_push(s_alarm_window, true);
   }
@@ -748,6 +788,16 @@ static void tick_cb(void *ctx) {
   }
   if (s_dial_layer && window_stack_get_top_window() == s_dial_window) {
     layer_mark_dirty(s_dial_layer);          // retick dial header + bottom bar
+  }
+  if (window_stack_get_top_window() == s_alarm_window) {
+    if (s_alarm_sub) {
+      format_alarm_sub(pending_alarm_count());
+      text_layer_set_text(s_alarm_sub, s_alarm_sub_buf);
+    }
+    if (s_alarm_elapsed) {
+      format_alarm_elapsed(s_alarm_idx);
+      text_layer_set_text(s_alarm_elapsed, s_alarm_elapsed_buf);
+    }
   }
   if (s_main_bottom_bar_layer && window_stack_get_top_window() == s_window) {
     layer_mark_dirty(s_main_bottom_bar_layer);
