@@ -178,12 +178,27 @@ void tc_extend(Timer *t, int32_t secs, int64_t now) {
 
 void tc_add(Timer *t, int32_t secs, int64_t now) {
   if (t->state == TS_RUNNING) {
+    bool was_overtime = t->end_time <= now;
     t->end_time += secs;
+    // Leaving overtime clears the one-shot alarm guard, so a later crossing
+    // back through zero (this timer counting down again) alarms afresh.
+    if (was_overtime && t->end_time > now) {
+      t->alarm_pending = false;
+      t->alarm_notified = false;
+    }
   } else if (t->state == TS_PAUSED) {
     // No floor, matching the RUNNING case above: a paused-in-overtime timer's
     // `remaining` is already negative, and -/+ should adjust it the same way
     // a live overtime timer's end_time moves.
+    bool was_overtime = t->remaining <= 0;
     t->remaining += secs;
+    // Same re-arm as the RUNNING branch: a later resume that counts down
+    // into overtime again should alarm, not be silently swallowed by a
+    // guard left over from a previous overtime episode.
+    if (was_overtime && t->remaining > 0) {
+      t->alarm_pending = false;
+      t->alarm_notified = false;
+    }
   } else {
     return;   // IDLE: not applicable
   }

@@ -201,6 +201,33 @@ int main(void) {
   tc_add(&dn, 600, 3000);
   assert(dn.state == TS_RUNNING && dn.end_time == 700 && dn.last_used == 3000);
 
+  // tc_add: leaving overtime (RUNNING) re-arms the one-shot alarm guard, so a
+  // later crossing back through zero alarms again instead of being silently
+  // swallowed by the guard from the earlier overtime episode.
+  Timer re; memset(&re, 0, sizeof(re)); re.state = TS_RUNNING; re.end_time = 100;
+  re.alarm_pending = true; re.alarm_notified = true;
+  tc_add(&re, 1000, 500);              // 100 - overtime at now=500 -> 1100, back in the future
+  assert(re.end_time == 1100 && re.alarm_pending == false && re.alarm_notified == false);
+  assert(tc_check_expiry(&re, 1100) == true);   // crossing zero again fires a fresh alarm
+
+  // tc_add: staying in overtime (RUNNING) must NOT clear the guard mid-episode
+  Timer re2; memset(&re2, 0, sizeof(re2)); re2.state = TS_RUNNING; re2.end_time = 100;
+  re2.alarm_pending = true; re2.alarm_notified = true;
+  tc_add(&re2, 50, 500);                // 100 -> 150, still <= now=500: still overtime
+  assert(re2.end_time == 150 && re2.alarm_pending == true && re2.alarm_notified == true);
+
+  // tc_add: leaving overtime (PAUSED) re-arms the guard for the next resume
+  Timer rp; memset(&rp, 0, sizeof(rp)); rp.state = TS_PAUSED; rp.remaining = -30;
+  rp.alarm_pending = true; rp.alarm_notified = true;
+  tc_add(&rp, 60, 700);                 // -30 -> 30: no longer overtime
+  assert(rp.remaining == 30 && rp.alarm_pending == false && rp.alarm_notified == false);
+
+  // tc_add: staying in overtime (PAUSED) must NOT clear the guard
+  Timer rp2; memset(&rp2, 0, sizeof(rp2)); rp2.state = TS_PAUSED; rp2.remaining = -30;
+  rp2.alarm_pending = true; rp2.alarm_notified = true;
+  tc_add(&rp2, 10, 700);                // -30 -> -20: still overtime
+  assert(rp2.remaining == -20 && rp2.alarm_pending == true && rp2.alarm_notified == true);
+
   // --- tc_start: non-running timers start from `remaining` (one-off adjust) ---
   // idle, remaining bumped above duration -> starts from remaining
   Timer si; memset(&si, 0, sizeof(si)); si.duration = 300; si.state = TS_IDLE; si.remaining = 420;
