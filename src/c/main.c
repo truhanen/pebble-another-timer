@@ -502,9 +502,20 @@ static void alarm_stop(ClickRecognizerRef rec, void *ctx) {
   // same as every other stop/start action - otherwise just drop the alarm
   // and land back on the list.
   if (s_alarm_idx >= 0 && s_alarm_idx < s_count) {
-    if (s_delete_on_finish[s_alarm_idx]) { remove_timer_at(s_alarm_idx); }
+    bool was_delete_on_finish = s_delete_on_finish[s_alarm_idx];
+    // A restarted-then-refired overtime timer can leave its own run-control
+    // detail window still open underneath this alarm (the restart doesn't
+    // close it - see dl_select's DACT_START). Deleting that same timer here
+    // would otherwise leave the revealed detail window showing nothing but
+    // its bottom bar (stale s_detail_idx past the shifted array).
+    bool detail_showed_this_timer = (s_detail_idx == s_alarm_idx);
+    if (was_delete_on_finish) { remove_timer_at(s_alarm_idx); }
     else { tc_reset(&s_timers[s_alarm_idx], now_s()); }
     persist_all(); rearm_wakeup(); reload_ui();
+    if (was_delete_on_finish && detail_showed_this_timer
+        && s_detail_window && window_stack_contains_window(s_detail_window)) {
+      window_stack_remove(s_detail_window, false);
+    }
   }
   if (show_next_pending_alarm()) { return; }
   if (s_auto_return) { close_to_watchface(); }
@@ -2494,6 +2505,15 @@ static void remove_timer_at(int idx) {
   else if (s_new_timer_idx > idx) { s_new_timer_idx--; }
   if (idx == s_menu_selected_timer_idx) { s_menu_selected_timer_idx = -1; }
   else if (s_menu_selected_timer_idx > idx) { s_menu_selected_timer_idx--; }
+  // Same fixup for the detail/run-control window's timer index. Most callers
+  // already invalidate this themselves right before/after removing the timer
+  // whose detail window is open (and close that window in the same breath),
+  // so this mainly guards callers that delete a *different* timer than the
+  // one currently shown (e.g. alarm_stop chaining through a queue) - without
+  // it, s_detail_idx could end up out of range or silently repointed at the
+  // wrong row after the shift.
+  if (idx == s_detail_idx) { s_detail_idx = -1; }
+  else if (s_detail_idx > idx) { s_detail_idx--; }
 }
 
 static void start_as_new(int32_t secs, bool save_to_phone, const char *name) {
