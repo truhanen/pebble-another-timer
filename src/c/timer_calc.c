@@ -127,13 +127,21 @@ void tc_display_order(const Timer *t, int count, SortMode mode, int64_t now, int
 }
 
 void tc_start(Timer *t, int64_t now) {
-  // Non-running timers start from `remaining` (PAUSED resume, or an IDLE
-  // timer whose duration was tuned with +/- before starting). A RUNNING
-  // timer (restarting from overtime) always starts from the full duration.
-  // Fall back to the full duration when remaining is unset/zero, so a plain
-  // Start is unchanged.
-  int32_t rem = (t->state == TS_RUNNING) ? t->duration : t->remaining;
-  if (rem < 1) { rem = t->duration; }
+  // A RUNNING timer (restarting from overtime) always starts from the full
+  // duration. A PAUSED timer resumes from `remaining`, which may be negative
+  // if it was paused mid-overtime - resuming then re-enters overtime at the
+  // same offset, exactly as if it had kept running. An IDLE timer starts
+  // from `remaining` too (tuned with +/- before starting), falling back to
+  // the full duration when remaining is unset/zero.
+  int32_t rem;
+  if (t->state == TS_RUNNING) {
+    rem = t->duration;
+  } else if (t->state == TS_PAUSED) {
+    rem = t->remaining;
+  } else {
+    rem = t->remaining;
+    if (rem < 1) { rem = t->duration; }
+  }
   t->end_time = now + rem;
   t->state = TS_RUNNING;
   t->last_used = now;
@@ -143,9 +151,9 @@ void tc_start(Timer *t, int64_t now) {
 
 void tc_pause(Timer *t, int64_t now) {
   if (t->state == TS_RUNNING) {
-    int64_t r = t->end_time - now;
-    if (r < 0) { r = 0; }
-    t->remaining = (int32_t)r;
+    // May be negative if paused mid-overtime - preserved as-is so resuming
+    // continues from the same overtime offset instead of snapping to 0.
+    t->remaining = (int32_t)(t->end_time - now);
   }
   t->state = TS_PAUSED;
   t->last_used = now;
@@ -172,8 +180,10 @@ void tc_add(Timer *t, int32_t secs, int64_t now) {
   if (t->state == TS_RUNNING) {
     t->end_time += secs;
   } else if (t->state == TS_PAUSED) {
+    // No floor, matching the RUNNING case above: a paused-in-overtime timer's
+    // `remaining` is already negative, and -/+ should adjust it the same way
+    // a live overtime timer's end_time moves.
     t->remaining += secs;
-    if (t->remaining < 0) { t->remaining = 0; }
   } else {
     return;   // IDLE: not applicable
   }
@@ -225,13 +235,10 @@ int tc_reconcile(const Timer *cur, int curN, const Timer *cfg, int cfgN, Timer *
   return n;
 }
 
-int tc_detail_actions(TimerState st, bool overtime, DetailAction *out) {
+int tc_detail_actions(TimerState st, DetailAction *out) {
   int n = 0;
   bool allow_delete = true;
-  if (st == TS_RUNNING && overtime) {
-    out[n++] = DACT_STOP;    // finished -> reset to idle, dismissing the red 00:00:00 row
-    out[n++] = DACT_START;   // re-run from full duration
-  } else if (st == TS_RUNNING) {
+  if (st == TS_RUNNING) {
     out[n++] = DACT_STOP;
     out[n++] = DACT_PAUSE;
     allow_delete = false;

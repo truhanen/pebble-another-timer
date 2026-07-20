@@ -145,7 +145,12 @@ static bool launch_sync_applies_for_timer(const Timer *t) {
 
 static int32_t launch_adjust_start_secs_for_timer(const Timer *t, int32_t base) {
   if (!launch_sync_applies_for_timer(t)) {
-    if (base < 1) { base = 1; }
+    // A PAUSED resume passes `base` through untouched, even if negative -
+    // that's an overtime offset being preserved, not an unset/zero value to
+    // floor. Every other case (launch sync globally off, no timer) is a
+    // fresh start, so floor it at 1s.
+    bool is_paused_resume = t && t->state == TS_PAUSED;
+    if (!is_paused_resume && base < 1) { base = 1; }
     return base;
   }
   return launch_adjust_start_secs(base);
@@ -1095,7 +1100,7 @@ static void dial_window_unload(Window *w) {
 static void dl_rebuild_actions(void) {
   if (s_detail_idx < 0 || s_detail_idx >= s_count) { s_detail_act_count = 0; return; }
   Timer *t = &s_timers[s_detail_idx];
-  s_detail_act_count = tc_detail_actions(t->state, tc_is_overtime(t, now_s()), s_detail_acts);
+  s_detail_act_count = tc_detail_actions(t->state, s_detail_acts);
 }
 
 static const char *dl_legacy_action_label(DetailAction a) {
@@ -1213,10 +1218,13 @@ static void dl_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
       case DACT_START:
         {
         bool was_paused = (t->state == TS_PAUSED);
-        // RUNNING here means an overtime restart: t->remaining is stale while
-        // running (end_time drives it), so use the full duration instead.
-        int32_t base = (t->state == TS_RUNNING) ? t->duration : t->remaining;
-        if (base < 1) { base = t->duration; }
+        // A paused resume uses `remaining` as-is, even if negative - that's
+        // an overtime offset being preserved, so resuming re-enters overtime
+        // at the same point instead of snapping back to a fresh duration.
+        // An idle timer starts from `remaining` too (tuned with +/- before
+        // starting), falling back to the full duration when unset/zero.
+        int32_t base = t->remaining;
+        if (!was_paused && base < 1) { base = t->duration; }
         start_with_secs(t, launch_adjust_start_secs_for_timer(t, base));
         ensure_unnamed_star(idx);
         if (idx == s_new_timer_idx) {

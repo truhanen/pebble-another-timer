@@ -52,6 +52,18 @@ int main(void) {
   tc_reset(&x, 2500);
   assert(x.state == TS_IDLE && x.remaining == 300 && x.last_used == 2500);
 
+  // pause mid-overtime: remaining is preserved negative, not clamped to 0 -
+  // and resuming continues from that same overtime offset instead of
+  // restarting from the full duration.
+  Timer po; memset(&po, 0, sizeof(po)); po.duration = 300; po.remaining = 300; po.state = TS_IDLE;
+  tc_start(&po, 1000);                        // RUNNING, end_time = 1300
+  assert(tc_remaining_now(&po, 1330) == -30);  // 30s into overtime
+  tc_pause(&po, 1330);
+  assert(po.state == TS_PAUSED && po.remaining == -30 && po.last_used == 1330);
+  tc_start(&po, 2000);
+  assert(po.state == TS_RUNNING && po.end_time == 1970);  // 2000 + (-30): resumes still 30s overtime
+  assert(tc_is_overtime(&po, 2000) == true);
+
   // --- tc_extend: run for N more secs from now, regardless of prior state ---
   // (overtime: RUNNING with end_time already passed, alarm_pending/notified set)
   Timer ex; memset(&ex, 0, sizeof(ex)); ex.duration = 300; ex.state = TS_RUNNING; ex.end_time = 100;
@@ -212,23 +224,19 @@ int main(void) {
   tc_start(&sd, 1000);
   assert(sd.end_time == 1090 && sd.alarm_pending == false);
 
-  // --- tc_detail_actions: ordered list per state (+ overtime bool) ---
+  // --- tc_detail_actions: ordered list per state ---
+  // RUNNING is RUNNING regardless of overtime - same Stop/Pause/+/- menu
+  // whether or not end_time has passed, and no Delete either way.
   DetailAction acts[7]; int an;
-  an = tc_detail_actions(TS_RUNNING, false, acts);
+  an = tc_detail_actions(TS_RUNNING, acts);
   assert(an == 4 && acts[0] == DACT_STOP && acts[1] == DACT_PAUSE &&
          acts[2] == DACT_PLUS && acts[3] == DACT_MINUS);
-  an = tc_detail_actions(TS_PAUSED, false, acts);
+  an = tc_detail_actions(TS_PAUSED, acts);
   assert(an == 4 && acts[0] == DACT_STOP && acts[1] == DACT_START &&
          acts[2] == DACT_PLUS && acts[3] == DACT_MINUS);
-  an = tc_detail_actions(TS_IDLE, false, acts);
+  an = tc_detail_actions(TS_IDLE, acts);
   assert(an == 4 && acts[0] == DACT_START && acts[1] == DACT_PLUS &&
          acts[2] == DACT_MINUS && acts[3] == DACT_DELETE);
-  // overtime (RUNNING, end_time <= now): Stop (reset to idle, dismisses the red
-  // 00:00:00) first, then Start (re-run), so the lingering finished row can be
-  // cleared from the list. Also allows Delete, unlike plain RUNNING.
-  an = tc_detail_actions(TS_RUNNING, true, acts);
-  assert(an == 5 && acts[0] == DACT_STOP && acts[1] == DACT_START &&
-         acts[2] == DACT_PLUS && acts[3] == DACT_MINUS && acts[4] == DACT_DELETE);
 
   printf("All timer_calc tests passed\n");
   return 0;

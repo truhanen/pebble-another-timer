@@ -108,4 +108,4 @@ int tc_reconcile(const Timer *cur, int curN, const Timer *cfg, int cfgN, Timer *
 // Fill `out` (capacity >= 7) with the ordered detail-window actions for a timer in
 // state `st` (`overtime` true when RUNNING with end_time <= now, i.e. tc_is_overtime).
 // Returns the number written.
-int tc_detail_actions(TimerState st, bool overtime, DetailAction *out);
+int tc_detail_actions(TimerState st, DetailAction *out);
