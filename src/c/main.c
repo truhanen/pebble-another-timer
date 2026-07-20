@@ -2592,7 +2592,14 @@ static void remove_timer_at(int idx) {
   // s_new_timer_idx pointing at the wrong row).
   if (idx == s_new_timer_idx) { s_new_timer_idx = -1; }
   else if (s_new_timer_idx > idx) { s_new_timer_idx--; }
-  if (idx == s_menu_selected_timer_idx) { s_menu_selected_timer_idx = -1; }
+  if (idx == s_menu_selected_timer_idx) {
+    // The removed timer's slot is now occupied by the next item (everything
+    // shifted down one), so keep the index as-is to land on it; only fall
+    // back to the previous item (or "+ New timer") if the removed timer was
+    // the last row.
+    s_menu_selected_timer_idx = (idx < s_count) ? (int16_t)idx
+      : (s_count > 0 ? (int16_t)(s_count - 1) : -1);
+  }
   else if (s_menu_selected_timer_idx > idx) { s_menu_selected_timer_idx--; }
   // Same fixup for the detail/run-control window's timer index. Most callers
   // already invalidate this themselves right before/after removing the timer
