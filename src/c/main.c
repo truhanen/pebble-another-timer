@@ -1165,7 +1165,7 @@ static const char *dl_legacy_action_label(DetailAction a) {
     case DACT_PAUSE:      return "Pause";
     case DACT_START:
       if (s_detail_idx >= 0 && s_detail_idx < s_count && s_timers[s_detail_idx].state == TS_PAUSED) {
-        return "Continue";
+        return "Resume";
       }
       return "Start";
     case DACT_PLUS:       return "+1 min";
@@ -2129,11 +2129,12 @@ static void ml_draw_row(GContext *gctx, const Layer *cell, MenuIndex *ci, void *
   if (info.kind == ML_ROW_TIMER_DETAIL) {
     bool small = (b.size.w <= 144);
     bool running = (t->state == TS_RUNNING);
+    bool paused = (t->state == TS_PAUSED);
     bool stopped = (t->state != TS_RUNNING && t->state != TS_PAUSED);
     GFont f_value = fonts_get_system_font(
       small
-        ? (running ? FONT_KEY_GOTHIC_18_BOLD : FONT_KEY_GOTHIC_18)
-        : (running ? FONT_KEY_GOTHIC_24_BOLD : FONT_KEY_GOTHIC_24)
+        ? ((running || paused) ? FONT_KEY_GOTHIC_18_BOLD : FONT_KEY_GOTHIC_18)
+        : ((running || paused) ? FONT_KEY_GOTHIC_24_BOLD : FONT_KEY_GOTHIC_24)
     );
     GFont f_suffix = fonts_get_system_font(small ? FONT_KEY_GOTHIC_18 : FONT_KEY_GOTHIC_24);
     int th = small ? 22 : 28;
@@ -2158,10 +2159,11 @@ static void ml_draw_row(GContext *gctx, const Layer *cell, MenuIndex *ci, void *
     GSize vw = graphics_text_layout_get_content_size(value_display, f_value,
       GRect(0, 0, b.size.w, th), GTextOverflowModeFill, GTextAlignmentLeft);
     int suffix_x = 4 + vw.w + 4;
-    if (running) {
+    if (running || paused) {
       // "<remaining> -> <elapsed>": the arrow is a progress bar, filling
       // left-to-right as elapsed grows toward the configured duration (fully
-      // filled once in overtime, since elapsed then exceeds duration).
+      // filled once in overtime, since elapsed then exceeds duration). Shown
+      // for paused timers too, frozen at their remaining/elapsed at pause.
       int32_t elapsed = t->duration - detail_secs;
       float frac = (t->duration > 0) ? ((float)elapsed / (float)t->duration) : 1.f;
       char elapsed_str[24];
