@@ -2027,6 +2027,44 @@ static void ml_draw_state_icon(GContext *gctx, int x, int y, TimerState st, GCol
   graphics_fill_rect(gctx, GRect(x, y + 1, 10, 10), 0, GCornerNone);
 }
 
+// Arrow-shaped progress bar: a rectangular "shaft" plus a triangular "head",
+// like a play-icon's cousin. `frac` (0..1) fills the shape left-to-right —
+// the shaft fills solid first, then the head's tip fills in as frac nears 1.
+// Drawn as scanlines (same technique as the running-state icon above) rather
+// than a generic polygon-clip, since the shape only has two straight tapers.
+static void ml_draw_arrow_progress(GContext *gctx, GRect box, float frac, GColor outline, GColor fill) {
+  if (frac < 0.f) { frac = 0.f; }
+  if (frac > 1.f) { frac = 1.f; }
+  int w = box.size.w, h = box.size.h;
+  int head_w = (w >= 20) ? 8 : 6;
+  if (head_w > w) { head_w = w; }
+  int shaft_w = w - head_w;
+  int half_h = h / 2;
+  int fill_x = (int)(frac * w + 0.5f);
+
+  graphics_context_set_fill_color(gctx, fill);
+  for (int row = 0; row < h; row++) {
+    int d = (row <= half_h) ? (half_h - row) : (row - half_h);
+    int edge = shaft_w + (half_h > 0 ? (head_w * (half_h - d)) / half_h : 0);
+    int seg = fill_x < edge ? fill_x : edge;
+    if (seg > 0) {
+      graphics_fill_rect(gctx, GRect(box.origin.x, box.origin.y + row, seg, 1), 0, GCornerNone);
+    }
+  }
+
+  graphics_context_set_stroke_color(gctx, outline);
+  graphics_draw_line(gctx, GPoint(box.origin.x, box.origin.y),
+                            GPoint(box.origin.x + shaft_w, box.origin.y));
+  graphics_draw_line(gctx, GPoint(box.origin.x, box.origin.y + h - 1),
+                            GPoint(box.origin.x + shaft_w, box.origin.y + h - 1));
+  graphics_draw_line(gctx, GPoint(box.origin.x, box.origin.y),
+                            GPoint(box.origin.x, box.origin.y + h - 1));
+  graphics_draw_line(gctx, GPoint(box.origin.x + shaft_w, box.origin.y),
+                            GPoint(box.origin.x + w - 1, box.origin.y + half_h));
+  graphics_draw_line(gctx, GPoint(box.origin.x + shaft_w, box.origin.y + h - 1),
+                            GPoint(box.origin.x + w - 1, box.origin.y + half_h));
+}
+
 static uint16_t ml_num_rows(MenuLayer *ml, uint16_t section, void *ctx) {
   uint16_t rows = (uint16_t)(s_count + 1); // primary rows + trailing "New timer"
   for (int i = 0; i < s_count; i++) {
@@ -2128,7 +2166,30 @@ static void ml_draw_row(GContext *gctx, const Layer *cell, MenuIndex *ci, void *
     GSize vw = graphics_text_layout_get_content_size(value_display, f_value,
       GRect(0, 0, b.size.w, th), GTextOverflowModeFill, GTextAlignmentLeft);
     int suffix_x = 4 + vw.w + 4;
-    if (suffix_x < b.size.w - 8) {
+    if (running) {
+      // "<remaining> -> <elapsed>": the arrow is a progress bar, filling
+      // left-to-right as elapsed grows toward the configured duration (fully
+      // filled once in overtime, since elapsed then exceeds duration).
+      int32_t elapsed = t->duration - detail_secs;
+      float frac = (t->duration > 0) ? ((float)elapsed / (float)t->duration) : 1.f;
+      char elapsed_str[24];
+      tc_format_fixed(elapsed_str, sizeof(elapsed_str), elapsed);
+      GSize ew = graphics_text_layout_get_content_size(elapsed_str, f_value,
+        GRect(0, 0, b.size.w, th), GTextOverflowModeFill, GTextAlignmentLeft);
+      int arrow_h = small ? 10 : 12;
+      int arrow_y = ty + (th - arrow_h) / 2 + 1 + 2;
+      // Elapsed time anchors to the screen's right edge; the arrow stretches
+      // to fill whatever's left between the remaining-time text and it.
+      int elapsed_x = b.size.w - 4 - ew.w;
+      int arrow_x = suffix_x + 2;
+      int arrow_w = elapsed_x - 6 - arrow_x;
+      if (arrow_w >= 10) {
+        ml_draw_arrow_progress(gctx, GRect(arrow_x, arrow_y, arrow_w, arrow_h), frac, fg, fg);
+        graphics_context_set_text_color(gctx, fg);
+        graphics_draw_text(gctx, elapsed_str, f_value, GRect(elapsed_x, ty, b.size.w - 4 - elapsed_x, th),
+          GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
+      }
+    } else if (suffix_x < b.size.w - 8) {
       graphics_draw_text(gctx, "remaining", f_suffix, GRect(suffix_x, ty, b.size.w - 4 - suffix_x, th),
         GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
     }
