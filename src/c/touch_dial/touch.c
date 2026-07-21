@@ -20,8 +20,7 @@
 
 // The threshold between inner and outer ring
 #define THRESHOLD_RADIUS ((PBL_DISPLAY_WIDTH * 8) / 35)
-#define TOUCH_DIAL_CENTER_Y_OFFSET (16)
-#define TOUCH_TOP_TEXT_Y (-6)
+#define TOUCH_DIAL_CENTER_Y_OFFSET (21)
 
 
 static Layer* s_layer = NULL;
@@ -95,7 +94,6 @@ static GPoint layer_get_center(Layer* layer) {
 ******************************************************************************/
 
 #define MAX_TEXT_SIZE (50)
-static TextLayer* s_layer_central_text = NULL;
 static char s_central_text[MAX_TEXT_SIZE] = "hello";
 
 static AppTimer* s_animation_timer = NULL;
@@ -256,7 +254,7 @@ static void draw_clock_indices(const GRect* bounds, GContext *ctx) {
         graphics_draw_line(ctx, circumference_point, inner_point);
 #endif // INDEX_LINES
 
-        const GPoint number_point = gpoint_from_polar(grect_crop(*bounds, 22), GOvalScaleModeFitCircle, angle);
+        const GPoint number_point = gpoint_from_polar(grect_crop(*bounds, 27), GOvalScaleModeFitCircle, angle);
         const char* text = (
             (s_is_duration && (i == 0)) ? "0"
             : (s_select_mode == SELECTMODE_HOUR) ? hours_text[i]
@@ -292,9 +290,17 @@ static void update_selection_text(void) {
                      s_selected_hours, s_selected_minutes, s_selected_seconds);
         }
     }
-    text_layer_set_text_color(s_layer_central_text, GColorBlack);
-    text_layer_set_text(s_layer_central_text, s_central_text);
+}
 
+// Same title-row layout as the box-style dial's head row (see main.c's dial_update_proc):
+// "Duration" trailing-ellipsis on the left, the current value trailing-ellipsis on the right.
+static void draw_title_row(const GRect* bounds, GContext* ctx) {
+    const GFont font = fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD);
+    graphics_context_set_text_color(ctx, GColorBlack);
+    graphics_draw_text(ctx, "Duration", font, GRect(4, 2, bounds->size.w - 90, 26),
+        GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
+    graphics_draw_text(ctx, s_central_text, font, GRect(4, 2, bounds->size.w - 8, 26),
+        GTextOverflowModeTrailingEllipsis, GTextAlignmentRight, NULL);
 }
 
 static void draw_layer(Layer* layer, GContext* ctx) {
@@ -303,6 +309,7 @@ static void draw_layer(Layer* layer, GContext* ctx) {
                                        bounds.size.w, bounds.size.h);
     const GPoint centre = grect_center_point(&shifted_bounds);
     draw_background(&centre, ctx);
+    draw_title_row(&bounds, ctx);
     graphics_context_set_text_color(ctx, GColorWhite);
     graphics_draw_text(ctx, "Cancel", fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD),
                        GRect(centre.x - THRESHOLD_RADIUS, centre.y - 16,
@@ -624,21 +631,6 @@ void touch_create(Layer* parent, TouchSelectionCallback callback, TouchServiceHa
         layer_set_update_proc(s_layer, draw_layer);
         layer_add_child(parent, s_layer);
 
-        // central text
-        const GRect bounds = layer_get_bounds(s_layer);
-        const GFont main_text_font = fonts_get_system_font(FONT_KEY_GOTHIC_28_BOLD);
-        const int16_t main_text_h = 28 + 8;
-        // TextLayer top-anchors its text, and GOTHIC_28_BOLD reserves 1px more headroom
-        // above the caps than GOTHIC_24_BOLD (see multitap_keyboard.c's font ladder), so
-        // nudge the frame up by that much to keep the glyphs where the smaller font sat.
-        s_layer_central_text = text_layer_create(
-            GRect(0, TOUCH_TOP_TEXT_Y + 8 - 1, bounds.size.w, main_text_h));
-        text_layer_set_text(s_layer_central_text, s_central_text);
-        text_layer_set_text_alignment(s_layer_central_text, GTextAlignmentCenter);
-        text_layer_set_font(s_layer_central_text, main_text_font);
-        text_layer_set_background_color(s_layer_central_text, GColorClear);
-        layer_add_child(s_layer, (Layer*)s_layer_central_text);
-
         layer_set_hidden(s_layer, true);
 
         s_callback = callback;
@@ -652,7 +644,6 @@ void touch_destroy(void) {
         touch_enable(false);
         layer_destroy(s_layer);
         s_layer = NULL;
-        text_layer_destroy(s_layer_central_text);
         cancel_animation_timer();
         cancel_timeout();
     }
