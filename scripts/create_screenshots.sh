@@ -83,6 +83,18 @@ button() {
   sleep "${2:-1}"
 }
 
+long_press_select() {
+  # $1: seconds to sleep afterwards (default 1). A plain `button select` is a
+  # quick click; the per-row edit menu (Edit duration/Edit label/After
+  # finished) only opens on a genuine long-press, which `pebble emu-button`
+  # can't synthesize directly - hold (push, wait, release) instead, same as
+  # `make long_press_select_emulator`.
+  pebble emu-button --emulator "$PLATFORM" push select
+  sleep 0.3
+  pebble emu-button --emulator "$PLATFORM" release select
+  sleep "${1:-1}"
+}
+
 install_fresh() {
   # Kill any running emulators and wipe their storage first: `pebble wipe`
   # only deletes the on-disk persist directory, which a live qemu process
@@ -97,21 +109,26 @@ install_fresh() {
   #    (typing a label, getting into position for a touch screenshot) can
   #    easily run longer than that and get the app kicked back to the
   #    watchface mid-flow.
-  #  - AutoReturn defaults to true/ON (timer_store.c) - starting or
-  #    pausing a timer would immediately flash-and-pop back to the
-  #    watchface, exiting the app before the next screenshot/button step.
-  # Turn both off, and send them twice: on launch the watch also asks the
+  #  - AutoReturnStart/AutoReturnStop default to true/ON (timer_store.c) -
+  #    starting or pausing/stopping a timer would immediately flash-and-pop
+  #    back to the watchface, exiting the app before the next
+  #    screenshot/button step.
+  #  - RunOnCreate defaults to true/ON (timer_store.c) - the "+ New timer"
+  #    dial+label flow in phase 1 would immediately start the timer it
+  #    creates, but that phase reuses the just-created timer for the
+  #    "one unstarted timer" screenshot, which needs it left idle.
+  # Turn all off, and send them twice: on launch the watch also asks the
   # phone (pypkjs) for its last-saved config (request_config() in main.c),
   # and pypkjs's own storage isn't necessarily cleared by `pebble wipe`
   # (that only clears the watch-side persist dir), so a stale saved config
   # can echo the old values back and race with our disable message.
   # Resending a moment later guarantees ours is the last word.
-  log "Disabling idle auto-exit and start/stop auto-return"
+  log "Disabling idle auto-exit, start/stop auto-return, and run-on-create"
   pebble send-app-message --emulator "$PLATFORM" \
-    --int "${IDLE_EXIT_KEY}=0" "${AUTO_RETURN_KEY}=0"
+    --int "${IDLE_EXIT_KEY}=0" "${AUTO_RETURN_START_KEY}=0" "${AUTO_RETURN_STOP_KEY}=0" "${RUN_ON_CREATE_KEY}=0"
   sleep 1.5
   pebble send-app-message --emulator "$PLATFORM" \
-    --int "${IDLE_EXIT_KEY}=0" "${AUTO_RETURN_KEY}=0"
+    --int "${IDLE_EXIT_KEY}=0" "${AUTO_RETURN_START_KEY}=0" "${AUTO_RETURN_STOP_KEY}=0" "${RUN_ON_CREATE_KEY}=0"
   sleep 1
 }
 
@@ -136,20 +153,41 @@ message_key() {
 }
 TIMER_CONFIG_KEY="$(message_key TimerConfig)"
 IDLE_EXIT_KEY="$(message_key IdleExitSec)"
-AUTO_RETURN_KEY="$(message_key AutoReturn)"
-if [ -z "$TIMER_CONFIG_KEY" ] || [ -z "$IDLE_EXIT_KEY" ] || [ -z "$AUTO_RETURN_KEY" ]; then
+AUTO_RETURN_START_KEY="$(message_key AutoReturnStart)"
+AUTO_RETURN_STOP_KEY="$(message_key AutoReturnStop)"
+RUN_ON_CREATE_KEY="$(message_key RunOnCreate)"
+SET_TIMER_INDEX_KEY="$(message_key SetTimerIndex)"
+SET_TIMER_STATE_KEY="$(message_key SetTimerState)"
+SET_TIMER_REMAINING_KEY="$(message_key SetTimerRemaining)"
+if [ -z "$TIMER_CONFIG_KEY" ] || [ -z "$IDLE_EXIT_KEY" ] || [ -z "$AUTO_RETURN_START_KEY" ] \
+    || [ -z "$AUTO_RETURN_STOP_KEY" ] || [ -z "$RUN_ON_CREATE_KEY" ] || [ -z "$SET_TIMER_INDEX_KEY" ] \
+    || [ -z "$SET_TIMER_STATE_KEY" ] || [ -z "$SET_TIMER_REMAINING_KEY" ]; then
   echo "Could not resolve message keys from build/src/message_keys.auto.c" >&2
   exit 1
 fi
 
+# Force the timer at list index $1 into state $2 (0=idle/stopped, 1=running,
+# 2=paused - matches TimerState in src/c/timer_calc.h) with $3 seconds
+# remaining. Bypasses the start/pause/reset button flow entirely (see
+# SetTimerIndex/State/Remaining handling in src/c/main.c's inbox_received) -
+# a data-only change, so it doesn't open/close any window.
+set_timer() {
+  pebble send-app-message --emulator "$PLATFORM" \
+    --int "${SET_TIMER_INDEX_KEY}=$1" "${SET_TIMER_STATE_KEY}=$2" "${SET_TIMER_REMAINING_KEY}=$3"
+}
+
 # ---------------------------------------------------------------------------
 # Phase 1: duration dial, duration touch dial, and label input - all reached
-# via the "+ New timer" flow on a freshly emptied timer list.
+# via the "+ New timer" flow on a freshly emptied timer list - plus the main
+# view with a single unstarted timer, reusing the timer this flow just
+# created instead of a separate install+config round trip (RunOnCreate is
+# disabled above, so committing the label leaves it idle rather than
+# starting it).
 # ---------------------------------------------------------------------------
 install_fresh
 
 log "Main view (no timers)"
-shoot "06_main_view_no_timers.png"
+shoot "07_main_view_no_timers.png"
 
 log "Duration dial view"
 button select 2   # "+ New timer" (the only row) -> opens the box-style duration dial
@@ -157,19 +195,27 @@ shoot "02_duration_dial.png"
 
 countdown_then_shoot "Next: touch and HOLD the dial face on the emulator
 window to reveal the touch dial." "03_duration_touch_dial.png" 4
-pause_for_manual_step "Release the touch now, then press Enter to continue."
+pause_for_manual_step "Release the touch now to submit the duration - the
+touch dial confirms in one shot on liftoff and jumps straight to the label
+keyboard (no button presses needed), unlike the physical-button dial. Press
+Enter here once the label keyboard is showing."
 
 log "Label input view"
-button select 1   # minutes field -> seconds field
-button select 2   # confirm duration -> opens the (touch) label keyboard
 pause_for_manual_step "The label keyboard is open. Type a label using the
 on-screen touch keys (e.g. \"Pasta\"), then press Enter here to capture it."
 shoot "04_label_input.png"
+button select 1   # submit the typed label -> commits the new timer
+
+log "Main view (one timer, '+ New timer' selected)"
+button down 1   # commit left the cursor on the just-created timer's row (the
+                # only row) - move down onto the trailing "+ New timer" row
+shoot "08_main_view_one_timer.png"
 
 # ---------------------------------------------------------------------------
 # Phase 2: main list (one running, one paused, two stopped, all labeled) and
-# the running timer's control menu - configured via send-app-message so no
-# touch/typing is needed.
+# the running timer's control menu - all state configured via send-app-message,
+# no touch/typing, and (thanks to SetTimerIndex/State/Remaining) no button
+# presses either for the start/pause transitions themselves.
 # ---------------------------------------------------------------------------
 install_fresh
 
@@ -180,47 +226,38 @@ TIMER_CONFIG="Pasta${US}600${RS}Tea${US}180${RS}Laundry${US}1500${RS}Workout${US
 pebble send-app-message --emulator "$PLATFORM" --string "${TIMER_CONFIG_KEY}=${TIMER_CONFIG}"
 sleep 2
 
+log "Starting Pasta (index 0) and Tea (index 1) via send-app-message"
+set_timer 0 1 510   # Pasta: running, 8:30 left
+set_timer 1 1 75    # Tea: running, 1:15 left
+sleep 1
+
 # The list was empty when the app launched, so the selection was sitting on
 # the trailing "+ New timer" row; after the config lands it's still on that
-# row, now pushed past the 4 new timers. Walk back up to the first one.
-button up 0.5
+# row, now pushed past the 4 new timers. Walk up to Tea (2nd row) to open its
+# control menu below - Pasta and Tea are already running, set above.
 button up 0.5
 button up 0.5
 button up 1
 
-log "Starting the first timer (Pasta -> running)"
-button select 1
-
-log "Starting the second timer (Tea -> running)"
-button down 1
-button select 1
-
 log "Running timer control menu"
-button select 1   # Tea is now running -> SELECT opens its control menu
+button select 1   # Tea is running -> SELECT opens its control menu
 shoot "05_running_timer_control_menu.png"
 
-log "Pausing the second timer (Tea -> paused)"
-button down 1     # highlight "Pause"
-button select 2   # confirm -> back to the main list
+log "Closing control menu"
+button back 1
+
+log "Timer edit menu (long press)"
+long_press_select 1   # long-press Tea's row -> per-row edit menu (Edit duration/label, After finished)
+shoot "06_timer_edit_menu.png"
+
+log "Closing timer edit menu"
+button back 1
+
+log "Pausing Tea (index 1) via send-app-message"
+set_timer 1 2 75
+sleep 1
 
 log "Main view (1 running, 1 paused, 2 stopped, all labeled)"
 shoot "01_main_view.png"
-
-
-# ---------------------------------------------------------------------------
-# Phase 3: main list with a single (unstarted) timer, "+ New timer" selected.
-# ---------------------------------------------------------------------------
-install_fresh
-
-log "Configuring 1 labeled timer via send-app-message"
-TIMER_CONFIG="Pasta${US}600"
-pebble send-app-message --emulator "$PLATFORM" --string "${TIMER_CONFIG_KEY}=${TIMER_CONFIG}"
-sleep 2
-
-# As in phase 2, the list was empty at launch so the selection was sitting on
-# the "+ New timer" row; after the config lands it's still on that row, now
-# pushed past the one new timer - exactly the selection this screenshot wants.
-log "Main view (one timer, '+ New timer' selected)"
-shoot "07_main_view_one_timer.png"
 
 log "Done - screenshots saved in $OUT_DIR"
