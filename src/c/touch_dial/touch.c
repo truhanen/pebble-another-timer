@@ -275,9 +275,9 @@ static void draw_clock_indices(const GRect* bounds, GContext *ctx) {
 
 static void update_selection_text(void) {
     if (s_selected_hours < 0) {
-        snprintf(s_central_text, sizeof(s_central_text), s_is_duration ? "--:--:--" : "--:--");
+        snprintf(s_central_text, sizeof(s_central_text), s_is_duration ? "- - : - - : - -" : "--:--");
     } else if (s_selected_minutes < 0) {
-        const char* fmt = (s_is_duration ? "--:--:--" : "%d:--");
+        const char* fmt = (s_is_duration ? "- - : - - : - -" : "%d:--");
         snprintf(s_central_text, sizeof(s_central_text), fmt, s_selected_hours);
     } else if (!is_mode_windup_seconds()) {
         const char* fmt = (s_is_duration ? "%02d:%02d:00" : "%d:%02d");

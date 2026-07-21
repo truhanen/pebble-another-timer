@@ -959,7 +959,7 @@ static void dial_update_proc(Layer *layer, GContext *gctx) {
   graphics_context_set_text_color(gctx, GColorBlack);
 
   char head_right[36];
-  tc_format_remaining(head_right, sizeof(head_right), s_detail_edit_secs);
+  tc_format_fixed(head_right, sizeof(head_right), s_detail_edit_secs);
   GFont hf = fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD);
   const char *head_left = NULL;
   if (s_detail_style == DSTYLE_LONG_NEW) {
