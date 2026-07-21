@@ -106,7 +106,7 @@ static Window  *s_del_window;
 static Layer   *s_del_layer;
 static char     s_del_name[NAME_LEN + 1];
 static bool     s_del_confirm_stay_on_detail; // true: cancel just closes the confirm, detail menu stays open
-// DELCONF_ACTION: a direct delete action (legacy row / dial long-press) -> Select
+// DELCONF_ACTION: a direct delete action (dial long-press) -> Select
 // deletes now. DELCONF_EXIT_STOPPED: leaving the menu with delete-on-finish set on
 // an already-stopped timer -> Select deletes now (no future finish/stop transition
 // left to apply it). DELCONF_EXIT_RUNNING: leaving the menu with delete-on-finish
@@ -1170,7 +1170,6 @@ static const char *dl_legacy_action_label(DetailAction a) {
       return "Start";
     case DACT_PLUS:       return "+1 min";
     case DACT_MINUS:      return "-1 min";
-    case DACT_DELETE:     return "Delete";
   }
   return "";
 }
@@ -1333,9 +1332,6 @@ static void dl_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
         reload_ui(); menu_layer_reload_data(s_detail_menu);
         break;
       }
-      case DACT_DELETE:
-        open_delete_confirm(false, DELCONF_ACTION);
-        break;
     }
     return;
   }
@@ -2313,9 +2309,10 @@ static void ml_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
   if (!ml_resolve_selected_target(ci->row, &idx, &is_new)) { return; }
   if (is_new) { create_new_timer(); return; }
   // An unstarted (idle) timer has only one useful action — skip the menu,
-  // just start it from full duration. A finished (overtime) timer already
-  // has real choices (Stop/Start/+1/-1/Delete), so it opens the run control
-  // menu like any other RUNNING/PAUSED timer instead of restarting blind.
+  // just start it from full duration. A finished (overtime) timer is still
+  // TS_RUNNING (see tc_is_overtime), so it opens the same run control menu
+  // as any other RUNNING timer (Stop/Pause/+1/-1, no Delete) instead of
+  // restarting blind.
   Timer *sel_t = &s_timers[idx];
   if (sel_t->state == TS_IDLE) {
     int32_t base = sel_t->remaining;

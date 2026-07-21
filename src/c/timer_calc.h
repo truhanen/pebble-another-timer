@@ -21,7 +21,6 @@ typedef enum {
   DACT_START,       // idle/done/paused -> start or resume in place
   DACT_PLUS,        // +1 min
   DACT_MINUS,       // -1 min
-  DACT_DELETE,      // delete this timer (after a confirm screen)
 } DetailAction;
 
 typedef struct {

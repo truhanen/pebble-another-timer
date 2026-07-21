@@ -262,8 +262,8 @@ int main(void) {
   assert(an == 4 && acts[0] == DACT_STOP && acts[1] == DACT_START &&
          acts[2] == DACT_PLUS && acts[3] == DACT_MINUS);
   an = tc_detail_actions(TS_IDLE, acts);
-  assert(an == 4 && acts[0] == DACT_START && acts[1] == DACT_PLUS &&
-         acts[2] == DACT_MINUS && acts[3] == DACT_DELETE);
+  assert(an == 3 && acts[0] == DACT_START && acts[1] == DACT_PLUS &&
+         acts[2] == DACT_MINUS);
 
   printf("All timer_calc tests passed\n");
   return 0;

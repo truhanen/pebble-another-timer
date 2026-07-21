@@ -252,20 +252,16 @@ int tc_reconcile(const Timer *cur, int curN, const Timer *cfg, int cfgN, Timer *
 
 int tc_detail_actions(TimerState st, DetailAction *out) {
   int n = 0;
-  bool allow_delete = true;
   if (st == TS_RUNNING) {
     out[n++] = DACT_STOP;
     out[n++] = DACT_PAUSE;
-    allow_delete = false;
   } else if (st == TS_PAUSED) {
     out[n++] = DACT_STOP;
     out[n++] = DACT_START;   // resume
-    allow_delete = false;
   } else {                   // TS_IDLE
     out[n++] = DACT_START;
   }
   out[n++] = DACT_PLUS;
   out[n++] = DACT_MINUS;
-  if (allow_delete) { out[n++] = DACT_DELETE; }
   return n;
 }
