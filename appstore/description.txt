@@ -1,3 +1,0 @@
-Countdown timer — a simple multi-timer for your Pebble.
-
-Configure any number of named countdown timers (up to 16) from your phone, each with its own duration. On the watch you see the list and can start, pause, or reset each timer. Several can run at once, and a timer vibrates when it reaches zero even if the app is closed in the background. Sort the list by most recently used, shortest remaining, or longest remaining.
