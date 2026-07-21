@@ -8,7 +8,13 @@ export const NAME_MAX = 31;        // matches NAME_LEN in src/c/timer_calc.h
 const RS = '\x1e';
 const US = '\x1f';
 
-export interface TimerEntry { name: string; seconds: number; }
+export interface TimerEntry { name: string; seconds: number; id: number; }
+
+// Persistent identity generator, disjoint from watch-assigned ids (main.c uses
+// the high bit set: 0x80000000 | counter). 0 means "not yet assigned".
+export function genTimerId(): number {
+  return 1 + Math.floor(Math.random() * 0x7ffffffe);
+}
 
 export function hmsToSeconds(h: any, m: any, s: any): number {
   const hh = Math.max(0, parseInt(h, 10) || 0);
@@ -38,7 +44,8 @@ export function timerListToString(list: any): string {
     const e = arr[i] || {};
     const seconds = parseInt(e.seconds, 10);
     if (isNaN(seconds) || seconds < 1) { continue; }
-    recs.push(sanitizeName(e.name) + US + seconds);
+    const id = parseInt(e.id, 10) || 0;
+    recs.push(sanitizeName(e.name) + US + seconds + US + id);
   }
   return recs.join(RS);
 }
@@ -51,7 +58,9 @@ export function stringToTimerList(str: any): TimerEntry[] {
     const fields = recs[i].split(US);
     const seconds = parseInt(fields[1], 10);
     if (isNaN(seconds) || seconds < 1) { continue; }
-    out.push({ name: sanitizeName(fields[0]), seconds: seconds });
+    // Legacy 2-field records (no id yet) parse as id 0; callers backfill a fresh one.
+    const id = fields.length > 2 ? (parseInt(fields[2], 10) || 0) : 0;
+    out.push({ name: sanitizeName(fields[0]), seconds: seconds, id: id });
   }
   return out;
 }

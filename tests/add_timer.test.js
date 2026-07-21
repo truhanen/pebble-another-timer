@@ -16,15 +16,21 @@ const RS = '\x1e', US = '\x1f';
 test('appends an unnamed timer to timer_config', () => {
   const s = fakeStore({ timer_config: 'Egg' + US + '300' });
   const str = appendCustomTimer(s.get, s.set, 120);
-  assert.strictEqual(str, 'Egg' + US + '300' + RS + US + '120');
+  assert.strictEqual(str, 'Egg' + US + '300' + US + '0' + RS + US + '120' + US + '0');
   assert.strictEqual(s.get('timer_config'), str);
+});
+
+test('stores the watch-assigned id (AddTimerId) instead of leaving it 0', () => {
+  const s = fakeStore({ timer_config: '' });
+  const str = appendCustomTimer(s.get, s.set, 120, 'Egg', 2147483690);
+  assert.strictEqual(str, 'Egg' + US + '120' + US + '2147483690');
 });
 
 test('mirrors the new timer into the clay-settings TimerList', () => {
   const s = fakeStore({ timer_config: '', 'clay-settings': JSON.stringify({ SortOrder: '0' }) });
   appendCustomTimer(s.get, s.set, 90);
   const cs = JSON.parse(s.get('clay-settings'));
-  assert.deepStrictEqual(cs.TimerList, [{ name: '', seconds: 90 }]);
+  assert.deepStrictEqual(cs.TimerList, [{ name: '', seconds: 90, id: 0 }]);
   assert.strictEqual(cs.SortOrder, '0'); // other keys preserved
 });
 

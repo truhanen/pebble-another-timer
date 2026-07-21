@@ -24,6 +24,9 @@ typedef enum {
 } DetailAction;
 
 typedef struct {
+  uint32_t id;           // persistent identity, stable across phone/watch syncs and
+                         // edits; 0 = none assigned yet (never matches in tc_reconcile).
+                         // High bit set = watch-assigned (see main.c); clear = phone-assigned.
   char name[NAME_LEN + 1];
   int32_t duration;     // configured length, seconds (>=1)
   TimerState state;
@@ -97,12 +100,17 @@ bool tc_is_overtime(const Timer *t, int64_t now);
 bool tc_check_expiry(Timer *t, int64_t now);
 
 // Merge a freshly parsed config (cfg/cfgN) over current runtime state (cur/curN)
-// by list position into out (size MAX_TIMERS); returns new count. Unchanged rows
-// keep their state; duration-changed rows keep state with remaining re-derived
-// for non-RUNNING; new rows start IDLE; dropped rows disappear. Custom (watch-created)
-// rows beyond cfgN are appended after the config rows and preserved until a later config
-// absorbs them by position.
-int tc_reconcile(const Timer *cur, int curN, const Timer *cfg, int cfgN, Timer *out);
+// by `id` (not position) into out (size MAX_TIMERS); returns new count. A cfg row
+// whose id matches some cur row keeps that row's state (unchanged name/duration ->
+// kept wholesale; changed -> state/last_used kept, remaining/end_time re-derived
+// for non-RUNNING); a cfg row with no id match (or id 0) starts fresh IDLE. Custom
+// (watch-created) cur rows with no matching id in cfg are appended after the config
+// rows and preserved until a later config absorbs them by id.
+// src_index[i] (capacity MAX_TIMERS) receives the cur[] index that funded out[i]'s
+// runtime state, or -1 if out[i] is a brand-new row — callers use this to carry
+// side bookkeeping (delete-on-finish flags etc.) from old slots to new ones instead
+// of assuming position i maps to position i.
+int tc_reconcile(const Timer *cur, int curN, const Timer *cfg, int cfgN, Timer *out, int *src_index);
 
 // Fill `out` (capacity >= 7) with the ordered detail-window actions for a timer in
 // state `st` (`overtime` true when RUNNING with end_time <= now, i.e. tc_is_overtime).

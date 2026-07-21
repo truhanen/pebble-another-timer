@@ -15,8 +15,14 @@ const RS = '\x1e', US = '\x1f';
 test('overwrites timer duration at index', () => {
   const s = fakeStore({ timer_config: 'Egg' + US + '300' + RS + 'Tea' + US + '120' });
   const str = updateTimer(s.get, s.set, 1, 90);
-  assert.strictEqual(str, 'Egg' + US + '300' + RS + 'Tea' + US + '90');
+  assert.strictEqual(str, 'Egg' + US + '300' + US + '0' + RS + 'Tea' + US + '90' + US + '0');
   assert.strictEqual(s.get('timer_config'), str);
+});
+
+test('preserves the timer id across an edit (in-place update, not a new timer)', () => {
+  const s = fakeStore({ timer_config: 'Egg' + US + '300' + US + '42' });
+  const str = updateTimer(s.get, s.set, 0, 600, 'Eggs Renamed');
+  assert.strictEqual(str, 'Eggs Renamed' + US + '600' + US + '42');
 });
 
 test('mirrors overwrite into the clay-settings TimerList', () => {
@@ -26,7 +32,7 @@ test('mirrors overwrite into the clay-settings TimerList', () => {
   });
   updateTimer(s.get, s.set, 0, 180);
   const cs = JSON.parse(s.get('clay-settings'));
-  assert.deepStrictEqual(cs.TimerList, [{ name: 'Egg', seconds: 180 }]);
+  assert.deepStrictEqual(cs.TimerList, [{ name: 'Egg', seconds: 180, id: 0 }]);
   assert.strictEqual(cs.SortOrder, '0');
 });
 

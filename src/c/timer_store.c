@@ -98,6 +98,15 @@ void store_save_delete_on_finish_mask(uint32_t mask) {
   persist_write_int(PERSIST_KEY_EPHEMERAL, (int32_t)mask);
 }
 
+uint16_t store_load_next_local_id(void) {
+  if (!persist_exists(PERSIST_KEY_NEXT_LOCAL_ID)) { return 1; }
+  return (uint16_t)persist_read_int(PERSIST_KEY_NEXT_LOCAL_ID);
+}
+
+void store_save_next_local_id(uint16_t v) {
+  persist_write_int(PERSIST_KEY_NEXT_LOCAL_ID, v);
+}
+
 bool store_load_launchsync(void) {
   if (!persist_exists(PERSIST_KEY_LAUNCHSYNC)) { return false; }   // default OFF
   return persist_read_bool(PERSIST_KEY_LAUNCHSYNC);

@@ -14,6 +14,14 @@ function timerListInitialize(this: any, _minified: any, _clayConfig: any): void 
   const root: HTMLElement = self.$element[0];
   const MAX = 16;   // matches MAX_TIMERS in src/c/timer_calc.h
 
+  // Persistent per-timer id, disjoint from watch-assigned ids (main.c's
+  // next_watch_timer_id sets the high bit; this never does). Duplicated here
+  // rather than imported from timer_config.ts's genTimerId - this whole component
+  // is toSource()'d and re-eval'd standalone, no module-scope refs at runtime.
+  function genId(): number {
+    return 1 + Math.floor(Math.random() * 0x7ffffffe);
+  }
+
   function clamp(v: number, lo: number, hi: number): number {
     if (isNaN(v)) { return lo; }
     if (v < lo) { return lo; }
@@ -34,12 +42,14 @@ function timerListInitialize(this: any, _minified: any, _clayConfig: any): void 
     return html;
   }
 
-  function rowHtml(name: string, h: number, m: number, s: number): string {
+  function rowHtml(name: string, h: number, m: number, s: number, id: number): string {
     // textarea-safe: escape the name into the value attribute
     const safe = ('' + name).replace(/&/g, '&amp;').replace(/"/g, '&quot;')
       .replace(/</g, '&lt;').replace(/>/g, '&gt;');
     // Single row: time selectors first, name (description) last, then remove.
-    return '<div class="tl-row">' +
+    // data-id carries the persistent identity through edits/reorders/saves -
+    // never rendered as a form control, just read back in currentValue().
+    return '<div class="tl-row" data-id="' + id + '">' +
       '<select class="tl-h">' + selOptions(23, h) + '</select><span>h</span>' +
       '<select class="tl-m">' + selOptions(59, m) + '</select><span>m</span>' +
       '<select class="tl-s">' + selOptions(59, s) + '</select><span>s</span>' +
@@ -57,9 +67,10 @@ function timerListInitialize(this: any, _minified: any, _clayConfig: any): void 
       const h = parseInt((r.querySelector('.tl-h') as HTMLSelectElement).value, 10) || 0;
       const m = parseInt((r.querySelector('.tl-m') as HTMLSelectElement).value, 10) || 0;
       const s = parseInt((r.querySelector('.tl-s') as HTMLSelectElement).value, 10) || 0;
+      const id = parseInt(r.getAttribute('data-id') || '', 10) || genId();
       // Dropdown offers 0-23h for new picks, but preserve a larger pre-existing
       // value (selOptions keeps it as an extra option) so a save never truncates it.
-      out.push({ name: name, seconds: clamp(h, 0, 100) * 3600 + clamp(m, 0, 59) * 60 + clamp(s, 0, 59) });
+      out.push({ name: name, seconds: clamp(h, 0, 100) * 3600 + clamp(m, 0, 59) * 60 + clamp(s, 0, 59), id: id });
     }
     return out;
   }
@@ -79,7 +90,10 @@ function timerListInitialize(this: any, _minified: any, _clayConfig: any): void 
       const h = Math.floor(sec / 3600);
       const m = Math.floor((sec - h * 3600) / 60);
       const s = sec - h * 3600 - m * 60;
-      html += rowHtml(typeof e.name === 'string' ? e.name : '', h, m, s);
+      // Legacy entries saved before ids existed get one assigned here, once, so it's
+      // stable for the rest of this page visit and gets written back on Save.
+      const id = parseInt(e.id, 10) || genId();
+      html += rowHtml(typeof e.name === 'string' ? e.name : '', h, m, s, id);
     }
     listEl.innerHTML = html;
     updateAdd();
@@ -103,7 +117,7 @@ function timerListInitialize(this: any, _minified: any, _clayConfig: any): void 
     if (!target) { return; }
     if (target.classList.contains('tl-add')) {
       const v = currentValue();
-      if (v.length < MAX) { v.push({ name: '', seconds: 0 }); rebuild(v); self.trigger('change'); }
+      if (v.length < MAX) { v.push({ name: '', seconds: 0, id: genId() }); rebuild(v); self.trigger('change'); }
       return;
     }
     if (target.classList.contains('tl-sort')) {

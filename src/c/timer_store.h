@@ -18,8 +18,9 @@
 #define PERSIST_KEY_KEYBOARD_NEW_TIMER 12  // show label keyboard after "+ New timer" dial confirm (0/1)
 #define PERSIST_KEY_KEYBOARD_MAIN_TOUCH 13 // show label keyboard after main-view touch dial (0/1)
 #define PERSIST_KEY_AUTORETURN_STOP 14 // return to watchface after stopping a timer (0/1)
+#define PERSIST_KEY_NEXT_LOCAL_ID 15 // counter for watch-assigned Timer.id (see main.c next_watch_timer_id)
 #define PERSIST_KEY_TIMER_BASE 100   // timer i -> key 100+i (one Timer per key; 256B/key cap)
-#define STORE_SCHEMA 4
+#define STORE_SCHEMA 5
 
 // Loads timers into out (capacity MAX_TIMERS); returns count, or 0 if none/old schema.
 int store_load(Timer *out);
@@ -37,6 +38,11 @@ void store_save_autoreturn_start(bool on);
 // Return to watchface after stopping a timer (defaults to true when unset).
 bool store_load_autoreturn_stop(void);
 void store_save_autoreturn_stop(bool on);
+// Counter for the next watch-assigned Timer.id (defaults to 1 when unset; combined
+// with the high bit by main.c's next_watch_timer_id() to keep watch ids disjoint
+// from phone-assigned ones).
+uint16_t store_load_next_local_id(void);
+void store_save_next_local_id(uint16_t v);
 // Running-timers-first list ordering (defaults to true when unset).
 bool store_load_runningfirst(void);
 void store_save_runningfirst(bool on);

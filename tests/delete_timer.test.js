@@ -16,7 +16,7 @@ const RS = '\x1e', US = '\x1f';
 test('removes the timer at the given index from timer_config', () => {
   const s = fakeStore({ timer_config: 'Egg' + US + '300' + RS + 'Tea' + US + '120' + RS + US + '90' });
   const str = deleteTimer(s.get, s.set, 1);   // drop "Tea"
-  assert.strictEqual(str, 'Egg' + US + '300' + RS + US + '90');
+  assert.strictEqual(str, 'Egg' + US + '300' + US + '0' + RS + US + '90' + US + '0');
   assert.strictEqual(s.get('timer_config'), str);
 });
 
@@ -27,7 +27,7 @@ test('mirrors the deletion into the clay-settings TimerList', () => {
   });
   deleteTimer(s.get, s.set, 0);   // drop "Egg"
   const cs = JSON.parse(s.get('clay-settings'));
-  assert.deepStrictEqual(cs.TimerList, [{ name: 'Tea', seconds: 120 }]);
+  assert.deepStrictEqual(cs.TimerList, [{ name: 'Tea', seconds: 120, id: 0 }]);
   assert.strictEqual(cs.SortOrder, '0'); // other keys preserved
 });
 

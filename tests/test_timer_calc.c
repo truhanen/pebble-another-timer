@@ -19,6 +19,10 @@ int main(void) {
   assert(strcmp(t[0].name, "b") == 0);
   // custom is false because tc_parse_config zeroes the struct (it doesn't set custom explicitly)
   assert(t[0].custom == false);
+  // legacy 2-field records (no id) parse as id 0; a 3rd field is the id
+  assert(t[0].id == 0);
+  int n2 = tc_parse_config("Egg\x1f""300\x1f""42", t, MAX_TIMERS);
+  assert(n2 == 1 && t[0].id == 42);
 
   // --- tc_format_remaining ---
   char b[16];
@@ -141,43 +145,77 @@ int main(void) {
   tc_display_order(rf, 4, SORT_MRU, 0, rford, false);
   assert(rford[0] == 2 && rford[1] == 0 && rford[2] == 3 && rford[3] == 1);
 
-  // --- reconcile: unchanged row keeps RUNNING state; new row IDLE ---
+  // --- reconcile: id match keeps RUNNING state; unmatched id is new ---
   Timer cur[1]; memset(cur, 0, sizeof(cur));
-  strcpy(cur[0].name, "Egg"); cur[0].duration = 300; cur[0].state = TS_RUNNING;
+  cur[0].id = 1; strcpy(cur[0].name, "Egg"); cur[0].duration = 300; cur[0].state = TS_RUNNING;
   cur[0].end_time = 9999; cur[0].last_used = 42;
   Timer cfg[2]; memset(cfg, 0, sizeof(cfg));
-  strcpy(cfg[0].name, "Egg"); cfg[0].duration = 300; cfg[0].state = TS_IDLE; cfg[0].remaining = 300;
-  strcpy(cfg[1].name, "New"); cfg[1].duration = 60; cfg[1].state = TS_IDLE; cfg[1].remaining = 60;
-  Timer outr[MAX_TIMERS];
-  int rn = tc_reconcile(cur, 1, cfg, 2, outr);
+  cfg[0].id = 1; strcpy(cfg[0].name, "Egg"); cfg[0].duration = 300; cfg[0].state = TS_IDLE; cfg[0].remaining = 300;
+  cfg[1].id = 2; strcpy(cfg[1].name, "New"); cfg[1].duration = 60; cfg[1].state = TS_IDLE; cfg[1].remaining = 60;
+  Timer outr[MAX_TIMERS]; int srci[MAX_TIMERS];
+  int rn = tc_reconcile(cur, 1, cfg, 2, outr, srci);
   assert(rn == 2);
   assert(outr[0].state == TS_RUNNING && outr[0].end_time == 9999 && outr[0].last_used == 42);
+  assert(srci[0] == 0);
   assert(outr[1].state == TS_IDLE && outr[1].duration == 60 && strcmp(outr[1].name, "New") == 0);
-  // a trailing custom row (cur beyond cfgN) is preserved, appended after config
+  assert(srci[1] == -1);
+
+  // --- reconcile: same id, changed name+duration (a phone-side edit-in-place) keeps
+  // the running state instead of being treated as delete+new (the bug this fixes) ---
+  Timer cure[1]; memset(cure, 0, sizeof(cure));
+  cure[0].id = 5; strcpy(cure[0].name, "Egg"); cure[0].duration = 300; cure[0].state = TS_RUNNING;
+  cure[0].end_time = 8888; cure[0].last_used = 7;
+  Timer cfge[1]; memset(cfge, 0, sizeof(cfge));
+  cfge[0].id = 5; strcpy(cfge[0].name, "Eggs Renamed"); cfge[0].duration = 600;
+  cfge[0].state = TS_IDLE; cfge[0].remaining = 600;
+  Timer outre[MAX_TIMERS]; int srcie[MAX_TIMERS];
+  int rne = tc_reconcile(cure, 1, cfge, 1, outre, srcie);
+  assert(rne == 1);
+  assert(outre[0].state == TS_RUNNING && outre[0].end_time == 8888);
+  assert(strcmp(outre[0].name, "Eggs Renamed") == 0 && outre[0].duration == 600);
+  assert(srcie[0] == 0);
+
+  // --- reconcile: reordering (same ids, different slots) - state follows id, not slot ---
+  Timer curo[2]; memset(curo, 0, sizeof(curo));
+  curo[0].id = 10; strcpy(curo[0].name, "A"); curo[0].duration = 60; curo[0].state = TS_IDLE; curo[0].remaining = 60;
+  curo[1].id = 20; strcpy(curo[1].name, "B"); curo[1].duration = 120; curo[1].state = TS_RUNNING; curo[1].end_time = 5555;
+  Timer cfgo[2]; memset(cfgo, 0, sizeof(cfgo));
+  cfgo[0].id = 20; strcpy(cfgo[0].name, "B"); cfgo[0].duration = 120; cfgo[0].remaining = 120;  // B moved to slot 0
+  cfgo[1].id = 10; strcpy(cfgo[1].name, "A"); cfgo[1].duration = 60; cfgo[1].remaining = 60;
+  Timer outro[MAX_TIMERS]; int srcio[MAX_TIMERS];
+  int rno = tc_reconcile(curo, 2, cfgo, 2, outro, srcio);
+  assert(rno == 2);
+  assert(outro[0].id == 20 && outro[0].state == TS_RUNNING && outro[0].end_time == 5555 && srcio[0] == 1);
+  assert(outro[1].id == 10 && outro[1].state == TS_IDLE && srcio[1] == 0);
+
+  // a trailing custom row (id absent from cfg) is preserved, appended after config
   Timer cur2[2]; memset(cur2, 0, sizeof(cur2));
-  strcpy(cur2[0].name, "Egg"); cur2[0].duration = 300; cur2[0].state = TS_IDLE; cur2[0].remaining = 300;
-  cur2[1].duration = 600; cur2[1].state = TS_RUNNING; cur2[1].end_time = 7777; cur2[1].custom = true;
+  cur2[0].id = 1; strcpy(cur2[0].name, "Egg"); cur2[0].duration = 300; cur2[0].state = TS_IDLE; cur2[0].remaining = 300;
+  cur2[1].id = 30; cur2[1].duration = 600; cur2[1].state = TS_RUNNING; cur2[1].end_time = 7777; cur2[1].custom = true;
   Timer cfg2[1]; memset(cfg2, 0, sizeof(cfg2));
-  strcpy(cfg2[0].name, "Egg"); cfg2[0].duration = 300; cfg2[0].state = TS_IDLE; cfg2[0].remaining = 300;
-  Timer outr2[MAX_TIMERS];
-  int rn2 = tc_reconcile(cur2, 2, cfg2, 1, outr2);
+  cfg2[0].id = 1; strcpy(cfg2[0].name, "Egg"); cfg2[0].duration = 300; cfg2[0].state = TS_IDLE; cfg2[0].remaining = 300;
+  Timer outr2[MAX_TIMERS]; int src2[MAX_TIMERS];
+  int rn2 = tc_reconcile(cur2, 2, cfg2, 1, outr2, src2);
   assert(rn2 == 2);
   assert(outr2[1].state == TS_RUNNING && outr2[1].end_time == 7777 && outr2[1].custom == true);
+  assert(src2[1] == 1);
 
-  // a trailing NON-custom row is still dropped (classic behavior)
+  // a trailing NON-custom row (id not in cfg) is still dropped (true deletion, classic behavior)
   Timer cur3[2]; memset(cur3, 0, sizeof(cur3));
-  strcpy(cur3[0].name, "Egg"); cur3[0].duration = 300;
-  cur3[1].duration = 600; cur3[1].state = TS_RUNNING; cur3[1].custom = false;
-  int rn3 = tc_reconcile(cur3, 2, cfg2, 1, outr2);
+  cur3[0].id = 1; strcpy(cur3[0].name, "Egg"); cur3[0].duration = 300;
+  cur3[1].id = 30; cur3[1].duration = 600; cur3[1].state = TS_RUNNING; cur3[1].custom = false;
+  Timer outr3[MAX_TIMERS]; int src3[MAX_TIMERS];
+  int rn3 = tc_reconcile(cur3, 2, cfg2, 1, outr3, src3);
   assert(rn3 == 1);
 
-  // once the config grows to include the custom row's position, the flag clears (absorbed)
+  // once the config grows to include the custom row's id, the flag clears (absorbed)
   Timer cfg4[2]; memset(cfg4, 0, sizeof(cfg4));
-  strcpy(cfg4[0].name, "Egg"); cfg4[0].duration = 300; cfg4[0].remaining = 300;
-  cfg4[1].duration = 600; cfg4[1].remaining = 600;   // unnamed, matches the custom row's duration
-  int rn4 = tc_reconcile(cur2, 2, cfg4, 2, outr2);
+  cfg4[0].id = 1; strcpy(cfg4[0].name, "Egg"); cfg4[0].duration = 300; cfg4[0].remaining = 300;
+  cfg4[1].id = 30; cfg4[1].duration = 600; cfg4[1].remaining = 600;
+  Timer outr4[MAX_TIMERS]; int src4[MAX_TIMERS];
+  int rn4 = tc_reconcile(cur2, 2, cfg4, 2, outr4, src4);
   assert(rn4 == 2);
-  assert(outr2[1].state == TS_RUNNING && outr2[1].end_time == 7777 && outr2[1].custom == false);
+  assert(outr4[1].state == TS_RUNNING && outr4[1].end_time == 7777 && outr4[1].custom == false);
 
   // --- tc_add: running extends end_time; paused grows remaining; stamps last_used ---
   Timer a; memset(&a, 0, sizeof(a)); a.duration = 300;

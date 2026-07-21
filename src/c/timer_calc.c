@@ -32,12 +32,17 @@ int tc_parse_config(const char *buf, Timer *out, int max) {
     if (us) {
       int32_t seconds = parse_uint(us + 1);
       if (seconds >= 1) {
+        // Optional third field (id), added after name/seconds: name US seconds US id.
+        // Legacy 2-field records (no second US) parse as id 0 - "not yet assigned".
+        const char *us2 = (const char *)memchr(us + 1, '\x1f', (size_t)(limit - (us + 1)));
+        uint32_t id = us2 ? (uint32_t)parse_uint(us2 + 1) : 0;
         Timer *t = &out[count];
         memset(t, 0, sizeof(*t));
         copy_name(t->name, p, (size_t)(us - p));
         t->duration = seconds;
         t->state = TS_IDLE;
         t->remaining = seconds;
+        t->id = id;
         count++;
       }
     }
@@ -218,34 +223,47 @@ bool tc_check_expiry(Timer *t, int64_t now) {
   return false;
 }
 
-int tc_reconcile(const Timer *cur, int curN, const Timer *cfg, int cfgN, Timer *out) {
+int tc_reconcile(const Timer *cur, int curN, const Timer *cfg, int cfgN, Timer *out, int *src_index) {
   int n = cfgN > MAX_TIMERS ? MAX_TIMERS : cfgN;
+  bool consumed[MAX_TIMERS] = { false };
   for (int i = 0; i < n; i++) {
     Timer t = cfg[i];   // start from config (IDLE, remaining=duration)
-    if (i < curN && strcmp(cur[i].name, cfg[i].name) == 0 && cur[i].duration == cfg[i].duration) {
-      // unchanged slot: keep all runtime state
-      t = cur[i];
-    } else if (i < curN) {
-      // same position, changed name/duration: keep state but re-derive timing
-      t.state = cur[i].state;
-      t.last_used = cur[i].last_used;
-      if (cur[i].state == TS_RUNNING) {
-        t.end_time = cur[i].end_time;
-      } else if (cur[i].state == TS_PAUSED) {
-        t.remaining = cur[i].remaining > t.duration ? t.duration : cur[i].remaining;
+    int match = -1;
+    if (cfg[i].id != 0) {
+      for (int j = 0; j < curN; j++) {
+        if (!consumed[j] && cur[j].id == cfg[i].id) { match = j; break; }
+      }
+    }
+    if (match >= 0 && strcmp(cur[match].name, cfg[i].name) == 0 && cur[match].duration == cfg[i].duration) {
+      // unchanged: keep all runtime state
+      t = cur[match];
+    } else if (match >= 0) {
+      // same id, changed name/duration: keep state but re-derive timing
+      t.state = cur[match].state;
+      t.last_used = cur[match].last_used;
+      if (cur[match].state == TS_RUNNING) {
+        t.end_time = cur[match].end_time;
+      } else if (cur[match].state == TS_PAUSED) {
+        t.remaining = cur[match].remaining > t.duration ? t.duration : cur[match].remaining;
       } else {
         t.state = TS_IDLE;
         t.remaining = t.duration;
       }
     }
-    t.custom = false;   // a config-backed position is no longer watch-local (absorbs custom rows)
+    if (match >= 0) { consumed[match] = true; }
+    t.custom = false;   // a config-backed row is no longer watch-local (absorbs custom rows)
     out[i] = t;
+    src_index[i] = match;
   }
-  // Preserve watch-created (custom) rows that sit beyond the config length, so an
-  // on-watch "Save as new" timer is not dropped before the phone config grows to
-  // include it. Non-custom trailing rows are dropped as before.
-  for (int i = cfgN; i < curN && n < MAX_TIMERS; i++) {
-    if (cur[i].custom) { out[n] = cur[i]; n++; }
+  // Preserve watch-created (custom) rows with no matching id in cfg, so an on-watch
+  // "Save as new" timer is not dropped before the phone config absorbs it.
+  // Non-custom unmatched rows are dropped as before.
+  for (int j = 0; j < curN && n < MAX_TIMERS; j++) {
+    if (!consumed[j] && cur[j].custom) {
+      out[n] = cur[j];
+      src_index[n] = j;
+      n++;
+    }
   }
   return n;
 }

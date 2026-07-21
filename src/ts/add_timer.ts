@@ -11,13 +11,14 @@ export function appendCustomTimer(
   get: (k: string) => string | null,
   set: (k: string, v: string) => void,
   seconds: any,
-  name?: any
+  name?: any,
+  id?: any
 ): string | null {
   const secs = Math.floor(Number(seconds));
   if (!(secs >= 1)) { return null; }
   const list = stringToTimerList(get('timer_config') || '');
   if (list.length >= MAX_TIMERS) { return null; }
-  list.push({ name: sanitizeName(name), seconds: secs });
+  list.push({ name: sanitizeName(name), seconds: secs, id: Math.floor(Number(id)) || 0 });
   const str = timerListToString(list);
   set('timer_config', str);
   // Keep the Clay config page in sync (clay-settings holds last-saved values that

@@ -53,6 +53,17 @@ static bool s_run_on_create = true; // config: start a newly created timer immed
 static bool s_keyboard_on_new_timer = true; // config: show label keyboard after "+ New timer" dial confirm
 static bool s_keyboard_on_main_touch = false; // config: show label keyboard after main-view touch dial
 static int64_t s_app_launch_s = 0; // app launch timestamp for launch-sync elapsed
+static uint16_t s_next_local_id = 1; // counter for watch-assigned Timer.id (see next_watch_timer_id)
+
+// Assign a fresh, persistent id for a timer created on-watch. High bit set keeps
+// this disjoint from phone-assigned ids (see genTimerId in timer_config.ts, which
+// only ever produces ids with the high bit clear).
+static uint32_t next_watch_timer_id(void) {
+  uint32_t id = 0x80000000u | s_next_local_id;
+  s_next_local_id++;
+  store_save_next_local_id(s_next_local_id);
+  return id;
+}
 
 // ---- per-timer detail window: long-press menu workflow ----
 static Window *s_detail_window;
@@ -1247,7 +1258,7 @@ static void dl_draw_row(GContext *gctx, const Layer *cell, MenuIndex *ci, void *
 
 static void start_as_new(int32_t secs, bool save_to_phone, const char *name); // defined below
 static void apply_overwrite_only(int idx, int32_t secs, const char *name);    // defined below
-static void send_add_timer(int32_t secs, const char *name);          // defined below (phone sync)
+static void send_add_timer(int32_t secs, const char *name, uint32_t id); // defined below (phone sync)
 static void send_update_timer(int32_t idx, int32_t secs, const char *name); // defined below (phone sync)
 static void create_new_timer(void);                // defined below ("+ New timer" row)
 static void open_delete_confirm(bool stay_on_detail_on_cancel, DelConfirmKind kind); // defined below (delete path)
@@ -1285,7 +1296,7 @@ static void dl_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
         start_with_secs(t, launch_adjust_start_secs_for_timer(t, base));
         ensure_unnamed_star(idx);
         if (idx == s_new_timer_idx) {
-          send_add_timer(t->duration, t->name);
+          send_add_timer(t->duration, t->name, t->id);
           s_new_timer_idx = -1;
         }
         bool fired = finish_start_tail();
@@ -1355,7 +1366,7 @@ static void dl_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
         send_delete_timer(idx);   // now watch-local only: drop it from the phone
       } else {
         t->custom = true;
-        send_add_timer(t->duration, t->name);   // now "kept": add it to the phone
+        send_add_timer(t->duration, t->name, t->id);   // now "kept": add it to the phone
       }
       persist_all();
       if (s_detail_menu) { menu_layer_reload_data(s_detail_menu); }
@@ -1462,7 +1473,7 @@ static void new_timer_label_result(const char *text, void *context) {
         fired = finish_start_tail();
       }
       assign_unnamed_star_for_duration(idx, t->duration);
-      if (!s_delete_on_finish[idx]) { send_add_timer(t->duration, t->name); }
+      if (!s_delete_on_finish[idx]) { send_add_timer(t->duration, t->name, t->id); }
       s_new_timer_idx = -1;
       if (fired) {
         // An immediate re-fire (overtime right from the start) pushed the alarm
@@ -2469,94 +2480,56 @@ static void inbox_received(DictionaryIterator *iter, void *ctx) {
   }
   Tuple *cfg = dict_find(iter, MESSAGE_KEY_TimerConfig);
   if (cfg && cfg->type == TUPLE_CSTRING) {
-    // static, NOT on the stack: two Timer[MAX_TIMERS] arrays are ~2 KB and would
+    // static, NOT on the stack: Timer[MAX_TIMERS] arrays are ~1 KB each and would
     // overflow the Pebble app stack. The inbox handler runs on the single event
     // loop, so static is safe.
-    static Timer cur[MAX_TIMERS];
     static Timer parsed[MAX_TIMERS];
     static Timer merged[MAX_TIMERS];
-    static Timer orphans[MAX_TIMERS];
-    static bool dof_old[MAX_TIMERS];
+    static int src_index[MAX_TIMERS];
+    static bool consumed[MAX_TIMERS];
     static bool dof_new[MAX_TIMERS];
-    static bool draft_old[MAX_TIMERS];
     static bool draft_new[MAX_TIMERS];
-    static int8_t st_old[MAX_TIMERS];
     static int8_t st_new[MAX_TIMERS];
-    static int8_t orphan_star[MAX_TIMERS];
     int cn = s_count;
-    memcpy(cur, s_timers, sizeof(Timer) * (size_t)cn);
-    memcpy(dof_old, s_delete_on_finish, sizeof(bool) * (size_t)cn);
-    memset(draft_old, 0, sizeof(draft_old));
-    if (s_new_timer_idx >= 0 && s_new_timer_idx < cn) { draft_old[s_new_timer_idx] = true; }
-    memcpy(st_old, s_unnamed_star, sizeof(int8_t) * (size_t)cn);
     int pn = tc_parse_config(cfg->value->cstring, parsed, MAX_TIMERS);
 
-    // tc_reconcile matches purely by position, so a kept ("After finished: Save")
-    // timer that the phone deleted from its config would either be silently
-    // dropped or have its live state misapplied to an unrelated, reordered config
-    // row. Pull any such timers out (matched by name) before reconciling, and
-    // re-append them afterward as watch-local, flipped to "After finished:
-    // Delete" - they're no longer represented on the phone.
-    int on = 0;
-    int compact_n = 0;
-    for (int i = 0; i < cn; i++) {
-      bool orphaned = false;
-      // Note: deliberately not gated on !cur[i].custom - a timer just toggled to
-      // "Save" (or a freshly created one) stays custom=true until a later phone
-      // Save absorbs it by position, but it can be deleted from the phone before
-      // that ever happens, and must still be recognized as orphaned here.
-      // Match on (name, duration) rather than name alone, since an unnamed timer
-      // ("<No label>") is a normal, common case - matching name-only would either
-      // require a non-empty name (missing unnamed orphans entirely) or treat any
-      // two unnamed timers as interchangeable.
-      if (!dof_old[i]) {
-        orphaned = true;
-        for (int j = 0; j < pn; j++) {
-          if (strcmp(cur[i].name, parsed[j].name) == 0 && cur[i].duration == parsed[j].duration) {
-            orphaned = false;
-            break;
-          }
-        }
-      }
-      if (orphaned && on < MAX_TIMERS) {
-        orphans[on] = cur[i];
-        orphan_star[on] = st_old[i];
-        on++;
-      } else {
-        cur[compact_n] = cur[i];
-        dof_old[compact_n] = dof_old[i];
-        draft_old[compact_n] = draft_old[i];
-        st_old[compact_n] = st_old[i];
-        compact_n++;
-      }
-    }
-    cn = compact_n;
+    // tc_reconcile now matches by persistent id, so an in-place edit (same id,
+    // changed name/duration) is applied to the right running timer instead of
+    // being mistaken for a delete+new pair.
+    int mn = tc_reconcile(s_timers, cn, parsed, pn, merged, src_index);
 
-    int mn = tc_reconcile(cur, cn, parsed, pn, merged);
-    memcpy(s_timers, merged, sizeof(Timer) * (size_t)mn);
-    s_count = mn;
     memset(dof_new, 0, sizeof(dof_new));
     memset(draft_new, 0, sizeof(draft_new));
     for (int i = 0; i < MAX_TIMERS; i++) { st_new[i] = -1; }
-    int out = pn;
-    for (int i = pn; i < cn && out < mn; i++) {
-      if (!cur[i].custom) { continue; }
-      dof_new[out++] = dof_old[i];
-      draft_new[out - 1] = draft_old[i];
-      st_new[out - 1] = st_old[i];
+    memset(consumed, 0, sizeof(consumed));
+    for (int i = 0; i < mn; i++) {
+      int src = src_index[i];
+      if (src < 0) { continue; }
+      dof_new[i] = s_delete_on_finish[src];
+      draft_new[i] = (src == s_new_timer_idx);
+      st_new[i] = s_unnamed_star[src];
+      consumed[src] = true;
     }
-    // Re-append the orphaned (phone-deleted) timers, now watch-local and flipped
-    // to "After finished: Delete". If one's already stopped, there's no future
+
+    // Re-append a genuinely orphaned "keep" timer (a non-custom, i.e. previously
+    // phone-synced, row whose id no longer appears in the phone's config - a real
+    // delete, not an edit or a not-yet-absorbed watch-local timer, both of which
+    // tc_reconcile already carried into merged[] above) as watch-local, flipped to
+    // "After finished: Delete". If one's already stopped, there's no future
     // finish/stop to catch it - drop it outright instead of re-listing it.
-    for (int i = 0; i < on && s_count < MAX_TIMERS; i++) {
-      if (orphans[i].state == TS_IDLE || tc_is_overtime(&orphans[i], now_s())) { continue; }
-      Timer *t = &s_timers[s_count];
-      *t = orphans[i];
-      t->custom = true;
-      dof_new[s_count] = true;
-      st_new[s_count] = orphan_star[i];
-      s_count++;
+    int out_n = mn;
+    for (int i = 0; i < cn && out_n < MAX_TIMERS; i++) {
+      if (consumed[i] || s_delete_on_finish[i]) { continue; }
+      if (s_timers[i].state == TS_IDLE || tc_is_overtime(&s_timers[i], now_s())) { continue; }
+      merged[out_n] = s_timers[i];
+      merged[out_n].custom = true;
+      dof_new[out_n] = true;
+      st_new[out_n] = s_unnamed_star[i];
+      out_n++;
     }
+
+    memcpy(s_timers, merged, sizeof(Timer) * (size_t)out_n);
+    s_count = out_n;
     memcpy(s_delete_on_finish, dof_new, sizeof(dof_new));
     memcpy(s_unnamed_star, st_new, sizeof(st_new));
     for (int i = 0; i < s_count; i++) { ensure_unnamed_star(i); }
@@ -2601,11 +2574,12 @@ static void request_config(void) {
 // Tell the phone to save a new unnamed timer of `secs` seconds (appended to its
 // TimerConfig + Clay store). The watch keeps the running timer locally (flagged
 // custom) so it survives even if this send fails / the phone is offline.
-static void send_add_timer(int32_t secs, const char *name) {
+static void send_add_timer(int32_t secs, const char *name, uint32_t id) {
   DictionaryIterator *out;
   if (app_message_outbox_begin(&out) == APP_MSG_OK) {
     dict_write_uint32(out, MESSAGE_KEY_AddTimer, (uint32_t)secs);
     if (name) { dict_write_cstring(out, MESSAGE_KEY_AddTimerName, name); }
+    dict_write_uint32(out, MESSAGE_KEY_AddTimerId, id);
     app_message_outbox_send();
   }
 }
@@ -2689,6 +2663,7 @@ static void start_as_new(int32_t secs, bool save_to_phone, const char *name) {
   t->remaining = secs;
   t->state = TS_IDLE;
   t->custom = true;
+  t->id = next_watch_timer_id();
   s_delete_on_finish[idx] = !save_to_phone;
   s_unnamed_star[idx] = -1;
   s_count++;
@@ -2698,7 +2673,7 @@ static void start_as_new(int32_t secs, bool save_to_phone, const char *name) {
     start_with_secs(t, launch_adjust_start_secs_for_timer(t, secs));
     fired = finish_start_tail();
   }
-  if (save_to_phone) { send_add_timer(secs, t->name); }
+  if (save_to_phone) { send_add_timer(secs, t->name, t->id); }
   if (fired) { return; }
   select_timer_row(idx);
   if (s_run_on_create && s_auto_return_start) { show_start_confirmation(idx); }   // flash -> watchface
@@ -2738,6 +2713,7 @@ static void create_new_timer(void) {
   t->duration = 60; t->remaining = 60;     // default 1:00
   t->state = TS_IDLE;
   t->custom = true;                        // survive a mid-draft config reconcile
+  t->id = next_watch_timer_id();
   t->last_used = now_s();
   s_delete_on_finish[idx] = s_default_finish_delete; // seeded from the "Default action after timer finishes" setting
   s_unnamed_star[idx] = -1;
@@ -2869,6 +2845,7 @@ static void init(void) {
   s_keyboard_on_main_touch = store_load_keyboard_main_touch();
   s_idle_timeout_sec = store_load_idleexit();
   s_launch_sync = store_load_launchsync();
+  s_next_local_id = store_load_next_local_id();
 #ifdef SCREENSHOT_FIXTURES
   if (s_count == 0) {
     s_count = 3;
