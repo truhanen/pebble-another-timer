@@ -51,7 +51,7 @@ Both `send_emulator_*` targets hardcode `--app-uuid` and the `emery`
 platform; the UUID must match `package.json`'s `pebble.uuid`
 (`1df6fc5c-261d-49c7-b339-6ea60cbe6649`) or `send-app-message` silently fails
 to reach the emulator. If `package.json`'s `uuid` ever changes again, update
-these two targets in `Makefile` to match.
+these targets in `Makefile` to match.
 
 Build-time env flags (see `wscript`): `FAKE_TIME=1` defines `USE_FAKE_TIME`;
 `SCREENSHOT_FIXTURES=1` defines `SCREENSHOT_FIXTURES` to seed demo data for
@@ -120,13 +120,20 @@ as `MESSAGE_KEY_*` in C): phone→watch config push is
 `TimerConfig`/`SortOrder`/`AutoReturn`/`RunningFirst`/`IdleExitSec`/
 `LaunchSync`/`DefaultFinishAction` (default "After finished" behavior,
 Delete/Save, for newly created timers); watch→phone is `Request` (ask for
-config), `AddTimer`/
-`AddTimerName`, `DeleteTimer`, `UpdateTimerIndex`/`UpdateTimerSeconds`/
-`UpdateTimerName` (one-way, no echo — the watch already applied the change
-locally), and `CfgOpen` (tells the watch the Clay page opened/closed, to
-pause/resume idle auto-exit). The phone config is the single source of truth
-for naming/reordering, but watch-originated create/adjust/delete syncs back
-to it.
+config), `AddTimer`/`AddTimerName`/`AddTimerId`, `DeleteTimer`,
+`UpdateTimerIndex`/`UpdateTimerSeconds`/`UpdateTimerName` (one-way, no echo —
+the watch already applied the change locally), and `CfgOpen` (tells the watch
+the Clay page opened/closed, to pause/resume idle auto-exit). The phone
+config is the single source of truth for naming/reordering, but
+watch-originated create/adjust/delete syncs back to it (matched by the
+persistent `id` each `Timer`/`TimerEntry` carries — see `tc_reconcile` in
+`timer_calc.c` — not by list position).
+
+`SetTimerIndex`/`SetTimerState`/`SetTimerRemaining` are watch-only, never sent
+or read by the phone app: a testing/screenshot backdoor (see
+`make send_emulator_set_timer` above) that forces the timer at a raw list
+index into an exact state/remaining-time combo, bypassing the normal
+start/pause/reset flow.
 
 ## Tests
 

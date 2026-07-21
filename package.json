@@ -42,7 +42,10 @@
       "KeyboardOnNewTimer",
       "KeyboardOnMainTouch",
       "AutoReturnStop",
-      "AddTimerId"
+      "AddTimerId",
+      "SetTimerIndex",
+      "SetTimerState",
+      "SetTimerRemaining"
     ],
     "resources": {
       "media": [

@@ -2548,6 +2548,42 @@ static void inbox_received(DictionaryIterator *iter, void *ctx) {
       menu_layer_reload_data(s_detail_menu);
     }
   }
+  // Testing/screenshot helper: force a timer's state and/or remaining time
+  // directly by index, bypassing the normal start/pause/reset UI flow, so a
+  // screenshot/test script can reach an exact state (e.g. "paused with 0:45
+  // left") without simulating button presses. Not used by the phone app.
+  Tuple *sti = dict_find(iter, MESSAGE_KEY_SetTimerIndex);
+  if (sti) {
+    int idx = (int)sti->value->int32;
+    if (idx >= 0 && idx < s_count) {
+      Timer *t = &s_timers[idx];
+      Tuple *state_t = dict_find(iter, MESSAGE_KEY_SetTimerState);
+      Tuple *rem_t = dict_find(iter, MESSAGE_KEY_SetTimerRemaining);
+      int64_t now = now_s();
+      // TimerState values: 0=idle/stopped, 1=running, 2=paused (see timer_calc.h).
+      TimerState want = state_t ? (TimerState)state_t->value->int32 : t->state;
+      int32_t secs = rem_t ? rem_t->value->int32
+        : (t->state == TS_RUNNING ? (int32_t)(t->end_time - now) : t->remaining);
+      t->last_used = now;
+      if (want == TS_RUNNING) {
+        t->state = TS_RUNNING;
+        t->end_time = now + secs;   // secs may be negative: starts already in overtime
+        t->alarm_pending = false;
+        t->alarm_notified = false;
+      } else if (want == TS_PAUSED) {
+        t->state = TS_PAUSED;
+        t->remaining = secs;
+      } else {
+        t->state = TS_IDLE;
+        t->remaining = secs < 0 ? 0 : secs;
+        t->end_time = 0;
+        t->alarm_pending = false;
+        t->alarm_notified = false;
+      }
+      sweep_expiries();   // catch an immediate overtime (e.g. remaining set to 0 while running)
+      persist_all(); rearm_wakeup(); ensure_ticking();
+    }
+  }
   reload_ui();
 }
 
