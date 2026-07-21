@@ -654,7 +654,7 @@ static void alarm_window_load(Window *w) {
   layer_add_child(root, text_layer_get_layer(s_alarm_sub));
 
   // "+1 Min" — big bold, right-aligned, vertically by the UP button (~22% h).
-  s_alarm_lbl_up = text_layer_create(GRect(0, h * 22 / 100 - 16, wd - 6, 34));
+  s_alarm_lbl_up = text_layer_create(GRect(0, h * 22 / 100 - 31, wd - 6, 34));
   text_layer_set_background_color(s_alarm_lbl_up, GColorClear);
   text_layer_set_text_color(s_alarm_lbl_up, GColorWhite);
   text_layer_set_font(s_alarm_lbl_up, fonts_get_system_font(FONT_KEY_GOTHIC_28_BOLD));
@@ -665,13 +665,13 @@ static void alarm_window_load(Window *w) {
   // "Overtime" — big bold, LEFT-aligned, mirrors "+1 Min" on the opposite
   // side, same vertical band, for the BACK button. Word-wraps if it doesn't
   // fit the left half on one line.
-  s_alarm_lbl_back = text_layer_create(GRect(6, h * 22 / 100 - 16, wd / 2 - 6, 48));
+  s_alarm_lbl_back = text_layer_create(GRect(6, h * 22 / 100 - 16 - 10 - 5 - 15, wd / 2 - 6, 96));
   text_layer_set_background_color(s_alarm_lbl_back, GColorClear);
   text_layer_set_text_color(s_alarm_lbl_back, GColorWhite);
   text_layer_set_font(s_alarm_lbl_back, fonts_get_system_font(FONT_KEY_GOTHIC_28_BOLD));
   text_layer_set_text_alignment(s_alarm_lbl_back, GTextAlignmentLeft);
   text_layer_set_overflow_mode(s_alarm_lbl_back, GTextOverflowModeWordWrap);
-  text_layer_set_text(s_alarm_lbl_back, "Overtime");
+  text_layer_set_text(s_alarm_lbl_back, "Keep\nrunning");
   layer_add_child(root, text_layer_get_layer(s_alarm_lbl_back));
 
   // Title — large bold, centred in the band between the +1 Min and Stop labels
@@ -691,7 +691,7 @@ static void alarm_window_load(Window *w) {
   s_alarm_elapsed = text_layer_create(GRect(2, 0, wd - 4, 26));
   text_layer_set_background_color(s_alarm_elapsed, GColorClear);
   text_layer_set_text_color(s_alarm_elapsed, GColorWhite);
-  text_layer_set_font(s_alarm_elapsed, fonts_get_system_font(FONT_KEY_GOTHIC_24));
+  text_layer_set_font(s_alarm_elapsed, fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD));
   text_layer_set_text_alignment(s_alarm_elapsed, GTextAlignmentCenter);
   text_layer_set_text(s_alarm_elapsed, s_alarm_elapsed_buf);
   layer_add_child(root, text_layer_get_layer(s_alarm_elapsed));
@@ -699,7 +699,7 @@ static void alarm_window_load(Window *w) {
   layout_alarm_title();
 
   // "Stop" — big bold, right-aligned, vertically by the DOWN button (~78% h).
-  s_alarm_lbl_down = text_layer_create(GRect(0, h * 78 / 100 - 18, wd - 6, 34));
+  s_alarm_lbl_down = text_layer_create(GRect(0, h * 78 / 100 - 6, wd - 6, 34));
   text_layer_set_background_color(s_alarm_lbl_down, GColorClear);
   text_layer_set_text_color(s_alarm_lbl_down, GColorWhite);
   text_layer_set_font(s_alarm_lbl_down, fonts_get_system_font(FONT_KEY_GOTHIC_28_BOLD));
