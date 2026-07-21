@@ -72,7 +72,12 @@ Pebble.addEventListener('webviewclosed', (e: any) => {
   const dict: Record<string, any> = {};
   dict.TimerConfig = timerListToString(s.TimerList);
   dict.SortOrder = parseInt(s.SortOrder, 10) || 0;
-  dict.AutoReturn = s.AutoReturn ? 1 : 0;
+  // checkboxgroup .get() returns an array of booleans for the Clay-only
+  // 'AutoReturnOptions' key (see config_clay.ts); decompose into the two real
+  // scalar AppMessage keys instead of sending the array itself.
+  const autoReturnOptions: boolean[] = Array.isArray(s.AutoReturnOptions) ? s.AutoReturnOptions : [true, true];
+  dict.AutoReturnStart = autoReturnOptions[0] ? 1 : 0;
+  dict.AutoReturnStop = autoReturnOptions[1] ? 1 : 0;
   dict.RunningFirst = s.RunningFirst ? 1 : 0;
   dict.IdleExitSec = parseInt(s.IdleExitSec, 10) || 0;
   dict.LaunchSync = s.LaunchSync ? 1 : 0;
@@ -87,7 +92,8 @@ Pebble.addEventListener('webviewclosed', (e: any) => {
   // persist so we can re-send when the watchapp later launches and asks (above)
   window.localStorage.setItem('timer_config', dict.TimerConfig);
   window.localStorage.setItem('sort_order', String(dict.SortOrder));
-  window.localStorage.setItem('auto_return', String(dict.AutoReturn));
+  window.localStorage.setItem('auto_return_start', String(dict.AutoReturnStart));
+  window.localStorage.setItem('auto_return_stop', String(dict.AutoReturnStop));
   window.localStorage.setItem('running_first', String(dict.RunningFirst));
   window.localStorage.setItem('idle_exit', String(dict.IdleExitSec));
   window.localStorage.setItem('launch_sync', String(dict.LaunchSync));
@@ -95,7 +101,7 @@ Pebble.addEventListener('webviewclosed', (e: any) => {
   window.localStorage.setItem('run_on_create', String(dict.RunOnCreate));
   window.localStorage.setItem('keyboard_on_new_timer', String(dict.KeyboardOnNewTimer));
   window.localStorage.setItem('keyboard_on_main_touch', String(dict.KeyboardOnMainTouch));
-  console.log('Sending TimerConfig: ' + JSON.stringify(dict.TimerConfig) + ' sort=' + dict.SortOrder + ' autoReturn=' + dict.AutoReturn + ' runningFirst=' + dict.RunningFirst + ' idleExit=' + dict.IdleExitSec + ' launchSync=' + dict.LaunchSync + ' defaultFinishAction=' + dict.DefaultFinishAction + ' runOnCreate=' + dict.RunOnCreate + ' keyboardOnNewTimer=' + dict.KeyboardOnNewTimer + ' keyboardOnMainTouch=' + dict.KeyboardOnMainTouch);
+  console.log('Sending TimerConfig: ' + JSON.stringify(dict.TimerConfig) + ' sort=' + dict.SortOrder + ' autoReturnStart=' + dict.AutoReturnStart + ' autoReturnStop=' + dict.AutoReturnStop + ' runningFirst=' + dict.RunningFirst + ' idleExit=' + dict.IdleExitSec + ' launchSync=' + dict.LaunchSync + ' defaultFinishAction=' + dict.DefaultFinishAction + ' runOnCreate=' + dict.RunOnCreate + ' keyboardOnNewTimer=' + dict.KeyboardOnNewTimer + ' keyboardOnMainTouch=' + dict.KeyboardOnMainTouch);
   Pebble.sendAppMessage(dict, () => { console.log('config sent'); },
     () => { console.log('config send failed'); });
 });

@@ -23,10 +23,13 @@ export function resendDict(get: (k: string) => string | null): Record<string, an
   const roc = get('run_on_create');
   const kbnew = get('keyboard_on_new_timer');
   const kbtouch = get('keyboard_on_main_touch');
+  const ars = get('auto_return_start');
+  const aro = get('auto_return_stop');
   return {
     TimerConfig: tc,
     SortOrder: parseInt(get('sort_order') || '0', 10) || 0,
-    AutoReturn: parseInt(get('auto_return') || '0', 10) || 0,
+    AutoReturnStart: ars === null ? 1 : (parseInt(ars, 10) ? 1 : 0),
+    AutoReturnStop: aro === null ? 1 : (parseInt(aro, 10) ? 1 : 0),
     RunningFirst: rf === null ? 1 : (parseInt(rf, 10) ? 1 : 0),
     IdleExitSec: ie === null ? 15 : (parseInt(ie, 10) || 0),
     LaunchSync: ls === null ? 0 : (parseInt(ls, 10) ? 1 : 0),

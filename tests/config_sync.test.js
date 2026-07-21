@@ -10,16 +10,16 @@ test('resendDict: never saved (timer_config absent) -> null (do not clobber watc
   assert.strictEqual(resendDict(store({ sort_order: '2' })), null);
 });
 
-test('resendDict: saved config -> dict with parsed SortOrder + AutoReturn + RunningFirst + IdleExitSec + LaunchSync + DefaultFinishAction + RunOnCreate + KeyboardOnNewTimer + KeyboardOnMainTouch', () => {
+test('resendDict: saved config -> dict with parsed SortOrder + AutoReturnStart + AutoReturnStop + RunningFirst + IdleExitSec + LaunchSync + DefaultFinishAction + RunOnCreate + KeyboardOnNewTimer + KeyboardOnMainTouch', () => {
   assert.deepStrictEqual(
-    resendDict(store({ timer_config: 'Egg\x1f300\x1eTea\x1f120', sort_order: '1', auto_return: '1', running_first: '1', idle_exit: '30', launch_sync: '1', default_finish_action: '0', run_on_create: '0', keyboard_on_new_timer: '0', keyboard_on_main_touch: '1' })),
-    { TimerConfig: 'Egg\x1f300\x1eTea\x1f120', SortOrder: 1, AutoReturn: 1, RunningFirst: 1, IdleExitSec: 30, LaunchSync: 1, DefaultFinishAction: 0, RunOnCreate: 0, KeyboardOnNewTimer: 0, KeyboardOnMainTouch: 1 });
+    resendDict(store({ timer_config: 'Egg\x1f300\x1eTea\x1f120', sort_order: '1', auto_return_start: '1', auto_return_stop: '0', running_first: '1', idle_exit: '30', launch_sync: '1', default_finish_action: '0', run_on_create: '0', keyboard_on_new_timer: '0', keyboard_on_main_touch: '1' })),
+    { TimerConfig: 'Egg\x1f300\x1eTea\x1f120', SortOrder: 1, AutoReturnStart: 1, AutoReturnStop: 0, RunningFirst: 1, IdleExitSec: 30, LaunchSync: 1, DefaultFinishAction: 0, RunOnCreate: 0, KeyboardOnNewTimer: 0, KeyboardOnMainTouch: 1 });
 });
 
 test('resendDict: explicitly-saved empty list ("") IS sent (user cleared all timers)', () => {
   assert.deepStrictEqual(
     resendDict(store({ timer_config: '', sort_order: '0' })),
-    { TimerConfig: '', SortOrder: 0, AutoReturn: 0, RunningFirst: 1, IdleExitSec: 15, LaunchSync: 0, DefaultFinishAction: 1, RunOnCreate: 1, KeyboardOnNewTimer: 1, KeyboardOnMainTouch: 0 });
+    { TimerConfig: '', SortOrder: 0, AutoReturnStart: 1, AutoReturnStop: 1, RunningFirst: 1, IdleExitSec: 15, LaunchSync: 0, DefaultFinishAction: 1, RunOnCreate: 1, KeyboardOnNewTimer: 1, KeyboardOnMainTouch: 0 });
 });
 
 test('resendDict: missing default_finish_action defaults to 1 (Delete) for pre-feature saves', () => {
@@ -35,12 +35,20 @@ test('resendDict: missing/garbage sort_order defaults to 0', () => {
   assert.strictEqual(resendDict(store({ timer_config: 'a\x1f60', sort_order: 'x' })).SortOrder, 0);
 });
 
-test('resendDict: missing auto_return defaults to 0', () => {
-  assert.strictEqual(resendDict(store({ timer_config: 'a\x1f60' })).AutoReturn, 0);
+test('resendDict: missing auto_return_start defaults to 1 (ON)', () => {
+  assert.strictEqual(resendDict(store({ timer_config: 'a\x1f60' })).AutoReturnStart, 1);
 });
 
-test('resendDict: saved auto_return "0" round-trips to 0', () => {
-  assert.strictEqual(resendDict(store({ timer_config: 'a\x1f60', auto_return: '0' })).AutoReturn, 0);
+test('resendDict: saved auto_return_start "0" round-trips to 0', () => {
+  assert.strictEqual(resendDict(store({ timer_config: 'a\x1f60', auto_return_start: '0' })).AutoReturnStart, 0);
+});
+
+test('resendDict: missing auto_return_stop defaults to 1 (ON)', () => {
+  assert.strictEqual(resendDict(store({ timer_config: 'a\x1f60' })).AutoReturnStop, 1);
+});
+
+test('resendDict: saved auto_return_stop "0" round-trips to 0', () => {
+  assert.strictEqual(resendDict(store({ timer_config: 'a\x1f60', auto_return_stop: '0' })).AutoReturnStop, 0);
 });
 
 test('resendDict: missing running_first defaults to 1 (ON) for pre-feature saves', () => {

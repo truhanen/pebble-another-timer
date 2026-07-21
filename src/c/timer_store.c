@@ -53,13 +53,22 @@ void store_save_sort(int mode) {
   persist_write_int(PERSIST_KEY_SORTORDER, mode);
 }
 
-bool store_load_autoreturn(void) {
-  if (!persist_exists(PERSIST_KEY_AUTORETURN)) { return true; }   // default ON
-  return persist_read_bool(PERSIST_KEY_AUTORETURN);
+bool store_load_autoreturn_start(void) {
+  if (!persist_exists(PERSIST_KEY_AUTORETURN_START)) { return true; }   // default ON
+  return persist_read_bool(PERSIST_KEY_AUTORETURN_START);
 }
 
-void store_save_autoreturn(bool on) {
-  persist_write_bool(PERSIST_KEY_AUTORETURN, on);
+void store_save_autoreturn_start(bool on) {
+  persist_write_bool(PERSIST_KEY_AUTORETURN_START, on);
+}
+
+bool store_load_autoreturn_stop(void) {
+  if (!persist_exists(PERSIST_KEY_AUTORETURN_STOP)) { return true; }   // default ON
+  return persist_read_bool(PERSIST_KEY_AUTORETURN_STOP);
+}
+
+void store_save_autoreturn_stop(bool on) {
+  persist_write_bool(PERSIST_KEY_AUTORETURN_STOP, on);
 }
 
 bool store_load_runningfirst(void) {

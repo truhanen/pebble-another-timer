@@ -44,7 +44,8 @@ static int8_t s_unnamed_star[MAX_TIMERS]; // unnamed timers: per-duration creati
 static int s_count = 0;
 static int s_order[MAX_TIMERS];   // display order, rebuilt on reload per s_sort
 static SortMode s_sort = SORT_MRU;
-static bool s_auto_return = false; // config: pop to watchface after a start/resume
+static bool s_auto_return_start = true; // config: pop to watchface after a start/resume
+static bool s_auto_return_stop = true; // config: pop to watchface after stopping a timer
 static bool s_running_first = true; // config: group RUNNING first, then PAUSED
 static bool s_default_finish_delete = true; // config: "Default action after timer finishes" default for new timers
 static bool s_launch_sync = false; // config: subtract elapsed-from-launch on starts
@@ -521,10 +522,10 @@ static void alarm_buzz_stop(void) {
 static void alarm_stop(ClickRecognizerRef rec, void *ctx) {
   // Stop: reset (or delete) the finished timer directly from the alarm, then
   // chain to the next queued alarm if another timer also expired. Once the
-  // queue is empty, only close the app (-> watchface) if AutoReturn is on -
-  // same as every other stop/start action - otherwise just drop the alarm
-  // and land back on the list. Any per-timer menu underneath is always
-  // closed first (see close_timer_menus) so no menu ever survives an alarm.
+  // queue is empty, only close the app (-> watchface) if AutoReturnStop is on -
+  // otherwise just drop the alarm and land back on the list. Any per-timer
+  // menu underneath is always closed first (see close_timer_menus) so no
+  // menu ever survives an alarm.
   close_timer_menus();
   if (s_alarm_idx >= 0 && s_alarm_idx < s_count) {
     if (s_delete_on_finish[s_alarm_idx]) { remove_timer_at(s_alarm_idx); }
@@ -532,14 +533,14 @@ static void alarm_stop(ClickRecognizerRef rec, void *ctx) {
     persist_all(); rearm_wakeup(); reload_ui();
   }
   if (show_next_pending_alarm()) { return; }
-  if (s_auto_return) { close_to_watchface(); }
+  if (s_auto_return_stop) { close_to_watchface(); }
   else { window_stack_remove(s_alarm_window, true); }
 }
 
 static void alarm_add_minute(ClickRecognizerRef rec, void *ctx) {
   // Snooze: run the finished timer for 1 more minute, then land back on the
-  // list (or chain to another queued alarm) - same as every other alarm
-  // action, no per-timer menu is ever shown.
+  // list (or chain to another queued alarm) - the timer keeps running, so
+  // this follows AutoReturnStart like every other keep-it-running action.
   close_timer_menus();
   int idx = s_alarm_idx;
   if (idx >= 0 && idx < s_count) {
@@ -547,7 +548,7 @@ static void alarm_add_minute(ClickRecognizerRef rec, void *ctx) {
     persist_all(); rearm_wakeup(); ensure_ticking(); reload_ui();
   }
   if (show_next_pending_alarm()) { return; }
-  if (s_auto_return) { close_to_watchface(); }
+  if (s_auto_return_start) { close_to_watchface(); }
   else { window_stack_remove(s_alarm_window, true); }
 }
 
@@ -555,14 +556,15 @@ static void alarm_run_overtime(ClickRecognizerRef rec, void *ctx) {
   // "Overtime": acknowledge this alarm without stopping the timer - it keeps
   // counting in the background (red/orange row, offered Stop/Start in its
   // detail menu) - then chain to the next queued alarm. Once none remain,
-  // only close to the watchface if AutoReturn is on (see alarm_stop).
+  // only close to the watchface if AutoReturnStart is on (timer is still
+  // running, same as any other start/resume action).
   close_timer_menus();
   if (s_alarm_idx >= 0 && s_alarm_idx < s_count) {
     s_timers[s_alarm_idx].alarm_pending = false;
     persist_all();
   }
   if (show_next_pending_alarm()) { return; }
-  if (s_auto_return) { close_to_watchface(); }
+  if (s_auto_return_start) { close_to_watchface(); }
   else { window_stack_remove(s_alarm_window, true); }
 }
 
@@ -1296,7 +1298,7 @@ static void dl_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
           break;
         }
         if (was_paused) { window_stack_remove(s_detail_window, true); }
-        else if (s_auto_return) { show_start_confirmation(idx); }
+        else if (s_auto_return_start) { show_start_confirmation(idx); }
         else { menu_layer_reload_data(s_detail_menu); }
         break;
         }
@@ -1306,7 +1308,7 @@ static void dl_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
         else { tc_reset(t, now_s()); }
         persist_all(); rearm_wakeup(); reload_ui();
         if (!was_delete_on_finish) { select_timer_row(idx); }
-        if (!was_delete_on_finish && s_auto_return) { close_to_watchface(); }
+        if (!was_delete_on_finish && s_auto_return_stop) { close_to_watchface(); }
         else { window_stack_remove(s_detail_window, true); }
         break;
       }
@@ -1474,7 +1476,7 @@ static void new_timer_label_result(const char *text, void *context) {
         return;
       }
       select_timer_row(idx);
-      if (s_run_on_create && s_auto_return) { show_start_confirmation(idx); }
+      if (s_run_on_create && s_auto_return_start) { show_start_confirmation(idx); }
       else if (s_detail_window && window_stack_contains_window(s_detail_window)) {
         window_stack_remove(s_detail_window, true);
       }
@@ -2268,7 +2270,7 @@ static void confirm_window_unload(Window *w) {
 }
 
 // Flash a "Started" screen for ~1.1s, then pop the whole stack (-> watchface).
-// Only called on the idle one-tap start when AutoReturn is on.
+// Only called on a start action when AutoReturnStart is on.
 static void show_start_confirmation(int idx) {
   Timer *t = &s_timers[idx];
   tc_format_remaining(s_confirm_time, sizeof(s_confirm_time), tc_remaining_now(t, now_s()));
@@ -2322,7 +2324,7 @@ static void ml_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
     bool fired = finish_start_tail();
     if (fired) { return; }
     select_timer_row(idx);
-    if (s_auto_return) { show_start_confirmation(idx); }   // flash, then pop to watchface
+    if (s_auto_return_start) { show_start_confirmation(idx); }   // flash, then pop to watchface
     return;
   } else {
     open_detail_window(idx, DSTYLE_LEGACY);
@@ -2408,10 +2410,15 @@ static void inbox_received(DictionaryIterator *iter, void *ctx) {
     s_sort = (SortMode)m;
     store_save_sort(s_sort);
   }
-  Tuple *autoret = dict_find(iter, MESSAGE_KEY_AutoReturn);
-  if (autoret) {
-    s_auto_return = autoret->value->int32 != 0;
-    store_save_autoreturn(s_auto_return);
+  Tuple *autoret_start = dict_find(iter, MESSAGE_KEY_AutoReturnStart);
+  if (autoret_start) {
+    s_auto_return_start = autoret_start->value->int32 != 0;
+    store_save_autoreturn_start(s_auto_return_start);
+  }
+  Tuple *autoret_stop = dict_find(iter, MESSAGE_KEY_AutoReturnStop);
+  if (autoret_stop) {
+    s_auto_return_stop = autoret_stop->value->int32 != 0;
+    store_save_autoreturn_stop(s_auto_return_stop);
   }
   Tuple *runfirst = dict_find(iter, MESSAGE_KEY_RunningFirst);
   if (runfirst) {
@@ -2694,7 +2701,7 @@ static void start_as_new(int32_t secs, bool save_to_phone, const char *name) {
   if (save_to_phone) { send_add_timer(secs, t->name); }
   if (fired) { return; }
   select_timer_row(idx);
-  if (s_run_on_create && s_auto_return) { show_start_confirmation(idx); }   // flash -> watchface
+  if (s_run_on_create && s_auto_return_start) { show_start_confirmation(idx); }   // flash -> watchface
   else if (s_detail_window && window_stack_contains_window(s_detail_window)) {
     window_stack_remove(s_detail_window, true);           // back to the list
   }
@@ -2853,7 +2860,8 @@ static void init(void) {
     ensure_unnamed_star(i);
   }
   s_sort = (SortMode)store_load_sort();
-  s_auto_return = store_load_autoreturn();
+  s_auto_return_start = store_load_autoreturn_start();
+  s_auto_return_stop = store_load_autoreturn_stop();
   s_running_first = store_load_runningfirst();
   s_default_finish_delete = store_load_default_finish_delete();
   s_run_on_create = store_load_runoncreate();

@@ -8,7 +8,7 @@
 #define PERSIST_KEY_COUNT     2
 #define PERSIST_KEY_WAKEUPID  3
 #define PERSIST_KEY_SORTORDER 4
-#define PERSIST_KEY_AUTORETURN 5
+#define PERSIST_KEY_AUTORETURN_START 5
 #define PERSIST_KEY_RUNNINGFIRST 6
 #define PERSIST_KEY_IDLEEXIT 7       // idle auto-exit timeout, seconds (0 = off)
 #define PERSIST_KEY_EPHEMERAL 8      // bit i => timer i is deleted (not kept) once it finishes/stops
@@ -17,6 +17,7 @@
 #define PERSIST_KEY_RUNONCREATE 11   // run a newly created timer immediately (0/1)
 #define PERSIST_KEY_KEYBOARD_NEW_TIMER 12  // show label keyboard after "+ New timer" dial confirm (0/1)
 #define PERSIST_KEY_KEYBOARD_MAIN_TOUCH 13 // show label keyboard after main-view touch dial (0/1)
+#define PERSIST_KEY_AUTORETURN_STOP 14 // return to watchface after stopping a timer (0/1)
 #define PERSIST_KEY_TIMER_BASE 100   // timer i -> key 100+i (one Timer per key; 256B/key cap)
 #define STORE_SCHEMA 4
 
@@ -30,9 +31,12 @@ void store_save_wakeup_id(int32_t id);
 // Sort mode (defaults to SORT_MRU=0 when unset).
 int store_load_sort(void);
 void store_save_sort(int mode);
-// Auto-return-to-watchface flag (defaults to false when unset).
-bool store_load_autoreturn(void);
-void store_save_autoreturn(bool on);
+// Return to watchface after starting a timer (defaults to true when unset).
+bool store_load_autoreturn_start(void);
+void store_save_autoreturn_start(bool on);
+// Return to watchface after stopping a timer (defaults to true when unset).
+bool store_load_autoreturn_stop(void);
+void store_save_autoreturn_stop(bool on);
 // Running-timers-first list ordering (defaults to true when unset).
 bool store_load_runningfirst(void);
 void store_save_runningfirst(bool on);

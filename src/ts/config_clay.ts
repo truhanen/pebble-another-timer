@@ -5,14 +5,15 @@
 // component (messageKey 'TimerList') is a Clay-only key (NOT in package.json
 // messageKeys) — index.ts serializes it to the real CString key 'TimerConfig'
 // on save, exactly as TimeStyle maps WidgetList -> SettingWidgetList.
-// `KeyboardOptions` (checkboxgroup) is the same trick, for a different reason:
-// autoHandleEvents is off, so we build the AppMessage dict ourselves instead of
-// letting Clay's own `prepareSettingsForAppMessage` split an array-syntax
-// messageKey into consecutive int keys — a raw array value assigned to one key
-// on a manually-built dict is sent as a single array-typed AppMessage tuple,
-// not split, so it must NOT be declared as an array-syntax key in package.json.
-// index.ts decomposes the boolean array into two real scalar keys instead:
-// KeyboardOnNewTimer / KeyboardOnMainTouch.
+// `KeyboardOptions` and `AutoReturnOptions` (checkboxgroups) are the same
+// trick, for a different reason: autoHandleEvents is off, so we build the
+// AppMessage dict ourselves instead of letting Clay's own
+// `prepareSettingsForAppMessage` split an array-syntax messageKey into
+// consecutive int keys — a raw array value assigned to one key on a
+// manually-built dict is sent as a single array-typed AppMessage tuple, not
+// split, so it must NOT be declared as an array-syntax key in package.json.
+// index.ts decomposes each boolean array into two real scalar keys instead:
+// KeyboardOnNewTimer / KeyboardOnMainTouch, and AutoReturnStart / AutoReturnStop.
 const config = [
   {
     type: 'section',
@@ -72,10 +73,11 @@ const config = [
     type: 'section',
     items: [
       { type: 'heading', defaultValue: 'App behavior' },
-      { type: 'toggle', messageKey: 'AutoReturn',
-        label: 'Return to watchface after starting or stopping a timer',
+      { type: 'checkboxgroup', messageKey: 'AutoReturnOptions',
+        label: 'Return to watchface',
         description: 'When on, the app closes back to the watchface once you start or stop a timer.',
-        defaultValue: true },
+        defaultValue: [true, true],
+        options: ['After starting a timer', 'After stopping a timer'] },
       // select values MUST be strings (Clay); index.ts parseInts on save.
       { type: 'select', messageKey: 'IdleExitSec',
         label: 'Return to watchface when idle',
