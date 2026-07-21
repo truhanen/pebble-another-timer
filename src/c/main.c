@@ -1408,8 +1408,8 @@ static void detail_back_click(ClickRecognizerRef rec, void *ctx) {
 
 static void detail_click_config(void *ctx) {
   window_single_click_subscribe(BUTTON_ID_SELECT, detail_select_click);
-  window_single_click_subscribe(BUTTON_ID_UP, detail_up_click);
-  window_single_click_subscribe(BUTTON_ID_DOWN, detail_down_click);
+  window_single_repeating_click_subscribe(BUTTON_ID_UP, 100 /*ms*/, detail_up_click);
+  window_single_repeating_click_subscribe(BUTTON_ID_DOWN, 100 /*ms*/, detail_down_click);
   window_single_click_subscribe(BUTTON_ID_BACK, detail_back_click);
 }
 
