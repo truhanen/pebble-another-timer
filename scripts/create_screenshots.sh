@@ -85,7 +85,7 @@ button() {
 
 long_press_select() {
   # $1: seconds to sleep afterwards (default 1). A plain `button select` is a
-  # quick click; the per-row edit menu (Edit duration/Edit label/After
+  # quick click; the per-row edit menu (Duration/Label/After
   # finished) only opens on a genuine long-press, which `pebble emu-button`
   # can't synthesize directly - hold (push, wait, release) instead, same as
   # `make long_press_select_emulator`.
@@ -247,7 +247,7 @@ log "Closing control menu"
 button back 1
 
 log "Timer edit menu (long press)"
-long_press_select 1   # long-press Tea's row -> per-row edit menu (Edit duration/label, After finished)
+long_press_select 1   # long-press Tea's row -> per-row edit menu (Duration/label, After finished)
 shoot "06_timer_edit_menu.png"
 
 log "Closing timer edit menu"

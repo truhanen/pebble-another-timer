@@ -1232,10 +1232,16 @@ static uint16_t dl_num_rows(MenuLayer *ml, uint16_t section, void *ctx) {
   return 3;
 }
 static int16_t dl_cell_height(MenuLayer *ml, MenuIndex *ci, void *ctx) { return 34; }
-static int16_t dl_header_height(MenuLayer *ml, uint16_t section, void *ctx) { return 32; }
+static int16_t dl_header_height(MenuLayer *ml, uint16_t section, void *ctx) {
+  // DSTYLE_LONG_EXISTING shows the label & duration as values on their own
+  // rows (see dl_draw_row) instead of a separate title row.
+  if (s_detail_style == DSTYLE_LONG_EXISTING) { return 0; }
+  return 32;
+}
 
 // Header: timer name (left) + edited time (right); time only if unnamed.
 static void dl_draw_header(GContext *gctx, const Layer *cell, uint16_t section, void *ctx) {
+  if (s_detail_style == DSTYLE_LONG_EXISTING) { return; }
   if (s_detail_idx < 0 || s_detail_idx >= s_count) { return; }
   Timer *t = &s_timers[s_detail_idx];
   int32_t shown = (s_detail_style == DSTYLE_LEGACY) ? tc_remaining_now(t, now_s()) : s_detail_edit_secs;
@@ -1245,13 +1251,6 @@ static void dl_draw_header(GContext *gctx, const Layer *cell, uint16_t section, 
   GRect b = layer_get_bounds(cell);
   GFont f = fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD);
   graphics_context_set_text_color(gctx, GColorBlack);
-  if (s_detail_style == DSTYLE_LONG_EXISTING) {
-    graphics_draw_text(gctx, title, f, GRect(4, 3, b.size.w - 92, 26),
-      GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
-    graphics_draw_text(gctx, rem_head, f, GRect(4, 3, b.size.w - 8, 26),
-      GTextOverflowModeTrailingEllipsis, GTextAlignmentRight, NULL);
-    return;
-  }
   if (s_detail_style == DSTYLE_LONG_NEW) {
     graphics_draw_text(gctx, title, f, GRect(4, 3, b.size.w - 92, 26),
       GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
@@ -1267,31 +1266,34 @@ static void dl_draw_header(GContext *gctx, const Layer *cell, uint16_t section, 
 
 static void dl_draw_row(GContext *gctx, const Layer *cell, MenuIndex *ci, void *ctx) {
   const char *label = "";
-  static char finish_label[24];
+  const char *value = NULL;   // non-NULL => draw as a key (left) / value (right) row
+  static char value_buf[NAME_LEN + 1];
   if (s_detail_style == DSTYLE_LEGACY) {
     if (ci->row >= s_detail_act_count) { return; }
     label = dl_legacy_action_label(s_detail_acts[ci->row]);
   } else {
     if (s_detail_style == DSTYLE_LONG_EXISTING) {
-      if (ci->row == 0) { label = "Edit duration"; }
-      else if (ci->row == 1) { label = "Edit label"; }
+      Timer *t = (s_detail_idx >= 0 && s_detail_idx < s_count) ? &s_timers[s_detail_idx] : NULL;
+      if (ci->row == 0) {
+        label = "Duration";
+        tc_format_remaining(value_buf, sizeof(value_buf), s_detail_edit_secs);
+        value = value_buf;
+      }
+      else if (ci->row == 1) {
+        label = "Label";
+        value = (t && t->name[0]) ? t->name : "<none>";
+      }
       else if (ci->row == 2) {
-        bool del = (s_detail_idx >= 0 && s_detail_idx < s_count)
-          ? s_delete_on_finish[s_detail_idx] : false;
-        snprintf(finish_label, sizeof(finish_label), "After finished: %s", del ? "Delete" : "Save");
-        label = finish_label;
+        label = "After finished";
+        value = (t && s_delete_on_finish[s_detail_idx]) ? "Delete" : "Save";
       }
       else if (ci->row == 3) {
-        bool on = (s_detail_idx >= 0 && s_detail_idx < s_count)
-          ? s_vibration_enabled[s_detail_idx] : false;
-        snprintf(finish_label, sizeof(finish_label), "Vibration: %s", on ? "On" : "Off");
-        label = finish_label;
+        label = "Vibration";
+        value = (t && s_vibration_enabled[s_detail_idx]) ? "On" : "Off";
       }
       else if (ci->row == 4) {
-        bool on = (s_detail_idx >= 0 && s_detail_idx < s_count)
-          ? s_sound_enabled[s_detail_idx] : false;
-        snprintf(finish_label, sizeof(finish_label), "Sound: %s", on ? "On" : "Off");
-        label = finish_label;
+        label = "Sound";
+        value = (t && s_sound_enabled[s_detail_idx]) ? "On" : "Off";
       }
       else { return; }
     } else {
@@ -1299,9 +1301,18 @@ static void dl_draw_row(GContext *gctx, const Layer *cell, MenuIndex *ci, void *
     }
   }
   GRect b = layer_get_bounds(cell);
-  graphics_draw_text(gctx, label,
-    fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD),
-    GRect(6, (b.size.h - 26) / 2, b.size.w - 12, 26),
+  GFont f = fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD);
+  int16_t y = (b.size.h - 26) / 2;
+  if (value) {
+    // Key gets a narrower box so a long value never overlaps it; value hugs
+    // the right edge in a near-full-width box, growing left only as needed.
+    graphics_draw_text(gctx, label, f, GRect(6, y, b.size.w - 90, 26),
+      GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
+    graphics_draw_text(gctx, value, f, GRect(6, y, b.size.w - 12, 26),
+      GTextOverflowModeTrailingEllipsis, GTextAlignmentRight, NULL);
+    return;
+  }
+  graphics_draw_text(gctx, label, f, GRect(6, y, b.size.w - 12, 26),
     GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
 }
 
@@ -1398,13 +1409,13 @@ static void dl_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
     return;
   }
   if (s_detail_style == DSTYLE_LONG_EXISTING) {
-    if (ci->row == 0) { // Edit duration
+    if (ci->row == 0) { // Duration
       s_dial_existing_duration_edit = true;
       s_detail_advancing = true;
       open_dial_window(idx, DSTYLE_LONG_EXISTING);
       return;
     }
-    if (ci->row == 1) { // Edit label
+    if (ci->row == 1) { // Label
       open_label_input_for_new_timer(idx);
       return;
     }
