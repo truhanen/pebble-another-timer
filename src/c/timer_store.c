@@ -151,3 +151,57 @@ bool store_load_keyboard_main_touch(void) {
 void store_save_keyboard_main_touch(bool on) {
   persist_write_bool(PERSIST_KEY_KEYBOARD_MAIN_TOUCH, on);
 }
+
+int store_load_vibe_pattern(void) {
+  if (!persist_exists(PERSIST_KEY_VIBE_PATTERN)) { return 0; }   // default Double
+  return persist_read_int(PERSIST_KEY_VIBE_PATTERN);
+}
+
+void store_save_vibe_pattern(int pattern) {
+  persist_write_int(PERSIST_KEY_VIBE_PATTERN, pattern);
+}
+
+int store_load_audio_volume(void) {
+  if (!persist_exists(PERSIST_KEY_AUDIO_VOLUME)) { return 0; }   // default disabled
+  return persist_read_int(PERSIST_KEY_AUDIO_VOLUME);
+}
+
+void store_save_audio_volume(int volume) {
+  persist_write_int(PERSIST_KEY_AUDIO_VOLUME, volume);
+}
+
+bool store_load_default_vibration_enabled(void) {
+  if (!persist_exists(PERSIST_KEY_DEFAULT_VIBRATION_ENABLED)) { return true; }   // default ON
+  return persist_read_bool(PERSIST_KEY_DEFAULT_VIBRATION_ENABLED);
+}
+
+void store_save_default_vibration_enabled(bool on) {
+  persist_write_bool(PERSIST_KEY_DEFAULT_VIBRATION_ENABLED, on);
+}
+
+bool store_load_default_sound_enabled(void) {
+  if (!persist_exists(PERSIST_KEY_DEFAULT_SOUND_ENABLED)) { return true; }   // default ON
+  return persist_read_bool(PERSIST_KEY_DEFAULT_SOUND_ENABLED);
+}
+
+void store_save_default_sound_enabled(bool on) {
+  persist_write_bool(PERSIST_KEY_DEFAULT_SOUND_ENABLED, on);
+}
+
+uint32_t store_load_vibration_mask(void) {
+  if (!persist_exists(PERSIST_KEY_VIBRATION_MASK)) { return 0xFFFFFFFFu; }   // default all ON
+  return (uint32_t)persist_read_int(PERSIST_KEY_VIBRATION_MASK);
+}
+
+void store_save_vibration_mask(uint32_t mask) {
+  persist_write_int(PERSIST_KEY_VIBRATION_MASK, (int32_t)mask);
+}
+
+uint32_t store_load_sound_mask(void) {
+  if (!persist_exists(PERSIST_KEY_SOUND_MASK)) { return 0xFFFFFFFFu; }   // default all ON
+  return (uint32_t)persist_read_int(PERSIST_KEY_SOUND_MASK);
+}
+
+void store_save_sound_mask(uint32_t mask) {
+  persist_write_int(PERSIST_KEY_SOUND_MASK, (int32_t)mask);
+}

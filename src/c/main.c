@@ -40,6 +40,8 @@ static int64_t   s_alarm_buzz_start_s;
 
 static Timer s_timers[MAX_TIMERS];
 static bool s_delete_on_finish[MAX_TIMERS];  // true => timer is deleted (not kept) once it finishes/stops; never phone-synced while true
+static bool s_vibration_enabled[MAX_TIMERS]; // per-timer alarm vibration on/off; never phone-synced
+static bool s_sound_enabled[MAX_TIMERS];     // per-timer alarm sound on/off; never phone-synced
 static int8_t s_unnamed_star[MAX_TIMERS]; // unnamed timers: per-duration creation-order rank for stable sorting
 static int s_count = 0;
 static int s_order[MAX_TIMERS];   // display order, rebuilt on reload per s_sort
@@ -49,6 +51,10 @@ static bool s_auto_return_stop = true; // config: pop to watchface after stoppin
 static bool s_running_first = true; // config: group RUNNING first, then PAUSED
 static bool s_default_finish_delete = true; // config: "Default action after timer finishes" default for new timers
 static bool s_launch_sync = false; // config: subtract elapsed-from-launch on starts
+static int s_vibe_pattern = 0; // config: alarm vibration pattern - 0=Double, 1=Short, 2=Long
+static int s_audio_volume = 0; // config: alarm beep volume, 0-100 (0 = sound disabled globally)
+static bool s_default_vibration_enabled = true; // config: default "Vibration" for newly created timers
+static bool s_default_sound_enabled = true; // config: default "Sound" for newly created timers
 static bool s_run_on_create = true; // config: start a newly created timer immediately
 static bool s_keyboard_on_new_timer = true; // config: show label keyboard after "+ New timer" dial confirm
 static bool s_keyboard_on_main_touch = false; // config: show label keyboard after main-view touch dial
@@ -337,12 +343,16 @@ static void rearm_wakeup(void) {
 }
 
 static void persist_all(void) {
-  uint32_t mask = 0;
+  uint32_t mask = 0, vibe_mask = 0, sound_mask = 0;
   for (int i = 0; i < s_count && i < 32; i++) {
     if (s_delete_on_finish[i]) { mask |= (1u << i); }
+    if (s_vibration_enabled[i]) { vibe_mask |= (1u << i); }
+    if (s_sound_enabled[i]) { sound_mask |= (1u << i); }
   }
   store_save(s_timers, s_count);
   store_save_delete_on_finish_mask(mask);
+  store_save_vibration_mask(vibe_mask);
+  store_save_sound_mask(sound_mask);
 }
 
 // Forward declarations used by reload_ui (implemented later in file).
@@ -502,32 +512,58 @@ static bool show_next_pending_alarm(void) {
 }
 
 // ---- full-screen alarm when a timer finishes ----
+// Vibration pattern selector, configured via s_vibe_pattern (0=Double, 1=Short, 2=Long).
 static void alarm_vibrate(void) {
-  // a bit longer than a single long pulse: several long buzzes
-  static const uint32_t segs[] = {500, 200, 500, 200, 500, 200, 700};
-  VibePattern pat = { .durations = segs, .num_segments = ARRAY_LENGTH(segs) };
-  vibes_enqueue_custom_pattern(pat);
+  switch (s_vibe_pattern) {
+    case 1: vibes_short_pulse(); break;
+    case 2: vibes_long_pulse(); break;
+    default: vibes_double_pulse(); break;
+  }
 }
+
+#if PBL_SPEAKER
+// A short beep-silence-beep-silence sequence, played at `volume` (0-100).
+// No-op when volume is 0 or the speaker is muted.
+static void alarm_play_audio(uint8_t volume) {
+  static const SpeakerNote beep = {
+    .midi_note = 95, .waveform = SpeakerWaveformSquare, .duration_ms = 150, .velocity = 0, .reserved = 0
+  };
+  static const SpeakerNote silence = {
+    .midi_note = 0, .waveform = SpeakerWaveformSine, .duration_ms = 100, .velocity = 0, .reserved = 0
+  };
+  static const SpeakerNote notes[4] = { beep, silence, beep, silence };
+  if (volume > 0 && !speaker_is_muted()) {
+    speaker_play_notes(notes, ARRAY_LENGTH(notes), volume);
+  }
+}
+#endif
 
 // Re-buzz on a repeating timer until the 10-min cap; then stop scheduling but
 // leave the alarm window up (the user must press Stop/+1 Min to dismiss).
 static void alarm_buzz_cb(void *ctx) {
   s_alarm_buzz_timer = NULL;
   if (now_s() - s_alarm_buzz_start_s >= ALARM_BUZZ_MAX_S) { return; }
-  alarm_vibrate();
+  if (s_alarm_idx >= 0 && s_alarm_idx < s_count) {
+    if (s_vibration_enabled[s_alarm_idx]) { alarm_vibrate(); }
+#if PBL_SPEAKER
+    if (s_sound_enabled[s_alarm_idx]) { alarm_play_audio((uint8_t)s_audio_volume); }
+#endif
+  }
   s_alarm_buzz_timer = app_timer_register(ALARM_BUZZ_INTERVAL_MS, alarm_buzz_cb, NULL);
 }
 
 static void alarm_buzz_start(void) {
   if (s_alarm_buzz_timer) { app_timer_cancel(s_alarm_buzz_timer); s_alarm_buzz_timer = NULL; }
   s_alarm_buzz_start_s = now_s();
-  alarm_vibrate();   // buzz now
-  s_alarm_buzz_timer = app_timer_register(ALARM_BUZZ_INTERVAL_MS, alarm_buzz_cb, NULL);
+  alarm_buzz_cb(NULL);   // buzz now (gated on s_alarm_idx's own vibration/sound toggles), then repeat
 }
 
 static void alarm_buzz_stop(void) {
   if (s_alarm_buzz_timer) { app_timer_cancel(s_alarm_buzz_timer); s_alarm_buzz_timer = NULL; }
   vibes_cancel();
+#if PBL_SPEAKER
+  speaker_stop();
+#endif
 }
 
 static void alarm_stop(ClickRecognizerRef rec, void *ctx) {
@@ -1192,6 +1228,7 @@ static uint16_t dl_num_rows(MenuLayer *ml, uint16_t section, void *ctx) {
     dl_rebuild_actions();
     return (uint16_t)s_detail_act_count;
   }
+  if (s_detail_style == DSTYLE_LONG_EXISTING) { return 5; }
   return 3;
 }
 static int16_t dl_cell_height(MenuLayer *ml, MenuIndex *ci, void *ctx) { return 34; }
@@ -1242,6 +1279,18 @@ static void dl_draw_row(GContext *gctx, const Layer *cell, MenuIndex *ci, void *
         bool del = (s_detail_idx >= 0 && s_detail_idx < s_count)
           ? s_delete_on_finish[s_detail_idx] : false;
         snprintf(finish_label, sizeof(finish_label), "After finished: %s", del ? "Delete" : "Save");
+        label = finish_label;
+      }
+      else if (ci->row == 3) {
+        bool on = (s_detail_idx >= 0 && s_detail_idx < s_count)
+          ? s_vibration_enabled[s_detail_idx] : false;
+        snprintf(finish_label, sizeof(finish_label), "Vibration: %s", on ? "On" : "Off");
+        label = finish_label;
+      }
+      else if (ci->row == 4) {
+        bool on = (s_detail_idx >= 0 && s_detail_idx < s_count)
+          ? s_sound_enabled[s_detail_idx] : false;
+        snprintf(finish_label, sizeof(finish_label), "Sound: %s", on ? "On" : "Off");
         label = finish_label;
       }
       else { return; }
@@ -1368,6 +1417,16 @@ static void dl_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
         t->custom = true;
         send_add_timer(t->duration, t->name, t->id);   // now "kept": add it to the phone
       }
+      persist_all();
+      if (s_detail_menu) { menu_layer_reload_data(s_detail_menu); }
+    }
+    if (ci->row == 3) { // Vibration: On/Off (toggle)
+      s_vibration_enabled[idx] = !s_vibration_enabled[idx];
+      persist_all();
+      if (s_detail_menu) { menu_layer_reload_data(s_detail_menu); }
+    }
+    if (ci->row == 4) { // Sound: On/Off (toggle)
+      s_sound_enabled[idx] = !s_sound_enabled[idx];
       persist_all();
       if (s_detail_menu) { menu_layer_reload_data(s_detail_menu); }
     }
@@ -2469,6 +2528,26 @@ static void inbox_received(DictionaryIterator *iter, void *ctx) {
     store_save_launchsync(s_launch_sync);
     ensure_ticking();
   }
+  Tuple *vibe = dict_find(iter, MESSAGE_KEY_VibePattern);
+  if (vibe) {
+    s_vibe_pattern = (int)vibe->value->int32;
+    store_save_vibe_pattern(s_vibe_pattern);
+  }
+  Tuple *vol = dict_find(iter, MESSAGE_KEY_AudioVolume);
+  if (vol) {
+    s_audio_volume = (int)vol->value->int32;
+    store_save_audio_volume(s_audio_volume);
+  }
+  Tuple *defvibe = dict_find(iter, MESSAGE_KEY_DefaultVibrationEnabled);
+  if (defvibe) {
+    s_default_vibration_enabled = defvibe->value->int32 != 0;
+    store_save_default_vibration_enabled(s_default_vibration_enabled);
+  }
+  Tuple *defsound = dict_find(iter, MESSAGE_KEY_DefaultSoundEnabled);
+  if (defsound) {
+    s_default_sound_enabled = defsound->value->int32 != 0;
+    store_save_default_sound_enabled(s_default_sound_enabled);
+  }
   // Pause the idle auto-exit while the phone config page is open (no watch buttons are
   // pressed during config, so the idle timer would otherwise fire and kill the app —
   // and PKJS with it — closing the config page and losing unsaved changes).
@@ -2488,6 +2567,8 @@ static void inbox_received(DictionaryIterator *iter, void *ctx) {
     static int src_index[MAX_TIMERS];
     static bool consumed[MAX_TIMERS];
     static bool dof_new[MAX_TIMERS];
+    static bool vibe_new[MAX_TIMERS];
+    static bool sound_new[MAX_TIMERS];
     static bool draft_new[MAX_TIMERS];
     static int8_t st_new[MAX_TIMERS];
     int cn = s_count;
@@ -2504,8 +2585,16 @@ static void inbox_received(DictionaryIterator *iter, void *ctx) {
     memset(consumed, 0, sizeof(consumed));
     for (int i = 0; i < mn; i++) {
       int src = src_index[i];
-      if (src < 0) { continue; }
+      if (src < 0) {
+        // A brand-new row (no matching id in current state, e.g. added via
+        // phone Clay) starts out from the configured defaults for new timers.
+        vibe_new[i] = s_default_vibration_enabled;
+        sound_new[i] = s_default_sound_enabled;
+        continue;
+      }
       dof_new[i] = s_delete_on_finish[src];
+      vibe_new[i] = s_vibration_enabled[src];
+      sound_new[i] = s_sound_enabled[src];
       draft_new[i] = (src == s_new_timer_idx);
       st_new[i] = s_unnamed_star[src];
       consumed[src] = true;
@@ -2524,6 +2613,8 @@ static void inbox_received(DictionaryIterator *iter, void *ctx) {
       merged[out_n] = s_timers[i];
       merged[out_n].custom = true;
       dof_new[out_n] = true;
+      vibe_new[out_n] = s_vibration_enabled[i];
+      sound_new[out_n] = s_sound_enabled[i];
       st_new[out_n] = s_unnamed_star[i];
       out_n++;
     }
@@ -2531,6 +2622,8 @@ static void inbox_received(DictionaryIterator *iter, void *ctx) {
     memcpy(s_timers, merged, sizeof(Timer) * (size_t)out_n);
     s_count = out_n;
     memcpy(s_delete_on_finish, dof_new, sizeof(dof_new));
+    memcpy(s_vibration_enabled, vibe_new, sizeof(vibe_new));
+    memcpy(s_sound_enabled, sound_new, sizeof(sound_new));
     memcpy(s_unnamed_star, st_new, sizeof(st_new));
     for (int i = 0; i < s_count; i++) { ensure_unnamed_star(i); }
     // Rebuild draft-tracking after reconcile index remaps so BACK still discards
@@ -2649,10 +2742,14 @@ static void remove_timer_at(int idx) {
   for (int i = idx; i < s_count - 1; i++) {
     s_timers[i] = s_timers[i + 1];
     s_delete_on_finish[i] = s_delete_on_finish[i + 1];
+    s_vibration_enabled[i] = s_vibration_enabled[i + 1];
+    s_sound_enabled[i] = s_sound_enabled[i + 1];
     s_unnamed_star[i] = s_unnamed_star[i + 1];
   }
   s_count--;
   s_delete_on_finish[s_count] = false;
+  s_vibration_enabled[s_count] = false;
+  s_sound_enabled[s_count] = false;
   s_unnamed_star[s_count] = -1;
   // Keep the draft-tracking index valid across the shift: clear it if the draft
   // itself was removed, decrement it if a lower row was removed. Prevents
@@ -2701,6 +2798,8 @@ static void start_as_new(int32_t secs, bool save_to_phone, const char *name) {
   t->custom = true;
   t->id = next_watch_timer_id();
   s_delete_on_finish[idx] = !save_to_phone;
+  s_vibration_enabled[idx] = s_default_vibration_enabled;
+  s_sound_enabled[idx] = s_default_sound_enabled;
   s_unnamed_star[idx] = -1;
   s_count++;
   assign_unnamed_star_for_duration(idx, t->duration);
@@ -2752,6 +2851,8 @@ static void create_new_timer(void) {
   t->id = next_watch_timer_id();
   t->last_used = now_s();
   s_delete_on_finish[idx] = s_default_finish_delete; // seeded from the "Default action after timer finishes" setting
+  s_vibration_enabled[idx] = s_default_vibration_enabled;
+  s_sound_enabled[idx] = s_default_sound_enabled;
   s_unnamed_star[idx] = -1;
   s_count++;
   s_new_timer_idx = idx;
@@ -2865,10 +2966,16 @@ static void init(void) {
   s_app_launch_s = now_s();
   s_count = store_load(s_timers);
   memset(s_delete_on_finish, 0, sizeof(s_delete_on_finish));
+  memset(s_vibration_enabled, 0, sizeof(s_vibration_enabled));
+  memset(s_sound_enabled, 0, sizeof(s_sound_enabled));
   for (int i = 0; i < MAX_TIMERS; i++) { s_unnamed_star[i] = -1; }
   uint32_t em = store_load_delete_on_finish_mask();
+  uint32_t vm = store_load_vibration_mask();
+  uint32_t sm = store_load_sound_mask();
   for (int i = 0; i < s_count && i < 32; i++) {
     s_delete_on_finish[i] = (em & (1u << i)) != 0;
+    s_vibration_enabled[i] = (vm & (1u << i)) != 0;
+    s_sound_enabled[i] = (sm & (1u << i)) != 0;
     ensure_unnamed_star(i);
   }
   s_sort = (SortMode)store_load_sort();
@@ -2882,6 +2989,10 @@ static void init(void) {
   s_idle_timeout_sec = store_load_idleexit();
   s_launch_sync = store_load_launchsync();
   s_next_local_id = store_load_next_local_id();
+  s_vibe_pattern = store_load_vibe_pattern();
+  s_audio_volume = store_load_audio_volume();
+  s_default_vibration_enabled = store_load_default_vibration_enabled();
+  s_default_sound_enabled = store_load_default_sound_enabled();
 #ifdef SCREENSHOT_FIXTURES
   if (s_count == 0) {
     s_count = 3;

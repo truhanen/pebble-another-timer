@@ -45,7 +45,11 @@
       "AddTimerId",
       "SetTimerIndex",
       "SetTimerState",
-      "SetTimerRemaining"
+      "SetTimerRemaining",
+      "VibePattern",
+      "AudioVolume",
+      "DefaultVibrationEnabled",
+      "DefaultSoundEnabled"
     ],
     "resources": {
       "media": [

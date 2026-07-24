@@ -25,6 +25,10 @@ export function resendDict(get: (k: string) => string | null): Record<string, an
   const kbtouch = get('keyboard_on_main_touch');
   const ars = get('auto_return_start');
   const aro = get('auto_return_stop');
+  const vp = get('vibe_pattern');
+  const av = get('audio_volume');
+  const dve = get('default_vibration_enabled');
+  const dse = get('default_sound_enabled');
   return {
     TimerConfig: tc,
     SortOrder: parseInt(get('sort_order') || '0', 10) || 0,
@@ -37,5 +41,9 @@ export function resendDict(get: (k: string) => string | null): Record<string, an
     RunOnCreate: roc === null ? 1 : (parseInt(roc, 10) ? 1 : 0),
     KeyboardOnNewTimer: kbnew === null ? 1 : (parseInt(kbnew, 10) ? 1 : 0),
     KeyboardOnMainTouch: kbtouch === null ? 0 : (parseInt(kbtouch, 10) ? 1 : 0),
+    VibePattern: vp === null ? 0 : (parseInt(vp, 10) || 0),
+    AudioVolume: av === null ? 0 : (parseInt(av, 10) || 0),
+    DefaultVibrationEnabled: dve === null ? 1 : (parseInt(dve, 10) ? 1 : 0),
+    DefaultSoundEnabled: dse === null ? 1 : (parseInt(dse, 10) ? 1 : 0),
   };
 }

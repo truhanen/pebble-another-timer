@@ -10,16 +10,16 @@ test('resendDict: never saved (timer_config absent) -> null (do not clobber watc
   assert.strictEqual(resendDict(store({ sort_order: '2' })), null);
 });
 
-test('resendDict: saved config -> dict with parsed SortOrder + AutoReturnStart + AutoReturnStop + RunningFirst + IdleExitSec + LaunchSync + DefaultFinishAction + RunOnCreate + KeyboardOnNewTimer + KeyboardOnMainTouch', () => {
+test('resendDict: saved config -> dict with parsed SortOrder + AutoReturnStart + AutoReturnStop + RunningFirst + IdleExitSec + LaunchSync + DefaultFinishAction + RunOnCreate + KeyboardOnNewTimer + KeyboardOnMainTouch + VibePattern + AudioVolume + DefaultVibrationEnabled + DefaultSoundEnabled', () => {
   assert.deepStrictEqual(
-    resendDict(store({ timer_config: 'Egg\x1f300\x1eTea\x1f120', sort_order: '1', auto_return_start: '1', auto_return_stop: '0', running_first: '1', idle_exit: '30', launch_sync: '1', default_finish_action: '0', run_on_create: '0', keyboard_on_new_timer: '0', keyboard_on_main_touch: '1' })),
-    { TimerConfig: 'Egg\x1f300\x1eTea\x1f120', SortOrder: 1, AutoReturnStart: 1, AutoReturnStop: 0, RunningFirst: 1, IdleExitSec: 30, LaunchSync: 1, DefaultFinishAction: 0, RunOnCreate: 0, KeyboardOnNewTimer: 0, KeyboardOnMainTouch: 1 });
+    resendDict(store({ timer_config: 'Egg\x1f300\x1eTea\x1f120', sort_order: '1', auto_return_start: '1', auto_return_stop: '0', running_first: '1', idle_exit: '30', launch_sync: '1', default_finish_action: '0', run_on_create: '0', keyboard_on_new_timer: '0', keyboard_on_main_touch: '1', vibe_pattern: '2', audio_volume: '50', default_vibration_enabled: '0', default_sound_enabled: '0' })),
+    { TimerConfig: 'Egg\x1f300\x1eTea\x1f120', SortOrder: 1, AutoReturnStart: 1, AutoReturnStop: 0, RunningFirst: 1, IdleExitSec: 30, LaunchSync: 1, DefaultFinishAction: 0, RunOnCreate: 0, KeyboardOnNewTimer: 0, KeyboardOnMainTouch: 1, VibePattern: 2, AudioVolume: 50, DefaultVibrationEnabled: 0, DefaultSoundEnabled: 0 });
 });
 
 test('resendDict: explicitly-saved empty list ("") IS sent (user cleared all timers)', () => {
   assert.deepStrictEqual(
     resendDict(store({ timer_config: '', sort_order: '0' })),
-    { TimerConfig: '', SortOrder: 0, AutoReturnStart: 1, AutoReturnStop: 1, RunningFirst: 1, IdleExitSec: 15, LaunchSync: 0, DefaultFinishAction: 1, RunOnCreate: 1, KeyboardOnNewTimer: 1, KeyboardOnMainTouch: 0 });
+    { TimerConfig: '', SortOrder: 0, AutoReturnStart: 1, AutoReturnStop: 1, RunningFirst: 1, IdleExitSec: 15, LaunchSync: 0, DefaultFinishAction: 1, RunOnCreate: 1, KeyboardOnNewTimer: 1, KeyboardOnMainTouch: 0, VibePattern: 0, AudioVolume: 0, DefaultVibrationEnabled: 1, DefaultSoundEnabled: 1 });
 });
 
 test('resendDict: missing default_finish_action defaults to 1 (Delete) for pre-feature saves', () => {
@@ -101,4 +101,36 @@ test('resendDict: missing keyboard_on_main_touch defaults to 0 (OFF) for pre-fea
 
 test('resendDict: saved keyboard_on_main_touch "1" round-trips to 1', () => {
   assert.strictEqual(resendDict(store({ timer_config: 'a\x1f60', keyboard_on_main_touch: '1' })).KeyboardOnMainTouch, 1);
+});
+
+test('resendDict: missing vibe_pattern defaults to 0 (Double) for pre-feature saves', () => {
+  assert.strictEqual(resendDict(store({ timer_config: 'a\x1f60' })).VibePattern, 0);
+});
+
+test('resendDict: saved vibe_pattern "2" round-trips to 2', () => {
+  assert.strictEqual(resendDict(store({ timer_config: 'a\x1f60', vibe_pattern: '2' })).VibePattern, 2);
+});
+
+test('resendDict: missing audio_volume defaults to 0 (disabled) for pre-feature saves', () => {
+  assert.strictEqual(resendDict(store({ timer_config: 'a\x1f60' })).AudioVolume, 0);
+});
+
+test('resendDict: saved audio_volume "75" round-trips to 75', () => {
+  assert.strictEqual(resendDict(store({ timer_config: 'a\x1f60', audio_volume: '75' })).AudioVolume, 75);
+});
+
+test('resendDict: missing default_vibration_enabled defaults to 1 (ON) for pre-feature saves', () => {
+  assert.strictEqual(resendDict(store({ timer_config: 'a\x1f60' })).DefaultVibrationEnabled, 1);
+});
+
+test('resendDict: saved default_vibration_enabled "0" round-trips to 0', () => {
+  assert.strictEqual(resendDict(store({ timer_config: 'a\x1f60', default_vibration_enabled: '0' })).DefaultVibrationEnabled, 0);
+});
+
+test('resendDict: missing default_sound_enabled defaults to 1 (ON) for pre-feature saves', () => {
+  assert.strictEqual(resendDict(store({ timer_config: 'a\x1f60' })).DefaultSoundEnabled, 1);
+});
+
+test('resendDict: saved default_sound_enabled "0" round-trips to 0', () => {
+  assert.strictEqual(resendDict(store({ timer_config: 'a\x1f60', default_sound_enabled: '0' })).DefaultSoundEnabled, 0);
 });

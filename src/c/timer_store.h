@@ -19,8 +19,14 @@
 #define PERSIST_KEY_KEYBOARD_MAIN_TOUCH 13 // show label keyboard after main-view touch dial (0/1)
 #define PERSIST_KEY_AUTORETURN_STOP 14 // return to watchface after stopping a timer (0/1)
 #define PERSIST_KEY_NEXT_LOCAL_ID 15 // counter for watch-assigned Timer.id (see main.c next_watch_timer_id)
+#define PERSIST_KEY_VIBE_PATTERN 16  // alarm vibration pattern: 0=Double, 1=Short, 2=Long
+#define PERSIST_KEY_AUDIO_VOLUME 17  // alarm beep volume, 0-100 (0 = sound disabled globally)
+#define PERSIST_KEY_DEFAULT_VIBRATION_ENABLED 18 // default "Vibration" for newly created timers (0/1)
+#define PERSIST_KEY_DEFAULT_SOUND_ENABLED 19      // default "Sound" for newly created timers (0/1)
+#define PERSIST_KEY_VIBRATION_MASK 20 // bit i => timer i has its alarm vibration enabled
+#define PERSIST_KEY_SOUND_MASK 21     // bit i => timer i has its alarm sound enabled
 #define PERSIST_KEY_TIMER_BASE 100   // timer i -> key 100+i (one Timer per key; 256B/key cap)
-#define STORE_SCHEMA 5
+#define STORE_SCHEMA 6
 
 // Loads timers into out (capacity MAX_TIMERS); returns count, or 0 if none/old schema.
 int store_load(Timer *out);
@@ -67,3 +73,21 @@ void store_save_keyboard_new_timer(bool on);
 // Show label keyboard after main-view touch dial (defaults to false when unset).
 bool store_load_keyboard_main_touch(void);
 void store_save_keyboard_main_touch(bool on);
+// Alarm vibration pattern: 0=Double, 1=Short, 2=Long (defaults to 0 when unset).
+int store_load_vibe_pattern(void);
+void store_save_vibe_pattern(int pattern);
+// Alarm beep volume, 0-100, 0 = disabled (defaults to 0 when unset).
+int store_load_audio_volume(void);
+void store_save_audio_volume(int volume);
+// Default "Vibration" for newly created timers (defaults to true when unset).
+bool store_load_default_vibration_enabled(void);
+void store_save_default_vibration_enabled(bool on);
+// Default "Sound" for newly created timers (defaults to true when unset).
+bool store_load_default_sound_enabled(void);
+void store_save_default_sound_enabled(bool on);
+// Bitmask of per-timer alarm vibration enabled (bit i corresponds to row i in persisted timer list).
+uint32_t store_load_vibration_mask(void);
+void store_save_vibration_mask(uint32_t mask);
+// Bitmask of per-timer alarm sound enabled (bit i corresponds to row i in persisted timer list).
+uint32_t store_load_sound_mask(void);
+void store_save_sound_mask(uint32_t mask);

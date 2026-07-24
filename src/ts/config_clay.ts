@@ -13,7 +13,8 @@
 // manually-built dict is sent as a single array-typed AppMessage tuple, not
 // split, so it must NOT be declared as an array-syntax key in package.json.
 // index.ts decomposes each boolean array into two real scalar keys instead:
-// KeyboardOnNewTimer / KeyboardOnMainTouch, and AutoReturnStart / AutoReturnStop.
+// KeyboardOnNewTimer / KeyboardOnMainTouch, AutoReturnStart / AutoReturnStop, and
+// DefaultVibrationEnabled / DefaultSoundEnabled.
 const config = [
   {
     type: 'section',
@@ -67,6 +68,27 @@ const config = [
           { label: 'Save timer', value: '0' },
           { label: 'Delete timer', value: '1' },
         ] },
+    ],
+  },
+  {
+    type: 'section',
+    items: [
+      { type: 'heading', defaultValue: 'Alarm signal' },
+      // select values MUST be strings (Clay); index.ts parseInts on save.
+      { type: 'select', messageKey: 'VibePattern', label: 'Vibration pattern',
+        defaultValue: '0', options: [
+          { label: 'Double', value: '0' },
+          { label: 'Short', value: '1' },
+          { label: 'Long', value: '2' },
+        ] },
+      { type: 'slider', messageKey: 'AudioVolume', label: 'Beep volume (0 to disable)',
+        defaultValue: 0, min: 0, max: 100, step: 1 },
+      { type: 'checkboxgroup', messageKey: 'NewTimerSoundOptions',
+        label: 'For new timers',
+        description: 'Default Vibration/Sound for newly created timers. Can be changed per timer ' +
+          'from the watch\'s timer edit menu.',
+        defaultValue: [true, true],
+        options: ['Vibration', 'Sound'] },
     ],
   },
   {
