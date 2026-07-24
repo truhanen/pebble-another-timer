@@ -43,6 +43,11 @@ static int8_t s_selected_hours = -1;
 static int8_t s_selected_minutes = -1;
 static int8_t s_selected_seconds = -1;
 static uint32_t s_selected_angle = 0;
+// Like s_selected_angle, but always shifted by the same fixed half-minute-segment offset that
+// selected_segment() uses to quantize minutes/seconds, regardless of the num_segments passed to
+// selected_segment() for the current call. Used for windup crossing detection instead of the raw
+// s_selected_angle, so hour/minute carries fire exactly when the displayed value flips, not before.
+static uint32_t s_windup_angle = 0;
 static bool s_windup_on_inner_touch = false;
 
 typedef enum TouchArea {
@@ -364,6 +369,12 @@ static uint8_t selected_segment(GPoint touch, uint8_t num_segments) {
     const int32_t selected_angle_gpointspace = angle_between_points(centre, touch);
     s_selected_angle = angle_to_screenspace(selected_angle_gpointspace);
 
+    // Fixed offset matching the 60-segment (minute/second) quantization used in SELECTMODE_WINDUP,
+    // regardless of num_segments for this particular call - keeps windup crossing detection in
+    // sync with whichever minute/second value is actually displayed.
+    const int32_t windup_offset = TRIG_MAX_ANGLE / (2 * 60);
+    s_windup_angle = angle_to_screenspace(selected_angle_gpointspace - windup_offset);
+
     // LOG("(%d, %d) -> (%d, %d) = %d degrees", centre.x, centre.y, touch.x, touch.y, TRIGANGLE_TO_DEG(s_selected_angle));
 
     // The centre of the zeroth segment is at 0 screenspace degrees (i.e. straight up)
@@ -439,7 +450,7 @@ static void apply_windup(uint32_t prev_angle, uint32_t current_angle) {
 }
 
 static void update_selection(GPoint touch) {
-    const uint32_t prev_angle = s_selected_angle;
+    const uint32_t prev_windup_angle = s_windup_angle;
 
     if (s_touch_area == TOUCH_AREA_OUTER) {
         if (s_select_mode == SELECTMODE_HOUR) {
@@ -464,7 +475,7 @@ static void update_selection(GPoint touch) {
         }
     }
 
-    apply_windup(prev_angle, s_selected_angle);
+    apply_windup(prev_windup_angle, s_windup_angle);
 
     update_selection_text();
 }
@@ -514,6 +525,7 @@ static void handle_touch_event(const TouchEvent *event, void *context) {
     switch (event->type) {
     case TouchEvent_Touchdown:
         s_selected_angle = 0;  // reset to avoid triggering windup
+        s_windup_angle = 0;  // reset to avoid triggering windup
         cancel_timeout();
         if (s_select_mode == SELECTMODE_NONE) {
             // In this app's dial flow, touch input always edits timer duration.
