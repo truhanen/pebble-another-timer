@@ -375,22 +375,27 @@ static uint8_t selected_segment(GPoint touch, uint8_t num_segments) {
 }
 
 // Increment or decrement hours when 12o'clock is passed.
-// To avoid accidental windup, only enable windup on the inner touch area after passing 6o'clock.
-// If 6 and 12o'clock are both passed anticlockwise while at 0 hours,
-// switch from mins/hours to seconds/mins with the same windup rules; switch back to mins/hours at 5 mins.
+// To avoid accidental windup, only enable windup on the inner touch area after passing the 20-minute mark.
+// Entering seconds windup requires passing the 20-minute mark and then 12o'clock, both anticlockwise
+// and both while on the outer ring; touching the inner ring in between cancels the attempt.
+// Once in seconds windup, switch back to mins/hours at 5 mins.
 static void apply_windup(uint32_t prev_angle, uint32_t current_angle) {
+    if (s_touch_area == TOUCH_AREA_INNER) {
+        s_is_windup_seconds_enablable = false;
+    }
     if (s_select_mode == SELECTMODE_WINDUP) {
         const bool crossed_12_clockwise = (
             prev_angle > DEG_TO_TRIGANGLE(315)) && (current_angle < DEG_TO_TRIGANGLE(45));
         const bool crossed_12_anticlockwise = (
             current_angle > DEG_TO_TRIGANGLE(315)) && (prev_angle < DEG_TO_TRIGANGLE(45));
-        const bool crossed_6_clockwise = (
-            WITHIN_EXCL(prev_angle, DEG_TO_TRIGANGLE(135), DEG_TO_TRIGANGLE(180))
-            && WITHIN(current_angle, DEG_TO_TRIGANGLE(180), DEG_TO_TRIGANGLE(225))
+        // 120 degrees == the 20-minute mark (20/60 of the dial).
+        const bool crossed_20min_clockwise = (
+            WITHIN_EXCL(prev_angle, DEG_TO_TRIGANGLE(75), DEG_TO_TRIGANGLE(120))
+            && WITHIN(current_angle, DEG_TO_TRIGANGLE(120), DEG_TO_TRIGANGLE(165))
         );
-        const bool crossed_6_anticlockwise = (
-            WITHIN_EXCL(current_angle, DEG_TO_TRIGANGLE(135), DEG_TO_TRIGANGLE(180))
-            && WITHIN(prev_angle, DEG_TO_TRIGANGLE(180), DEG_TO_TRIGANGLE(225))
+        const bool crossed_20min_anticlockwise = (
+            WITHIN_EXCL(current_angle, DEG_TO_TRIGANGLE(75), DEG_TO_TRIGANGLE(120))
+            && WITHIN(prev_angle, DEG_TO_TRIGANGLE(120), DEG_TO_TRIGANGLE(165))
         );
 
         if (crossed_12_clockwise) {
@@ -410,7 +415,8 @@ static void apply_windup(uint32_t prev_angle, uint32_t current_angle) {
                 }
             }
         } else if (crossed_12_anticlockwise) {
-            if (s_is_windup_seconds_enablable && !s_is_windup_seconds && (s_selected_hours == 0)) {
+            if (s_is_windup_seconds_enablable && !s_is_windup_seconds && (s_selected_hours == 0)
+                && (s_touch_area == TOUCH_AREA_OUTER)) {
                 // enable seconds windup
                 s_is_windup_seconds = true;
                 s_selected_hours = 0;
@@ -423,9 +429,10 @@ static void apply_windup(uint32_t prev_angle, uint32_t current_angle) {
                     s_selected_hours = MAX(0, s_selected_hours - 1);
                 }
             }
-        } else if (crossed_6_clockwise) {
+        } else if (crossed_20min_clockwise) {
             s_windup_on_inner_touch = true;
-        } else if (crossed_6_anticlockwise && (s_selected_hours == 0)) {
+        } else if (crossed_20min_anticlockwise && (s_selected_hours == 0)
+                   && (s_touch_area == TOUCH_AREA_OUTER)) {
             s_is_windup_seconds_enablable = true;
         }
     }
