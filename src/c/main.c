@@ -270,6 +270,12 @@ static void idle_cancel(void) {
 static void idle_fire(void *ctx) {
   s_idle_timer = NULL;
   Window *top = window_stack_get_top_window();
+  // Never auto-exit while the full-screen alarm is up: covered windows already
+  // pause the idle timer via .disappear (and alarm_appear cancels it again on
+  // the way in, belt-and-braces), but this guard makes it impossible for a
+  // stray idle_fire() to quit the app out from under a still-buzzing alarm
+  // regardless of how the timer ended up armed.
+  if (top == s_alarm_window) { return; }
   if ((top == s_dial_window || top == s_window) && dial_touch_in_progress()) {
     if (!s_config_open && s_idle_timeout_sec > 0) {
       s_idle_timer = app_timer_register(s_idle_timeout_sec * 1000, idle_fire, NULL);
@@ -779,6 +785,15 @@ static void format_alarm_elapsed(int idx) {
   snprintf(s_alarm_elapsed_buf, sizeof(s_alarm_elapsed_buf), "+%s", buf);
 }
 
+// Belt-and-braces: the idle auto-exit timer is supposed to already be paused
+// by the covered window's .disappear handler (idle_disappear/detail_disappear/
+// dial_disappear) the moment the alarm covers it, but idle_fire() itself also
+// refuses to close_to_watchface() while the alarm is on top (see idle_fire) -
+// this .appear handler is the second half of that backstop, guaranteeing the
+// timer is stopped as soon as the alarm becomes visible regardless of
+// whatever was on top before it.
+static void alarm_appear(Window *w) { idle_cancel(); }
+
 static void trigger_alarm(int idx, int count) {
   if (idx < 0 || idx >= s_count) { return; }
   // A just-started timer can expire almost immediately - while the "Started"
@@ -803,7 +818,7 @@ static void trigger_alarm(int idx, int count) {
   if (!s_alarm_window) {
     s_alarm_window = window_create();
     window_set_window_handlers(s_alarm_window, (WindowHandlers){
-      .load = alarm_window_load, .unload = alarm_window_unload });
+      .load = alarm_window_load, .unload = alarm_window_unload, .appear = alarm_appear });
     window_set_click_config_provider(s_alarm_window, alarm_click_config);
   }
   if (window_stack_get_top_window() == s_alarm_window) {
