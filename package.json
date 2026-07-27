@@ -11,7 +11,7 @@
     "pebble-clay": "^1.0.4"
   },
   "pebble": {
-    "displayName": "Another timer",
+    "displayName": "Another Timer",
     "uuid": "1df6fc5c-261d-49c7-b339-6ea60cbe6649",
     "sdkVersion": "3",
     "enableMultiJS": true,
