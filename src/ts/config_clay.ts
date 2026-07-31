@@ -31,6 +31,39 @@ const config = [
   {
     type: 'section',
     items: [
+      { type: 'heading', defaultValue: 'New timer defaults' },
+      { type: 'text', defaultValue:
+        'Defaults for newly created timers. Can be changed per timer from the watch\'s timer edit menu.'
+      },
+      // radiogroup values MUST be strings (Clay gotcha); index.ts parseInts on save.
+      { type: 'radiogroup', messageKey: 'DefaultFinishAction', label: 'After finished action',
+        defaultValue: '1', options: [
+          { label: 'Save timer', value: '0' },
+          { label: 'Delete timer', value: '1' },
+        ] },
+      { type: 'checkboxgroup', messageKey: 'NewTimerSoundOptions',
+        defaultValue: [true, true],
+        options: ['Vibration', 'Sound'] },
+    ],
+  },
+  {
+    type: 'section',
+    items: [
+      { type: 'heading', defaultValue: 'Alarm signal' },
+      // select values MUST be strings (Clay); index.ts parseInts on save.
+      { type: 'select', messageKey: 'VibePattern', label: 'Vibration pattern',
+        defaultValue: '0', options: [
+          { label: 'Double', value: '0' },
+          { label: 'Short', value: '1' },
+          { label: 'Long', value: '2' },
+        ] },
+      { type: 'slider', messageKey: 'AudioVolume', label: 'Beep volume (0 to disable)',
+        defaultValue: 0, min: 0, max: 100, step: 5 },
+    ],
+  },
+  {
+    type: 'section',
+    items: [
       { type: 'heading', defaultValue: 'Display' },
       // radiogroup values MUST be strings (Clay gotcha); index.ts parseInts on save.
       { type: 'radiogroup', messageKey: 'SortOrder', label: 'Sort timers on watch by',
@@ -60,35 +93,6 @@ const config = [
         label: 'Run timer when created',
         description: 'When off, a newly created timer starts out stopped instead of running immediately.',
         defaultValue: true },
-      // radiogroup values MUST be strings (Clay gotcha); index.ts parseInts on save.
-      { type: 'radiogroup', messageKey: 'DefaultFinishAction', label: 'Default action after timer finishes',
-        description: 'Default for newly created timers. Can be changed per timer from the watch\'s ' +
-          'timer edit menu.',
-        defaultValue: '1', options: [
-          { label: 'Save timer', value: '0' },
-          { label: 'Delete timer', value: '1' },
-        ] },
-    ],
-  },
-  {
-    type: 'section',
-    items: [
-      { type: 'heading', defaultValue: 'Alarm signal' },
-      // select values MUST be strings (Clay); index.ts parseInts on save.
-      { type: 'select', messageKey: 'VibePattern', label: 'Vibration pattern',
-        defaultValue: '0', options: [
-          { label: 'Double', value: '0' },
-          { label: 'Short', value: '1' },
-          { label: 'Long', value: '2' },
-        ] },
-      { type: 'slider', messageKey: 'AudioVolume', label: 'Beep volume (0 to disable)',
-        defaultValue: 0, min: 0, max: 100, step: 1 },
-      { type: 'checkboxgroup', messageKey: 'NewTimerSoundOptions',
-        label: 'For new timers',
-        description: 'Default Vibration/Sound for newly created timers. Can be changed per timer ' +
-          'from the watch\'s timer edit menu.',
-        defaultValue: [true, true],
-        options: ['Vibration', 'Sound'] },
     ],
   },
   {
