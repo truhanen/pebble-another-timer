@@ -42,6 +42,7 @@ const config = [
           { label: 'Delete timer', value: '1' },
         ] },
       { type: 'checkboxgroup', messageKey: 'NewTimerSoundOptions',
+        label: 'Alarm signal',
         defaultValue: [true, true],
         options: ['Vibration', 'Sound'] },
     ],
@@ -84,7 +85,7 @@ const config = [
   {
     type: 'section',
     items: [
-      { type: 'heading', defaultValue: 'Timer behavior' },
+      { type: 'heading', defaultValue: 'App behavior' },
       { type: 'toggle', messageKey: 'LaunchSync',
         label: 'Launch-sync timer starts',
         description: 'When on, starting a timer subtracts the elapsed time since app launch from the timer.',
@@ -93,12 +94,6 @@ const config = [
         label: 'Run timer when created',
         description: 'When off, a newly created timer starts out stopped instead of running immediately.',
         defaultValue: true },
-    ],
-  },
-  {
-    type: 'section',
-    items: [
-      { type: 'heading', defaultValue: 'App behavior' },
       { type: 'checkboxgroup', messageKey: 'AutoReturnOptions',
         label: 'Return to watchface',
         description: 'When on, the app closes back to the watchface once you start or stop a timer.',
