@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="128" height="128" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <!-- glass walls: two separate paths, each a V-shaped dent from a base in to the neck.
+       The stub length (2 to 6, and 22 to 18) is tuned so each diagonal has equal rise
+       and run (6 and 6), making the two walls cross at exactly 90 degrees at the neck -
+       a right-angle crossing antialiases more cleanly than an off-angle one. Filled white
+       (each path auto-closes along the base row, so the fill covers the whole bulb
+       interior) and drawn before the base lines below, so the bases' full stroke
+       thickness paints over the fill's edge instead of the fill covering half of it. -->
+  <path d="M6 2 L6 6 L12 12 L18 6 L18 2" fill="white" stroke-linecap="butt" />
+  <path d="M6 22 L6 18 L12 12 L18 18 L18 22" fill="white" stroke-linecap="butt" />
+  <!-- top and bottom bases (wider than the glass walls, forming a foot/plate) -->
+  <path d="M4 2 L20 2" stroke-linecap="butt" />
+  <path d="M4 22 L20 22" stroke-linecap="butt" />
+  <!-- sand piled in the top bulb, funneling down through the neck (kept clear of the walls);
+       tip angle matches the glass walls' angle at the neck (90 degrees). Half-base/height
+       is 3.375 (2.25 x 1.5) to scale up with the thicker (2 vs 1.5) stroke. Base moved up to
+       6.221 (from 6.9) so the gap to the diagonal walls matches the bottom triangle's gap
+       to the horizontal base line - the walls sit at 45 degrees here, so the true
+       (perpendicular) gap is the horizontal offset divided by sqrt(2), not the raw offset. -->
+  <path d="M8.625 6.221 L15.375 6.221 L12 9.596 Z" fill="currentColor" stroke="none" />
+  <!-- sand piled in the bottom bulb -->
+  <path d="M8.625 20.3 L15.375 20.3 L12 16.925 Z" fill="currentColor" stroke="none" />
+</svg>
