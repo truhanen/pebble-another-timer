@@ -2292,7 +2292,6 @@ static void ml_draw_row(GContext *gctx, const Layer *cell, MenuIndex *ci, void *
   // smaller (144px) displays use a smaller font so the description fits.
   bool small = (b.size.w <= 144);
   GFont tf = fonts_get_system_font(small ? FONT_KEY_GOTHIC_18_BOLD : FONT_KEY_GOTHIC_24_BOLD);
-  GFont nf = fonts_get_system_font(small ? FONT_KEY_GOTHIC_18 : FONT_KEY_GOTHIC_24);
   int th = small ? 22 : 28;
   int ty = (b.size.h - th) / 2 - 2;
   int icon_x = 4;
@@ -2310,9 +2309,9 @@ static void ml_draw_row(GContext *gctx, const Layer *cell, MenuIndex *ci, void *
     GRect(0, 0, b.size.w, th), GTextOverflowModeFill, GTextAlignmentLeft);
   int desc_x = time_x + tw.w + 4;
   if (t->name[0]) {
-    graphics_draw_text(gctx, t->name, nf,
+    graphics_draw_text(gctx, t->name, tf,
       GRect(desc_x, ty, b.size.w - 4 - desc_x, th),
-      GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
+      GTextOverflowModeTrailingEllipsis, GTextAlignmentRight, NULL);
   }
   if (ml_is_item_boundary_row(ci->row, s_menu_selected_timer_idx)) {
     graphics_context_set_stroke_color(gctx, GColorDarkGray);
