@@ -43,7 +43,7 @@ done
 cd "$REPO_ROOT"
 mkdir -p "$OUT_DIR"
 
-PBW="build/PebbleCountdownTimer.pbw"
+PBW="build/pebble-another-timer.pbw"
 
 log() { printf '\n=== %s ===\n' "$1"; }
 
