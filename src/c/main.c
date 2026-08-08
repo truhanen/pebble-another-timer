@@ -2462,6 +2462,7 @@ static void ml_select_long(MenuLayer *ml, MenuIndex *ci, void *ctx) {
 static void ml_selection_changed(MenuLayer *ml, MenuIndex new_i, MenuIndex old_i, void *ctx) {
   (void)old_i;
   if (s_menu_internal_selection) { return; }
+  idle_reset();  // user-driven UP/DOWN scroll - same as detail_up_click/detail_down_click
   MlRowInfo new_info;
   if (!ml_row_info_for(new_i.row, s_menu_selected_timer_idx, &new_info)) { return; }
 
