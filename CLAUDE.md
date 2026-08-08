@@ -28,7 +28,8 @@ never `src/pkjs/`. `pebble build` regenerates it via `tsc` (config in
 aborts the build (`noEmitOnError`).
 
 Other Makefile targets: `make clean`, `make kill_emulator`, `make wipe_emulator`,
-`make build_and_install_emulator`, `make install_cloudpebble`.
+`make wipe_and_prep_emulator` (see below), `make build_and_install_emulator`,
+`make install_cloudpebble`.
 
 Two targets simulate the phone side without a real Clay/phone app attached to
 the emulator — useful since PebbleKit JS/AppMessage doesn't run against the
@@ -47,6 +48,40 @@ emulator on its own:
   detail menu, since a real long-press is hard to trigger through
   `pebble emu-button` otherwise.
 
+When navigating the main timer list by screenshot, **the selected row has a
+solid black background (white text)** — this is the only reliable selection
+indicator. Bold vs. non-bold text is unrelated to selection (it's tied to
+timer state/other row styling) and has caused wrongly-selected-row test
+failures before; don't infer selection from it. If no row visibly has a
+black background, selection is very likely on the "+ New timer" row — SELECT
+there jumps straight into a blank new-timer duration dial (header "Duration",
+defaulting to `00:01:00`), which is a common way to end up somewhere
+unexpected in a scripted walkthrough. When it's ambiguous at the emulator's
+native screenshot resolution (200x228, hard to eyeball), sample pixels
+directly instead of guessing, e.g.:
+`python3 -c "from PIL import Image; im = Image.open('shot.png').convert('RGB'); print([im.getpixel((10,y)) for y in range(0,228,5)])"`
+— a run of `(0,0,0)` rows spanning one list row's height (not just the
+always-black bottom status bar) is the selected row. Prefer `pebble
+emu-button --emulator emery click <button> --duration N` (single call, one
+press+release) over separate manual `push`/`release` calls — it's the
+documented pattern and less error-prone; use `--duration 700`+ for a long
+press (e.g. to open the per-row detail menu) and the default short duration
+for a normal click.
+
+Before manually driving the emulator through any multi-step flow (navigating
+menus, opening the detail screen, toggling settings, ...), disable idle
+auto-exit first: run `make send_emulator_configuration` with
+`EMULATOR_CFG_IDLEEXIT_VAL` set to `0` in `emulator_configuration.mk` (the
+checked-in default), and push it once the app is already open (idle-exit
+config only takes effect once the app has received it — a fresh/wiped
+watch's built-in default idle timeout is short). Each `pebble` CLI
+invocation here has multiple seconds of overhead, so a multi-step manual
+walkthrough easily exceeds a default idle timeout and silently pops back to
+the watchface mid-sequence, which looks like "nothing happened" or a stuck
+button rather than an obvious timeout. `pebble wipe` (see below) resets this
+along with everything else, so re-push the idle-exit-disabled configuration
+again every time after wiping, before starting the next manual walkthrough.
+
 Both `send_emulator_*` targets hardcode `--app-uuid` and the `emery`
 platform; the UUID must match `package.json`'s `pebble.uuid`
 (`1df6fc5c-261d-49c7-b339-6ea60cbe6649`) or `send-app-message` silently fails
@@ -56,6 +91,47 @@ these targets in `Makefile` to match.
 Build-time env flags (see `wscript`): `FAKE_TIME=1` defines `USE_FAKE_TIME`;
 `SCREENSHOT_FIXTURES=1` defines `SCREENSHOT_FIXTURES` to seed demo data for
 appstore screenshots (see `scripts/`).
+
+Always pass `--no-open` to every `pebble screenshot` invocation — without it,
+the CLI tries to open the captured image in a GUI viewer, which has no
+display to open in an agent/headless session and hangs the command
+indefinitely.
+
+pebble-tool's own docs recommend adding `--vnc` to every emulator-facing
+command (`install`, `screenshot`, `emu-button`, ...) in headless/agentic
+sessions. In practice, in this project's agent sandbox that has been
+**unreliable**: `--vnc` mode's control connection routinely times out on
+basic operations (`pebble ping`, `pebble screenshot`, occasionally even
+`emu-button`), and capturing frames directly from QEMU's own VNC port
+(e.g. via `vncdotool`) doesn't work either — the Pebble QEMU machine doesn't
+render through a real VGA/VNC framebuffer, so that port only ever returns a
+black frame; the watch display is only obtainable via pebble-tool's own
+serial-based screenshot protocol, which is the exact connection that's
+flaky under `--vnc` here. Plain `pebble install --emulator emery` /
+`pebble screenshot ... --no-open` / `pebble emu-button ...` **without**
+`--vnc` have worked reliably every time in this sandbox despite there being
+no visible display attached. Default to no `--vnc` here unless a future
+session finds it's become reliable; if you do use `--vnc`, don't mix it with
+non-`--vnc` commands against the same running emulator instance — restart
+the emulator when switching between the two.
+
+If `pebble ping`/`pebble screenshot`/etc. against the emulator start timing
+out persistently (not just a one-off, even after killing and reinstalling
+`qemu-pebble`/`pypkjs` processes and reinstalling the app), run `pebble wipe`
+(wipes all emulator/tool state, no `--everything` needed) before reinstalling
+— stale persisted emulator state has caused exactly this kind of stuck
+connection in this project before, and `pebble wipe` + reinstall reliably
+fixed it when plain process kills didn't.
+
+**Always use `make wipe_and_prep_emulator` instead of bare `pebble wipe`.**
+`pebble wipe` resets the watch to firmware defaults, which includes a short
+built-in idle-auto-exit timeout — and since a manual test walkthrough here is
+a sequence of separate `pebble` CLI calls (each with multiple seconds of
+overhead), it's very easy to get silently idle-exited mid-walkthrough right
+after a wipe, before you've had a chance to push the idle-exit-disabled
+config. `wipe_and_prep_emulator` (in `Makefile`) wipes, reinstalls, opens the
+app, and pushes `send_emulator_configuration` (idle exit off) in one step, so
+the emulator is immediately safe to drive by hand afterward.
 
 ## Architecture
 

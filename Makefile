@@ -16,6 +16,22 @@ kill_emulator:
 wipe_emulator:
 	pebble wipe
 
+# Wipes the emulator, reinstalls, then immediately disables idle auto-exit -
+# a wiped watch's built-in idle timeout is short enough that a manual
+# multi-step test walkthrough (each `pebble` CLI call has multiple seconds of
+# overhead) can silently get auto-exited mid-sequence otherwise. `pebble
+# install` auto-launches the app, so no extra button press is needed here -
+# blindly pressing select risks landing on the (now-empty, post-wipe) list's
+# "+ New timer" row and creating a stray draft timer instead. Always use this
+# instead of bare `pebble wipe` when about to drive the emulator by hand.
+.PHONY: wipe_and_prep_emulator
+wipe_and_prep_emulator:
+	pebble kill || true
+	pebble wipe
+	pebble install --emulator emery
+	sleep 3
+	$(MAKE) send_emulator_configuration
+
 .PHONY: install_emulator
 install_emulator:
 	pebble install --emulator emery
