@@ -21,6 +21,7 @@ typedef enum {
   DACT_START,       // idle/done/paused -> start or resume in place
   DACT_PLUS,        // +1 min
   DACT_MINUS,       // -1 min
+  DACT_RESTART,     // reset remaining to full duration, (re)start running
 } DetailAction;
 
 typedef struct {

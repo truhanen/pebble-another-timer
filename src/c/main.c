@@ -1230,6 +1230,7 @@ static const char *dl_legacy_action_label(DetailAction a) {
       return "Start";
     case DACT_PLUS:       return "+1 min";
     case DACT_MINUS:      return "-1 min";
+    case DACT_RESTART:    return "Restart";
   }
   return "";
 }
@@ -1414,6 +1415,13 @@ static void dl_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
         }
         persist_all(); rearm_wakeup(); ensure_ticking();
         reload_ui(); menu_layer_reload_data(s_detail_menu);
+        break;
+      }
+      case DACT_RESTART: {
+        start_with_secs(t, t->duration);
+        finish_start_tail();
+        select_timer_row(idx);
+        window_stack_remove(s_detail_window, true);
         break;
       }
     }

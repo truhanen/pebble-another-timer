@@ -281,5 +281,6 @@ int tc_detail_actions(TimerState st, DetailAction *out) {
   }
   out[n++] = DACT_PLUS;
   out[n++] = DACT_MINUS;
+  out[n++] = DACT_RESTART;
   return n;
 }

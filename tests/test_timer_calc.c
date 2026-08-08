@@ -294,14 +294,14 @@ int main(void) {
   // whether or not end_time has passed, and no Delete either way.
   DetailAction acts[7]; int an;
   an = tc_detail_actions(TS_RUNNING, acts);
-  assert(an == 4 && acts[0] == DACT_STOP && acts[1] == DACT_PAUSE &&
-         acts[2] == DACT_PLUS && acts[3] == DACT_MINUS);
+  assert(an == 5 && acts[0] == DACT_STOP && acts[1] == DACT_PAUSE &&
+         acts[2] == DACT_PLUS && acts[3] == DACT_MINUS && acts[4] == DACT_RESTART);
   an = tc_detail_actions(TS_PAUSED, acts);
-  assert(an == 4 && acts[0] == DACT_STOP && acts[1] == DACT_START &&
-         acts[2] == DACT_PLUS && acts[3] == DACT_MINUS);
+  assert(an == 5 && acts[0] == DACT_STOP && acts[1] == DACT_START &&
+         acts[2] == DACT_PLUS && acts[3] == DACT_MINUS && acts[4] == DACT_RESTART);
   an = tc_detail_actions(TS_IDLE, acts);
-  assert(an == 3 && acts[0] == DACT_START && acts[1] == DACT_PLUS &&
-         acts[2] == DACT_MINUS);
+  assert(an == 4 && acts[0] == DACT_START && acts[1] == DACT_PLUS &&
+         acts[2] == DACT_MINUS && acts[3] == DACT_RESTART);
 
   printf("All timer_calc tests passed\n");
   return 0;
