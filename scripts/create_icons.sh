@@ -32,6 +32,18 @@ for size in 25 80 144; do
 
   sips --resampleHeightWidth "$size" "$size" -s format png "$SVG" -o "$RAW" >/dev/null
 
+  if [ "$size" -ne 25 ]; then
+    # The 80x80/144x144 icons render the symbol with noticeably tighter
+    # top/bottom margin than left/right (e.g. at 144px: ~6px top/bottom vs.
+    # ~24px left/right) since the SVG's own viewBox isn't square-symmetric
+    # around the glyph. Shrink slightly and re-center on the full canvas to
+    # add a bit more even margin on all sides (most visible top/bottom,
+    # where it was tightest) before quantizing.
+    scaled=$(( size * 95 / 100 ))
+    magick "$RAW" -resize "${scaled}x${scaled}" -background none \
+      -gravity center -extent "${size}x${size}" "$RAW"
+  fi
+
   # Pebble's alpha channel is 2-bit (4 levels: 0/85/170/255). Rasterizing at
   # non-integer scale factors (e.g. a 24-unit viewBox to 80px) leaves faint,
   # near-invisible anti-aliasing bleed (alpha ~10-30) far from any real edge;
@@ -43,7 +55,16 @@ for size in 25 80 144; do
   # Remap RGB onto the 64-color platform palette, ignoring alpha for the match.
   magick "$RAW" -alpha off -dither None -remap "$PALETTE" "$RGB"
   # Recombine the quantized RGB with the quantized alpha mask.
-  magick "$RGB" "$MASK" -alpha off -compose CopyOpacity -composite "$OUT"
+  if [ "$size" -eq 25 ]; then
+    magick "$RGB" "$MASK" -alpha off -compose CopyOpacity -composite "$OUT"
+  else
+    # The 80x80/144x144 app-store icons must have an opaque white
+    # background (transparency there would show through as black on
+    # some store surfaces) — flatten the quantized+masked composite onto
+    # white and drop the alpha channel entirely.
+    magick "$RGB" "$MASK" -alpha off -compose CopyOpacity -composite \
+      -background white -alpha remove -alpha off "$OUT"
+  fi
 
   rm -f "$RAW" "$MASK" "$RGB"
   echo "Wrote $OUT"
