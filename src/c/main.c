@@ -1548,6 +1548,15 @@ static void new_timer_label_result(const char *text, void *context) {
         fired = finish_start_tail();
       }
       assign_unnamed_star_for_duration(idx, t->duration);
+      if (!s_run_on_create) {
+        // finish_start_tail() (above) is what persists and rebuilds s_order/reloads
+        // the menu - skipping it here (run-on-create off) left the just-assigned
+        // unnamed-timer star unreflected in s_order (same staleness class as the
+        // touch-created path in start_as_new) and the row unpersisted until some
+        // later action. Do the same persist+reload here, minus the sweep/alarm
+        // steps that only apply to a just-started timer.
+        persist_all(); rearm_wakeup(); ensure_ticking(); reload_ui();
+      }
       if (!s_delete_on_finish[idx]) { send_add_timer(t->duration, t->name, t->id); }
       s_new_timer_idx = -1;
       if (fired) {
@@ -2857,6 +2866,14 @@ static void start_as_new(int32_t secs, bool save_to_phone, const char *name) {
   if (s_run_on_create) {
     start_with_secs(t, launch_adjust_start_secs_for_timer(t, secs));
     fired = finish_start_tail();
+  } else {
+    // finish_start_tail() (above) is what rebuilds s_order and reloads the menu -
+    // skipping it here (run-on-create off) left s_order stale for the new row,
+    // so select_timer_row() below couldn't find it and silently skipped the
+    // reload, making the list look like it hadn't grown (missing/duplicate rows,
+    // broken up/down) until the next full reload_ui(). Do the same persist+reload
+    // here, minus the sweep/alarm steps that only apply to a just-started timer.
+    persist_all(); rearm_wakeup(); ensure_ticking(); reload_ui();
   }
   if (save_to_phone) { send_add_timer(secs, t->name, t->id); }
   if (fired) { return; }
