@@ -2490,7 +2490,7 @@ static void ml_selection_changed(MenuLayer *ml, MenuIndex new_i, MenuIndex old_i
     int pos = ml_order_pos_for_timer(prev_selected);
     if (moving_down) {
       if (pos >= 0 && pos + 1 < s_count) { next_selected = (int16_t)s_order[pos + 1]; }
-      else { next_selected = -1; }
+      else { next_selected = (int16_t)prev_selected; }
     } else if (moving_up) {
       if (pos > 0) { next_selected = (int16_t)s_order[pos - 1]; }
       else { next_selected = (int16_t)prev_selected; }
