@@ -279,7 +279,15 @@ static void draw_clock_indices(const GRect* bounds, GContext *ctx) {
 }
 
 static void update_selection_text(void) {
-    if (s_selected_hours < 0) {
+    if (s_touch_area == TOUCH_AREA_INNER) {
+        // Touching "Cancel" discards the whole in-progress selection on liftoff
+        // (see finish() in handle_touch_event) no matter which field is
+        // currently being picked, so the live preview should always read as
+        // "nothing selected" here too - not just blank the current field while
+        // still showing an hour/minute value already committed from an earlier
+        // phase (e.g. seconds windup, where hours/minutes are fixed by then).
+        snprintf(s_central_text, sizeof(s_central_text), s_is_duration ? "- - : - - : - -" : "--:--");
+    } else if (s_selected_hours < 0) {
         snprintf(s_central_text, sizeof(s_central_text), s_is_duration ? "- - : - - : - -" : "--:--");
     } else if (s_selected_minutes < 0) {
         const char* fmt = (s_is_duration ? "- - : - - : - -" : "%d:--");
