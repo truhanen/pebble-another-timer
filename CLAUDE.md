@@ -10,6 +10,13 @@ Phone-side logic is written in TypeScript, compiled to PebbleKit JS.
 
 ## Build & test commands
 
+Before installing, driving, or debugging the app in the emulator (any
+`pebble install --emulator`/`pebble screenshot`/`pebble emu-button`/`pebble
+send-app-message`/`pebble wipe`/`pebble logs` session), use the
+`pebble-emulator` skill — it covers headless/agentic reliability gotchas
+(`--vnc`, idle auto-exit, detecting the selected row from a screenshot,
+simulating long-presses) that the rest of this section assumes.
+
 ```bash
 npm install
 pebble build                 # runs tsc (src/ts -> src/pkjs) via wscript hook, then bundles
@@ -50,23 +57,15 @@ emulator on its own:
 
 When navigating the main timer list by screenshot, **the selected row has a
 solid black background (white text)** — this is the only reliable selection
-indicator. Bold vs. non-bold text is unrelated to selection (it's tied to
-timer state/other row styling) and has caused wrongly-selected-row test
-failures before; don't infer selection from it. If no row visibly has a
-black background, selection is very likely on the "+ New timer" row — SELECT
+indicator (see the `pebble-emulator` skill for the general pixel-sampling
+technique for when this is ambiguous at native screenshot resolution). Bold
+vs. non-bold text is unrelated to selection (it's tied to timer
+state/other row styling) and has caused wrongly-selected-row test failures
+before; don't infer selection from it. If no row visibly has a black
+background, selection is very likely on the "+ New timer" row — SELECT
 there jumps straight into a blank new-timer duration dial (header "Duration",
 defaulting to `00:01:00`), which is a common way to end up somewhere
-unexpected in a scripted walkthrough. When it's ambiguous at the emulator's
-native screenshot resolution (200x228, hard to eyeball), sample pixels
-directly instead of guessing, e.g.:
-`python3 -c "from PIL import Image; im = Image.open('shot.png').convert('RGB'); print([im.getpixel((10,y)) for y in range(0,228,5)])"`
-— a run of `(0,0,0)` rows spanning one list row's height (not just the
-always-black bottom status bar) is the selected row. Prefer `pebble
-emu-button --emulator emery click <button> --duration N` (single call, one
-press+release) over separate manual `push`/`release` calls — it's the
-documented pattern and less error-prone; use `--duration 700`+ for a long
-press (e.g. to open the per-row detail menu) and the default short duration
-for a normal click.
+unexpected in a scripted walkthrough.
 
 Before manually driving the emulator through any multi-step flow (navigating
 menus, opening the detail screen, toggling settings, ...), disable idle
@@ -74,54 +73,27 @@ auto-exit first: run `make send_emulator_configuration` with
 `EMULATOR_CFG_IDLEEXIT_VAL` set to `0` in `emulator_configuration.mk` (the
 checked-in default), and push it once the app is already open (idle-exit
 config only takes effect once the app has received it — a fresh/wiped
-watch's built-in default idle timeout is short). Each `pebble` CLI
-invocation here has multiple seconds of overhead, so a multi-step manual
-walkthrough easily exceeds a default idle timeout and silently pops back to
-the watchface mid-sequence, which looks like "nothing happened" or a stuck
-button rather than an obvious timeout. `pebble wipe` (see below) resets this
-along with everything else, so re-push the idle-exit-disabled configuration
-again every time after wiping, before starting the next manual walkthrough.
+watch's built-in default idle timeout is short; see the skill for why this
+matters for a scripted, multi-command walkthrough). `pebble wipe` (see below)
+resets this along with everything else, so re-push the idle-exit-disabled
+configuration again every time after wiping, before starting the next manual
+walkthrough.
 
 Both `send_emulator_*` targets hardcode `--app-uuid` and the `emery`
-platform; the UUID must match `package.json`'s `pebble.uuid`
-(`1df6fc5c-261d-49c7-b339-6ea60cbe6649`) or `send-app-message` silently fails
-to reach the emulator. If `package.json`'s `uuid` ever changes again, update
-these targets in `Makefile` to match.
+platform (see the skill for why a mismatched UUID matters); if
+`package.json`'s `pebble.uuid` (`1df6fc5c-261d-49c7-b339-6ea60cbe6649`) ever
+changes, update these targets in `Makefile` to match.
 
 Build-time env flags (see `wscript`): `FAKE_TIME=1` defines `USE_FAKE_TIME`;
 `SCREENSHOT_FIXTURES=1` defines `SCREENSHOT_FIXTURES` to seed demo data for
 appstore screenshots (see `scripts/`).
 
-Always pass `--no-open` to every `pebble screenshot` invocation — without it,
-the CLI tries to open the captured image in a GUI viewer, which has no
-display to open in an agent/headless session and hangs the command
-indefinitely.
-
-pebble-tool's own docs recommend adding `--vnc` to every emulator-facing
-command (`install`, `screenshot`, `emu-button`, ...) in headless/agentic
-sessions. In practice, in this project's agent sandbox that has been
-**unreliable**: `--vnc` mode's control connection routinely times out on
-basic operations (`pebble ping`, `pebble screenshot`, occasionally even
-`emu-button`), and capturing frames directly from QEMU's own VNC port
-(e.g. via `vncdotool`) doesn't work either — the Pebble QEMU machine doesn't
-render through a real VGA/VNC framebuffer, so that port only ever returns a
-black frame; the watch display is only obtainable via pebble-tool's own
-serial-based screenshot protocol, which is the exact connection that's
-flaky under `--vnc` here. Plain `pebble install --emulator emery` /
-`pebble screenshot ... --no-open` / `pebble emu-button ...` **without**
-`--vnc` have worked reliably every time in this sandbox despite there being
-no visible display attached. Default to no `--vnc` here unless a future
-session finds it's become reliable; if you do use `--vnc`, don't mix it with
-non-`--vnc` commands against the same running emulator instance — restart
-the emulator when switching between the two.
-
-If `pebble ping`/`pebble screenshot`/etc. against the emulator start timing
-out persistently (not just a one-off, even after killing and reinstalling
-`qemu-pebble`/`pypkjs` processes and reinstalling the app), run `pebble wipe`
-(wipes all emulator/tool state, no `--everything` needed) before reinstalling
-— stale persisted emulator state has caused exactly this kind of stuck
-connection in this project before, and `pebble wipe` + reinstall reliably
-fixed it when plain process kills didn't.
+In this project's agent sandbox, `--vnc` has been **unreliable** — routine
+timeouts on `pebble ping`/`screenshot`/occasionally `emu-button` — while
+plain non-`--vnc` `pebble install`/`screenshot --no-open`/`emu-button` have
+worked reliably every time despite no display being attached. Default to no
+`--vnc` here unless a future session finds it's become reliable; see the
+skill for the general `--vnc` mechanics and the don't-mix-`--vnc`-modes rule.
 
 **Always use `make wipe_and_prep_emulator` instead of bare `pebble wipe`.**
 `pebble wipe` resets the watch to firmware defaults, which includes a short
