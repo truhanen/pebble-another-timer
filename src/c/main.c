@@ -1391,7 +1391,7 @@ static void dl_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
         else { tc_reset(t, now_s()); }
         persist_all(); rearm_wakeup(); reload_ui();
         if (!was_delete_on_finish) { select_timer_row(idx); }
-        if (!was_delete_on_finish && s_auto_return_stop) { close_to_watchface(); }
+        if (s_auto_return_stop) { close_to_watchface(); }
         else { window_stack_remove(s_detail_window, true); }
         break;
       }
