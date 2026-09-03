@@ -207,8 +207,8 @@ shoot "04_label_input.png"
 button select 1   # submit the typed label -> commits the new timer
 
 log "Main view (one timer, '+ New timer' selected)"
-button down 1   # commit left the cursor on the just-created timer's row (the
-                # only row) - move down onto the trailing "+ New timer" row
+# Committing the label leaves the cursor on the leading "+ New timer" row
+# (row 0), not on the just-created timer below it - no navigation needed.
 shoot "08_main_view_one_timer.png"
 
 # ---------------------------------------------------------------------------
@@ -232,12 +232,10 @@ set_timer 1 1 75    # Tea: running, 1:15 left
 sleep 1
 
 # The list was empty when the app launched, so the selection was sitting on
-# the trailing "+ New timer" row; after the config lands it's still on that
-# row, now pushed past the 4 new timers. Walk up to Tea (2nd row) to open its
-# control menu below - Pasta and Tea are already running, set above.
-button up 0.5
-button up 0.5
-button up 1
+# "+ New timer" (the leading row); after the config lands it's still on that
+# row, with Tea and Pasta (both started above) sorted ahead of the two
+# stopped timers by RunningFirst. One press down reaches Tea's row.
+button down 1
 
 log "Running timer control menu"
 button select 1   # Tea is running -> SELECT opens its control menu

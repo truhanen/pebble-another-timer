@@ -459,7 +459,7 @@ static int sweep_expiries(void); // defined below; used by tick/start helpers
 static void trigger_alarm(int idx, int count); // defined below; alarm UI path
 static bool show_next_pending_alarm(void); // defined below; alarm-queue chaining
 static int ml_row_for_timer_primary(int timer_idx, int selected_idx); // defined below; list row mapping
-static int ml_row_for_new(int selected_idx); // defined below; list row mapping for trailing + New timer row
+static int ml_row_for_new(int selected_idx); // defined below; list row mapping for leading + New timer row
 static bool ml_block_for_selection(int selected_idx, int *out_y, int *out_h); // defined below; highlight block
 static bool ml_current_highlight_rect(int *out_y, int *out_h); // defined below; animated/static rect
 static void ml_scroll_item_bounds_into_view(int item_y, int item_h); // defined below
@@ -1994,7 +1994,8 @@ static bool ml_timer_shows_detail(int idx, int selected_idx) {
 }
 
 static bool ml_row_info_for(uint16_t row, int selected_idx, MlRowInfo *out) {
-  uint16_t v = 0;
+  if (row == 0) { out->kind = ML_ROW_NEW; out->timer_idx = -1; return true; }
+  uint16_t v = 1;
   for (int i = 0; i < s_count; i++) {
     int idx = s_order[i];
     if (v == row) { out->kind = ML_ROW_TIMER_PRIMARY; out->timer_idx = idx; return true; }
@@ -2004,7 +2005,6 @@ static bool ml_row_info_for(uint16_t row, int selected_idx, MlRowInfo *out) {
       v++;
     }
   }
-  if (v == row) { out->kind = ML_ROW_NEW; out->timer_idx = -1; return true; }
   return false;
 }
 
@@ -2012,14 +2012,17 @@ static bool ml_is_item_boundary_row(uint16_t row, int selected_idx) {
   MlRowInfo cur;
   MlRowInfo next;
   if (!ml_row_info_for(row, selected_idx, &cur)) { return false; }
-  if (cur.kind == ML_ROW_NEW) { return false; }
-  if (!ml_row_info_for((uint16_t)(row + 1), selected_idx, &next)) { return false; }
-  if (next.kind == ML_ROW_NEW) { return true; }
+  bool has_next = ml_row_info_for((uint16_t)(row + 1), selected_idx, &next);
+  // "+ New timer" always gets a closing divider when any timer follows it;
+  // the very last row in the list (whichever kind) gets one too, to cap the
+  // list the same way a boundary between two different timers does.
+  if (cur.kind == ML_ROW_NEW) { return has_next; }
+  if (!has_next) { return true; }
   return cur.timer_idx != next.timer_idx;
 }
 
 static int ml_row_for_timer_primary(int timer_idx, int selected_idx) {
-  int v = 0;
+  int v = 1;
   for (int i = 0; i < s_count; i++) {
     int idx = s_order[i];
     if (idx == timer_idx) { return v; }
@@ -2037,13 +2040,8 @@ static int ml_order_pos_for_timer(int timer_idx) {
 }
 
 static int ml_row_for_new(int selected_idx) {
-  int v = 0;
-  for (int i = 0; i < s_count; i++) {
-    int idx = s_order[i];
-    v++;
-    if (ml_timer_shows_detail(idx, selected_idx)) { v++; }
-  }
-  return v;
+  (void)selected_idx;
+  return 0;
 }
 
 static int ml_row_top_for(uint16_t row, int selected_idx) {
@@ -2185,7 +2183,7 @@ static void ml_draw_arrow_progress(GContext *gctx, GRect box, float frac, GColor
 }
 
 static uint16_t ml_num_rows(MenuLayer *ml, uint16_t section, void *ctx) {
-  uint16_t rows = (uint16_t)(s_count + 1); // primary rows + trailing "New timer"
+  uint16_t rows = (uint16_t)(s_count + 1); // leading "New timer" + primary rows
   for (int i = 0; i < s_count; i++) {
     if (ml_timer_shows_detail(s_order[i], s_menu_selected_timer_idx)) { rows++; }
   }
@@ -2223,6 +2221,10 @@ static void ml_draw_row(GContext *gctx, const Layer *cell, MenuIndex *ci, void *
     graphics_draw_text(gctx, "+ New timer", fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD),
       GRect(4, (b.size.h - 26) / 2 - 3, b.size.w - 8, 26),
       GTextOverflowModeFill, GTextAlignmentCenter, NULL);
+    if (ml_is_item_boundary_row(ci->row, s_menu_selected_timer_idx)) {
+      graphics_context_set_stroke_color(gctx, GColorDarkGray);
+      graphics_draw_line(gctx, GPoint(0, b.size.h - 1), GPoint(b.size.w - 1, b.size.h - 1));
+    }
     return;
   }
   Timer *t = &s_timers[info.timer_idx];
@@ -2932,11 +2934,10 @@ static void empty_hint_update_proc(Layer *layer, GContext *gctx) {
   if (b.size.h <= 32) { return; }
   const GFont f = fonts_get_system_font(FONT_KEY_GOTHIC_24);
   const char *msg = NULL;
-  int new_row = ml_row_for_new(s_menu_selected_timer_idx);
-  int free_top = 32;
-  if (new_row >= 0) {
-    free_top = ml_row_top_for((uint16_t)new_row, s_menu_selected_timer_idx) + ML_ROW_H_PRIMARY;
-  }
+  // Hint text starts below all list content (the leading "+ New timer" row
+  // plus every timer's primary/detail rows) — ml_row_top_for's scan stops as
+  // soon as ml_row_info_for runs out of rows, so an over-large bound is safe.
+  int free_top = ml_row_top_for((uint16_t)(s_count * 2 + 2), s_menu_selected_timer_idx);
   GRect area = GRect(8, free_top, b.size.w - 16, b.size.h - free_top);
   if (s_count == 0) {
     msg =
