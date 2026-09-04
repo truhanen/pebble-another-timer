@@ -34,6 +34,22 @@ never `src/pkjs/`. `pebble build` regenerates it via `tsc` (config in
 `tsconfig.json`, target ES5/CommonJS) before the SDK bundles it; a type error
 aborts the build (`noEmitOnError`).
 
+`pebble build` (via `waf`) routinely exceeds a 2-3 minute foreground command
+timeout in an agent sandbox, especially on the first build after a clean/
+`npm install` (arm-none-eabi toolchain setup, full recompile). Don't treat
+that timeout as a failure and blindly re-run the command — if it gets moved
+to a background task, wait for that task's own completion notification and
+read its actual output (exit code + "Compiling emery"/"Linking emery"/
+"'build' finished successfully" lines) before concluding the build passed
+or failed. Re-running `pebble build` while a prior invocation is still
+running in the background stacks a second concurrent `waf`/toolchain
+process against the same `build/` output directory, which can race on
+generated files - confirm the prior run has actually finished (check for
+completion, or `ps aux | grep -i waf` if unsure) before starting another.
+Same goes for `pebble install --emulator`/other long-running `pebble`
+invocations: let a backgrounded one finish (or explicitly `pebble kill` it)
+rather than layering a fresh one on top.
+
 Other Makefile targets: `make clean`, `make kill_emulator`, `make wipe_emulator`,
 `make wipe_and_prep_emulator` (see below), `make build_and_install_emulator`,
 `make install_cloudpebble`.
