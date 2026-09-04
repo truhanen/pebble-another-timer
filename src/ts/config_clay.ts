@@ -96,7 +96,9 @@ const config = [
         defaultValue: true },
       { type: 'checkboxgroup', messageKey: 'AutoReturnOptions',
         label: 'Return to watchface',
-        description: 'When on, the app closes back to the watchface once you start or stop a timer.',
+        description: 'When on, the app closes back to the watchface after you start or stop a ' +
+          'timer from the app itself. Dismissing the full-screen alarm always returns to ' +
+          'whatever you had open before it fired instead.',
         defaultValue: [true, true],
         options: ['After starting a timer', 'After stopping a timer'] },
       // select values MUST be strings (Clay); index.ts parseInts on save.

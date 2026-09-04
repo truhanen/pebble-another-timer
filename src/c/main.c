@@ -29,6 +29,11 @@ static int s_alarm_idx = -1;                 // config index the alarm screen is
 static char s_alarm_title_buf[NAME_LEN + 1]; // big name (or time if unnamed)
 static char s_alarm_sub_buf[48];
 static char s_alarm_elapsed_buf[24];
+// True while the current alarm-dismissal chain started from a launch where
+// nothing of this app's was on screen before it (a wakeup-triggered launch -
+// see init()). Consulted once the alarm queue drains, then reset; a later,
+// genuinely-in-session expiry always finds this false.
+static bool s_alarm_from_wakeup_launch = false;
 
 // Repeating "alarm clock" buzz: re-fire alarm_vibrate() on a timer until the
 // user dismisses, capped at ALARM_BUZZ_MAX_S so an unattended watch stops
@@ -238,9 +243,13 @@ static void close_to_watchface(void) {
   window_stack_pop_all(true);
 }
 
-// Alarm actions always resolve back to the main list (or watchface) - never
-// leave a per-timer detail/dial/delete-confirm window sitting on the stack.
-static void close_timer_menus(void) {
+// A per-timer window only goes stale if it's showing the SAME timer the
+// alarm action just modified/deleted; a window for a different timer (e.g.
+// the user was editing timer A's duration when unrelated timer B fired)
+// carries no risk and is left in place so dismissing the alarm reveals it
+// unchanged - see close_stale_timer_menus's callers for why.
+static void close_stale_timer_menus(int timer_idx) {
+  if (s_detail_idx != timer_idx) { return; }
   if (s_del_window && window_stack_contains_window(s_del_window)) {
     window_stack_remove(s_del_window, false);
   }
@@ -568,53 +577,58 @@ static void alarm_buzz_stop(void) {
 #endif
 }
 
+// Once the alarm queue (show_next_pending_alarm) is drained, all three alarm
+// actions below resolve dismissal the same way: reveal whatever was already
+// on screen before the alarm fired - unless nothing was (a wakeup-triggered
+// launch, s_alarm_from_wakeup_launch), in which case there's nothing of
+// ours to reveal and the only sound choice is the watchface. This is
+// deliberately NOT gated on AutoReturnStart/Stop - those settings govern
+// voluntary start/stop actions elsewhere, not dismissing a screen the user
+// never asked to see.
+static void alarm_dismiss_tail(void) {
+  if (s_alarm_from_wakeup_launch) { close_to_watchface(); }
+  else { window_stack_remove(s_alarm_window, true); }
+  s_alarm_from_wakeup_launch = false;
+}
+
 static void alarm_stop(ClickRecognizerRef rec, void *ctx) {
   // Stop: reset (or delete) the finished timer directly from the alarm, then
-  // chain to the next queued alarm if another timer also expired. Once the
-  // queue is empty, only close the app (-> watchface) if AutoReturnStop is on -
-  // otherwise just drop the alarm and land back on the list. Any per-timer
-  // menu underneath is always closed first (see close_timer_menus) so no
-  // menu ever survives an alarm.
-  close_timer_menus();
+  // chain to the next queued alarm if another timer also expired.
+  close_stale_timer_menus(s_alarm_idx);
   if (s_alarm_idx >= 0 && s_alarm_idx < s_count) {
     if (s_delete_on_finish[s_alarm_idx]) { remove_timer_at(s_alarm_idx); }
     else { tc_reset(&s_timers[s_alarm_idx], now_s()); }
     persist_all(); rearm_wakeup(); reload_ui();
   }
   if (show_next_pending_alarm()) { return; }
-  if (s_auto_return_stop) { close_to_watchface(); }
-  else { window_stack_remove(s_alarm_window, true); }
+  alarm_dismiss_tail();
 }
 
 static void alarm_add_minute(ClickRecognizerRef rec, void *ctx) {
-  // Snooze: run the finished timer for 1 more minute, then land back on the
-  // list (or chain to another queued alarm) - the timer keeps running, so
-  // this follows AutoReturnStart like every other keep-it-running action.
-  close_timer_menus();
+  // Snooze: run the finished timer for 1 more minute, then land back on
+  // whatever was showing before (or chain to another queued alarm) - the
+  // timer keeps running throughout.
+  close_stale_timer_menus(s_alarm_idx);
   int idx = s_alarm_idx;
   if (idx >= 0 && idx < s_count) {
     tc_add(&s_timers[idx], 60, now_s());
     persist_all(); rearm_wakeup(); ensure_ticking(); reload_ui();
   }
   if (show_next_pending_alarm()) { return; }
-  if (s_auto_return_start) { close_to_watchface(); }
-  else { window_stack_remove(s_alarm_window, true); }
+  alarm_dismiss_tail();
 }
 
 static void alarm_run_overtime(ClickRecognizerRef rec, void *ctx) {
   // "Overtime": acknowledge this alarm without stopping the timer - it keeps
   // counting in the background (red/orange row, offered Stop/Start in its
-  // detail menu) - then chain to the next queued alarm. Once none remain,
-  // only close to the watchface if AutoReturnStart is on (timer is still
-  // running, same as any other start/resume action).
-  close_timer_menus();
+  // detail menu) - then chain to the next queued alarm.
+  close_stale_timer_menus(s_alarm_idx);
   if (s_alarm_idx >= 0 && s_alarm_idx < s_count) {
     s_timers[s_alarm_idx].alarm_pending = false;
     persist_all();
   }
   if (show_next_pending_alarm()) { return; }
-  if (s_auto_return_start) { close_to_watchface(); }
-  else { window_stack_remove(s_alarm_window, true); }
+  alarm_dismiss_tail();
 }
 
 static void alarm_click_config(void *ctx) {
@@ -3221,8 +3235,14 @@ static void init(void) {
   // never fired (failed to arm / dropped by the firmware): sweep_expiries only
   // counts a RUNNING timer that has just crossed its end_time, so `fired` is a
   // genuine "you may have missed this finish" signal regardless of launch reason.
-  (void)by_wakeup;
-  if (fired) { show_next_pending_alarm(); }
+  // Only a genuine wakeup launch means nothing of ours was on screen before this
+  // alarm - a manual open (even one that coincides with a missed expiry) means
+  // the user deliberately launched the app, so dismissing should land on the
+  // list, not exit back out. See alarm_dismiss_tail().
+  if (fired) {
+    if (by_wakeup) { s_alarm_from_wakeup_launch = true; }
+    show_next_pending_alarm();
+  }
 
 #ifdef SCREENSHOT_FIXTURES
   // (list view fixture: 3 seeded timers above show on the list directly)
