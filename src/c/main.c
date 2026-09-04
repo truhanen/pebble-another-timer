@@ -21,9 +21,9 @@ static AppTimer *s_tick;
 static Window *s_alarm_window;
 static TextLayer *s_alarm_title;
 static TextLayer *s_alarm_sub;
-static TextLayer *s_alarm_lbl_up;    // "+1 Min" next to the UP button
-static TextLayer *s_alarm_lbl_down;  // "Stop"  next to the DOWN button
-static TextLayer *s_alarm_lbl_back;  // "Run overtime" next to the BACK button
+static Layer *s_alarm_lbl_up;    // "+1 Min" edge-rotated along the right edge, by the UP button
+static Layer *s_alarm_lbl_down;  // "Stop" edge-rotated along the right edge, by the DOWN button
+static Layer *s_alarm_lbl_back;  // "Keep running" edge-rotated along the left edge, by the BACK button
 static TextLayer *s_alarm_elapsed;   // live "+MM:SS" overtime elapsed, below the title
 static int s_alarm_idx = -1;                 // config index the alarm screen is for
 static char s_alarm_title_buf[NAME_LEN + 1]; // big name (or time if unnamed)
@@ -623,6 +623,123 @@ static void alarm_click_config(void *ctx) {
   window_single_click_subscribe(BUTTON_ID_BACK, alarm_run_overtime);  // Overtime: dismiss, keep counting
 }
 
+// Column reserved along each edge of the alarm screen for a vertical,
+// edge-rotated button label (see draw_edge_rotated_label below) -- also
+// bounds the title's wrap-fallback width in layout_alarm_title, so its
+// centered text never reaches into either column.
+#define ALARM_EDGE_TOP_MARGIN 4
+#define ALARM_EDGE_BOTTOM_MARGIN 8
+#define ALARM_EDGE_SIDE_MARGIN 0
+#define ALARM_EDGE_LABEL_W 40
+
+// Pebble has no rotated-text primitive -- graphics_draw_text is horizontal
+// only, and there's no public API to get a GContext for an arbitrary
+// offscreen GBitmap to render text into first. The only rotation primitive
+// is graphics_draw_rotated_bitmap, which rotates a bitmap. So: draw the
+// text normally into a scratch area of the real framebuffer, capture that
+// framebuffer as the "source" bitmap, rotate-blit it onto the real
+// destination, then erase the scratch area -- all within this one
+// LayerUpdateProc call, so nothing scratch-y is ever actually presented
+// (Pebble only presents the buffer state at the end of the update pass).
+// `screen` is the alarm window's full size; `max_len` bounds how long the
+// text is allowed to grow (font-fit below, so it never reaches the title in
+// the middle of the screen); `right_edge` selects which screen edge the
+// text runs flush against (true: right, by UP/DOWN; false: left, by BACK --
+// rotated the opposite direction so it still reads right-side-up next to
+// that edge); `anchor_top` true packs the rotated text against the screen's
+// top edge, false against its bottom edge; `y_offset` nudges the label
+// further along that axis (positive = further down the screen), for
+// per-label fine-tuning independent of the other label(s) sharing the same
+// anchor.
+static void draw_edge_rotated_label(GContext *ctx, const char *text, GSize screen,
+    int max_len, bool right_edge, bool anchor_top, int y_offset) {
+  static const char *const keys[] = {
+    FONT_KEY_GOTHIC_28_BOLD, FONT_KEY_GOTHIC_24_BOLD, FONT_KEY_GOTHIC_18_BOLD,
+  };
+  const GRect probe = GRect(0, 0, 2000, 40);
+  GFont font = NULL;
+  GSize sz;
+  for (unsigned i = 0; i < sizeof(keys) / sizeof(keys[0]); i++) {
+    font = fonts_get_system_font(keys[i]);
+    sz = graphics_text_layout_get_content_size(
+        text, font, probe, GTextOverflowModeFill, GTextAlignmentLeft);
+    if (sz.w <= max_len) { break; }
+  }
+  // graphics_text_layout_get_content_size's reported height doesn't leave
+  // room for descenders -- both the scratch draw box below and the bitmap
+  // cropped from it are sized off sz.h, so pad it before either happens,
+  // rather than only widening the (already-generous) erase padding further
+  // down, which is too late: the glyph itself would already be clipped.
+  sz.h += 6;
+
+  // Scratch: drawn flush-left, well below the title's own band (layout_
+  // alarm_title caps the title layer's own frame bottom well above this),
+  // sized exactly to the measured text so nothing beyond it is touched.
+  const int scratch_y = screen.h * 78 / 100 - 18 + 27;
+  const GRect scratch = GRect(4, scratch_y, sz.w, sz.h);
+  graphics_context_set_text_color(ctx, GColorWhite);
+  graphics_draw_text(ctx, text, font, scratch, GTextOverflowModeFill,
+      GTextAlignmentLeft, NULL);
+
+  // graphics_draw_rotated_bitmap rotates and draws its ENTIRE source bitmap
+  // (anchored via src_ic/dest_ic, not cropped to some sub-rect around them)
+  // -- so copy just the scratch rect's pixels into their own small bitmap
+  // first, and rotate THAT, rather than passing the captured framebuffer
+  // directly (which would rotate a copy of the whole screen on top of
+  // itself, ghosting any other label/title already drawn elsewhere).
+  GBitmap *fb = graphics_capture_frame_buffer(ctx);
+  if (fb) {
+    GBitmap *crop = gbitmap_create_blank(GSize(sz.w, sz.h), GBitmapFormat8Bit);
+    if (crop) {
+      for (int y = 0; y < sz.h; y++) {
+        GBitmapDataRowInfo src_row = gbitmap_get_data_row_info(fb, scratch.origin.y + y);
+        GBitmapDataRowInfo dst_row = gbitmap_get_data_row_info(crop, y);
+        memcpy(dst_row.data, src_row.data + scratch.origin.x, sz.w);
+      }
+    }
+    graphics_release_frame_buffer(ctx, fb);
+
+    if (crop) {
+      const GPoint src_ic = GPoint(sz.w / 2, sz.h / 2);
+      // sz.h is the text's rotated *width* and sz.w its rotated *height*
+      // (rotating swaps the axes) -- position both edges with the fixed
+      // margins above rather than centering in some larger reserved area.
+      const int dest_x = right_edge
+          ? screen.w - ALARM_EDGE_SIDE_MARGIN - sz.h / 2
+          : ALARM_EDGE_SIDE_MARGIN + sz.h / 2;
+      const int dest_y = (anchor_top
+          ? ALARM_EDGE_TOP_MARGIN + sz.w / 2
+          : screen.h - ALARM_EDGE_BOTTOM_MARGIN - sz.w / 2) + y_offset;
+      const int32_t angle = right_edge ? DEG_TO_TRIGANGLE(270) : DEG_TO_TRIGANGLE(90);
+      graphics_draw_rotated_bitmap(ctx, crop, src_ic, angle, GPoint(dest_x, dest_y));
+      gbitmap_destroy(crop);
+    }
+  }
+
+  // Erase the scratch text -- padded well beyond the measured content box
+  // (glyph descenders/anti-aliasing can spill a few px past the measured
+  // size), and never touching anything else since this corner is otherwise
+  // unused.
+  graphics_context_set_fill_color(ctx, GColorRed);
+  graphics_fill_rect(ctx, GRect(scratch.origin.x - 4, scratch.origin.y - 4,
+      scratch.size.w + 8, scratch.size.h + 12), 0, GCornerNone);
+}
+
+static void alarm_lbl_up_update_proc(Layer *l, GContext *ctx) {
+  GRect b = layer_get_bounds(l);
+  draw_edge_rotated_label(ctx, "+1 Min", b.size, b.size.h / 2 - 6, true, true, 2);
+}
+
+static void alarm_lbl_down_update_proc(Layer *l, GContext *ctx) {
+  GRect b = layer_get_bounds(l);
+  draw_edge_rotated_label(ctx, "Stop", b.size, b.size.h / 2 - 6, true, false, -13);
+}
+
+static void alarm_lbl_back_update_proc(Layer *l, GContext *ctx) {
+  GRect b = layer_get_bounds(l);
+  draw_edge_rotated_label(ctx, "Keep running", b.size, b.size.h / 2 - 6, false, true, 0);
+}
+
 // Pick the largest title font whose word-wrapped layout fits within box_h (the
 // vertical band between the +1 Min and Stop labels), so a long timer name shrinks
 // instead of overflowing the band and getting clipped mid-line. Returns the chosen
@@ -650,10 +767,14 @@ static GFont alarm_title_font(const char *text, int box_w, int box_h, GSize *out
 
 // (Re)compute the title layer's font + frame from the current name, and the
 // elapsed-overtime layer's frame below it. The available band is between the
-// bottom of the +1 Min label (~22% h) and the top of Stop (~78% h); the
-// elapsed row is reserved at the bottom of that band, and the title is
-// vertically centred within what's left above it. Called on load and on
-// in-place refresh (a second timer finishing reuses the open alarm window).
+// bottom of the +1 Min label (~22% h) and the top of Stop (~78% h) -- this
+// stays the same as before the button labels became edge-rotated, since
+// that only reclaimed horizontal space, not vertical; the elapsed row is
+// reserved at the bottom of that band, and the title is vertically centred
+// within what's left above it. The box narrows to clear the left/right
+// edge-rotated label columns only once the wrapped text is actually wide
+// enough to reach them. Called on load and on in-place refresh (a second
+// timer finishing reuses the open alarm window).
 static void layout_alarm_title(void) {
   if (!s_alarm_title || !s_alarm_window) { return; }
   GRect b = layer_get_bounds(window_get_root_layer(s_alarm_window));
@@ -664,15 +785,24 @@ static void layout_alarm_title(void) {
   const int band_top = up_bottom + 2;
   const int elapsed_y = down_top - elapsed_h;
   const int band_h   = elapsed_y - 2 - band_top;
-  const int box_w = wd - 4;
+  const int full_w = wd - 4;
+  const int narrow_w = wd - 2 * ALARM_EDGE_LABEL_W;
   GSize sz;
-  GFont tf = alarm_title_font(s_alarm_title_buf, box_w, band_h, &sz);
+  GFont tf = alarm_title_font(s_alarm_title_buf, full_w, band_h, &sz);
+  int box_w = full_w;
+  if (sz.w > narrow_w) {
+    // Wrapped/measured content reaches into the edge columns at full width --
+    // re-measure against the narrower, still-centered box that clears them.
+    tf = alarm_title_font(s_alarm_title_buf, narrow_w, band_h, &sz);
+    box_w = narrow_w;
+  }
   const int used_h = sz.h < band_h ? sz.h : band_h;
   const int title_y = band_top + (band_h - used_h) / 2;
+  const int title_x = (wd - box_w) / 2;
   text_layer_set_font(s_alarm_title, tf);
-  layer_set_frame(text_layer_get_layer(s_alarm_title), GRect(2, title_y, box_w, used_h + 4));
+  layer_set_frame(text_layer_get_layer(s_alarm_title), GRect(title_x, title_y, box_w, used_h + 4));
   if (s_alarm_elapsed) {
-    layer_set_frame(text_layer_get_layer(s_alarm_elapsed), GRect(2, elapsed_y, box_w, elapsed_h));
+    layer_set_frame(text_layer_get_layer(s_alarm_elapsed), GRect(2, elapsed_y, wd - 4, elapsed_h));
   }
 }
 
@@ -691,26 +821,30 @@ static void alarm_window_load(Window *w) {
   text_layer_set_text(s_alarm_sub, s_alarm_sub_buf);
   layer_add_child(root, text_layer_get_layer(s_alarm_sub));
 
-  // "+1 Min" — big bold, right-aligned, vertically by the UP button (~22% h).
-  s_alarm_lbl_up = text_layer_create(GRect(0, h * 22 / 100 - 31, wd - 6, 34));
-  text_layer_set_background_color(s_alarm_lbl_up, GColorClear);
-  text_layer_set_text_color(s_alarm_lbl_up, GColorWhite);
-  text_layer_set_font(s_alarm_lbl_up, fonts_get_system_font(FONT_KEY_GOTHIC_28_BOLD));
-  text_layer_set_text_alignment(s_alarm_lbl_up, GTextAlignmentRight);
-  text_layer_set_text(s_alarm_lbl_up, "+1 Min");
-  layer_add_child(root, text_layer_get_layer(s_alarm_lbl_up));
+  // "+1 Min"/"Stop"/"Keep running" are plain Layers (not TextLayers): their
+  // draw procs render the label rotated along the screen's edge, next to
+  // the physical button it corresponds to (see draw_edge_rotated_label).
+  // Sized to the full root bounds since the rotate trick needs to draw into
+  // both a scratch area and the real destination column within the same
+  // LayerUpdateProc, and a layer's GContext is clipped to its own frame.
+  //
+  // s_alarm_lbl_down is deliberately created/added before s_alarm_lbl_up,
+  // mirroring an empirically-discovered ordering constraint in the sibling
+  // pebble-another-alarm app's own edge-rotated labels (whichever rotated
+  // label's draw proc runs first in a redraw pass there silently drew
+  // nothing) -- kept here as a precaution; re-verify on-device/emulator and
+  // reorder if any of the three labels ever comes up blank.
+  s_alarm_lbl_down = layer_create(GRect(0, 0, wd, h));
+  layer_set_update_proc(s_alarm_lbl_down, alarm_lbl_down_update_proc);
+  layer_add_child(root, s_alarm_lbl_down);
 
-  // "Overtime" — big bold, LEFT-aligned, mirrors "+1 Min" on the opposite
-  // side, same vertical band, for the BACK button. Word-wraps if it doesn't
-  // fit the left half on one line.
-  s_alarm_lbl_back = text_layer_create(GRect(6, h * 22 / 100 - 16 - 10 - 5 - 15, wd / 2 - 6, 96));
-  text_layer_set_background_color(s_alarm_lbl_back, GColorClear);
-  text_layer_set_text_color(s_alarm_lbl_back, GColorWhite);
-  text_layer_set_font(s_alarm_lbl_back, fonts_get_system_font(FONT_KEY_GOTHIC_28_BOLD));
-  text_layer_set_text_alignment(s_alarm_lbl_back, GTextAlignmentLeft);
-  text_layer_set_overflow_mode(s_alarm_lbl_back, GTextOverflowModeWordWrap);
-  text_layer_set_text(s_alarm_lbl_back, "Keep\nrunning");
-  layer_add_child(root, text_layer_get_layer(s_alarm_lbl_back));
+  s_alarm_lbl_back = layer_create(GRect(0, 0, wd, h));
+  layer_set_update_proc(s_alarm_lbl_back, alarm_lbl_back_update_proc);
+  layer_add_child(root, s_alarm_lbl_back);
+
+  s_alarm_lbl_up = layer_create(GRect(0, 0, wd, h));
+  layer_set_update_proc(s_alarm_lbl_up, alarm_lbl_up_update_proc);
+  layer_add_child(root, s_alarm_lbl_up);
 
   // Title — large bold, centred in the band between the +1 Min and Stop labels
   // (timer name, or time if unnamed). The font auto-shrinks for long, wrapping
@@ -735,15 +869,6 @@ static void alarm_window_load(Window *w) {
   layer_add_child(root, text_layer_get_layer(s_alarm_elapsed));
 
   layout_alarm_title();
-
-  // "Stop" — big bold, right-aligned, vertically by the DOWN button (~78% h).
-  s_alarm_lbl_down = text_layer_create(GRect(0, h * 78 / 100 - 6, wd - 6, 34));
-  text_layer_set_background_color(s_alarm_lbl_down, GColorClear);
-  text_layer_set_text_color(s_alarm_lbl_down, GColorWhite);
-  text_layer_set_font(s_alarm_lbl_down, fonts_get_system_font(FONT_KEY_GOTHIC_28_BOLD));
-  text_layer_set_text_alignment(s_alarm_lbl_down, GTextAlignmentRight);
-  text_layer_set_text(s_alarm_lbl_down, "Stop");
-  layer_add_child(root, text_layer_get_layer(s_alarm_lbl_down));
 }
 
 static void alarm_window_unload(Window *w) {
@@ -751,9 +876,9 @@ static void alarm_window_unload(Window *w) {
   text_layer_destroy(s_alarm_title); s_alarm_title = NULL;
   text_layer_destroy(s_alarm_elapsed); s_alarm_elapsed = NULL;
   text_layer_destroy(s_alarm_sub); s_alarm_sub = NULL;
-  text_layer_destroy(s_alarm_lbl_up); s_alarm_lbl_up = NULL;
-  text_layer_destroy(s_alarm_lbl_down); s_alarm_lbl_down = NULL;
-  text_layer_destroy(s_alarm_lbl_back); s_alarm_lbl_back = NULL;
+  layer_destroy(s_alarm_lbl_up); s_alarm_lbl_up = NULL;
+  layer_destroy(s_alarm_lbl_down); s_alarm_lbl_down = NULL;
+  layer_destroy(s_alarm_lbl_back); s_alarm_lbl_back = NULL;
 }
 
 // Show the alarm for timer `idx` (the next one still awaiting acknowledgement;
