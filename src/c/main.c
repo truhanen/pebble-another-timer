@@ -534,15 +534,21 @@ static void alarm_vibrate(void) {
 
 #if PBL_SPEAKER
 // A short beep-silence-beep-silence sequence, played at `volume` (0-100).
-// No-op when volume is 0 or the speaker is muted.
+// No-op when volume is 0 or the speaker is muted. A ~100ms silent note is
+// always prepended before the real sequence -- a deliberate glitch
+// workaround for an observed issue where the very first note of a
+// speaker_play_notes() sequence sometimes doesn't play correctly.
 static void alarm_play_audio(uint8_t volume) {
+  static const SpeakerNote lead_in = {
+    .midi_note = 0, .waveform = SpeakerWaveformSine, .duration_ms = 100, .velocity = 0, .reserved = 0
+  };
   static const SpeakerNote beep = {
     .midi_note = 95, .waveform = SpeakerWaveformSquare, .duration_ms = 150, .velocity = 0, .reserved = 0
   };
   static const SpeakerNote silence = {
     .midi_note = 0, .waveform = SpeakerWaveformSine, .duration_ms = 100, .velocity = 0, .reserved = 0
   };
-  static const SpeakerNote notes[4] = { beep, silence, beep, silence };
+  static const SpeakerNote notes[5] = { lead_in, beep, silence, beep, silence };
   if (volume > 0 && !speaker_is_muted()) {
     speaker_play_notes(notes, ARRAY_LENGTH(notes), volume);
   }
