@@ -3397,6 +3397,16 @@ static void main_disappear(Window *w) {
 
 static void init(void) {
   s_app_launch_s = now_s();
+  // Unconditionally clear any of our own wakeups still registered from a
+  // previous session, before computing anything else - defends against a
+  // stale PERSIST_KEY_WAKEUPID surviving an unclean app termination (crash,
+  // forced kill, battery pull) that skipped deinit()'s own rearm_wakeup()
+  // call, which would otherwise leak one of the device's 8 wakeup slots
+  // indefinitely. Same defensive practice as the official Pebble Timer
+  // app's own initialize() (wakeup_cancel_all() as the very first thing it
+  // does) - only ever cancels THIS app's own wakeups, never another app's.
+  wakeup_cancel_all();
+  store_save_wakeup_id(-1);
   s_count = store_load(s_timers);
   memset(s_delete_on_finish, 0, sizeof(s_delete_on_finish));
   memset(s_vibration_enabled, 0, sizeof(s_vibration_enabled));
