@@ -44,6 +44,24 @@ void store_save_wakeup_id(int32_t id) {
   persist_write_int(PERSIST_KEY_WAKEUPID, id);
 }
 
+uint32_t store_load_early_wake_timer_id(void) {
+  if (!persist_exists(PERSIST_KEY_EARLY_WAKE_TIMER_ID)) { return 0; }
+  return (uint32_t)persist_read_int(PERSIST_KEY_EARLY_WAKE_TIMER_ID);
+}
+
+void store_save_early_wake_timer_id(uint32_t id) {
+  persist_write_int(PERSIST_KEY_EARLY_WAKE_TIMER_ID, (int32_t)id);
+}
+
+int32_t store_load_early_wake_wakeup_id(void) {
+  if (!persist_exists(PERSIST_KEY_EARLY_WAKE_WAKEUP_ID)) { return -1; }
+  return persist_read_int(PERSIST_KEY_EARLY_WAKE_WAKEUP_ID);
+}
+
+void store_save_early_wake_wakeup_id(int32_t id) {
+  persist_write_int(PERSIST_KEY_EARLY_WAKE_WAKEUP_ID, id);
+}
+
 int store_load_sort(void) {
   if (!persist_exists(PERSIST_KEY_SORTORDER)) { return SORT_MRU; }
   return persist_read_int(PERSIST_KEY_SORTORDER);

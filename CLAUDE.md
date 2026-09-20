@@ -104,12 +104,15 @@ Build-time env flags (see `wscript`): `FAKE_TIME=1` defines `USE_FAKE_TIME`;
 `SCREENSHOT_FIXTURES=1` defines `SCREENSHOT_FIXTURES` to seed demo data for
 appstore screenshots (see `scripts/`).
 
-In this project's agent sandbox, `--vnc` has been **unreliable** — routine
-timeouts on `pebble ping`/`screenshot`/occasionally `emu-button` — while
-plain non-`--vnc` `pebble install`/`screenshot --no-open`/`emu-button` have
-worked reliably every time despite no display being attached. Default to no
-`--vnc` here unless a future session finds it's become reliable; see the
-skill for the general `--vnc` mechanics and the don't-mix-`--vnc`-modes rule.
+Use `--vnc` on every emulator-facing command (`install`, `screenshot`,
+`ping`, `emu-button`, `send-app-message`, `logs`) in this project — this
+matches pebble-tool's own recommendation for headless sessions, and a
+dedicated test round in this project's agent sandbox confirmed 20+
+consecutive `--vnc` calls all succeeding immediately with zero timeouts.
+Once an emulator instance is started with `--vnc`, keep it consistent for
+every subsequent command against that same instance — see the skill for
+the don't-mix-`--vnc`-modes rule and for how to recover if commands do
+start timing out (kill/wipe/reinstall, not dropping `--vnc`).
 
 **Always use `make wipe_and_prep_emulator` instead of bare `pebble wipe`.**
 `pebble wipe` resets the watch to firmware defaults, which includes a short

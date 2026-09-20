@@ -25,6 +25,18 @@
 #define PERSIST_KEY_DEFAULT_SOUND_ENABLED 19      // default "Sound" for newly created timers (0/1)
 #define PERSIST_KEY_VIBRATION_MASK 20 // bit i => timer i has its alarm vibration enabled
 #define PERSIST_KEY_SOUND_MASK 21     // bit i => timer i has its alarm sound enabled
+#define PERSIST_KEY_EARLY_WAKE_TIMER_ID 22 // persistent Timer.id a pending early wake-up is for (0 = none)
+#define PERSIST_KEY_EARLY_WAKE_WAKEUP_ID 23 // the accepted early wake-up's own WakeupId, tracked separately
+                                             // from PERSIST_KEY_WAKEUPID (-1 = none) - see main.c's wc_accept()
+// 24, 25: formerly PERSIST_KEY_RESCUE_TIMER_ID/_WAKEUP_ID (a last-resort
+// fallback wakeup for a timer evicted from the early-wake slot by a newer
+// conflict). Removed - see main.c's wc_accept(): accepting a new plan now
+// deliberately just overwrites whatever was there, relying on the existing
+// rearm_wakeup()/conflict-detection machinery to re-prompt for the evicted
+// timer if/when it becomes relevant again, rather than trying to preserve
+// its old plan on the side. Retired, not reused, to avoid ever
+// misinterpreting leftover data from an old app version under a new
+// meaning.
 #define PERSIST_KEY_TIMER_BASE 100   // timer i -> key 100+i (one Timer per key; 256B/key cap)
 #define STORE_SCHEMA 6
 
@@ -35,6 +47,15 @@ void store_save(const Timer *t, int count);
 // Wakeup id (-1 when none).
 int32_t store_load_wakeup_id(void);
 void store_save_wakeup_id(int32_t id);
+// Persistent Timer.id a pending early wake-up is for (0 = none/not pending).
+uint32_t store_load_early_wake_timer_id(void);
+void store_save_early_wake_timer_id(uint32_t id);
+// The accepted early wake-up's own WakeupId (-1 when none) - tracked in its
+// own slot, separate from store_load/save_wakeup_id's "primary" wakeup, so
+// a later rearm_wakeup() for a DIFFERENT running timer can never cancel an
+// unrelated timer's still-valid accepted early wake (see main.c review notes).
+int32_t store_load_early_wake_wakeup_id(void);
+void store_save_early_wake_wakeup_id(int32_t id);
 // Sort mode (defaults to SORT_MRU=0 when unset).
 int store_load_sort(void);
 void store_save_sort(int mode);
