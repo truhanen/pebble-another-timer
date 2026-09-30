@@ -1,0 +1,107 @@
+# Podman/Docker image for running this project's functional test suite
+# (tests/functional_framework/) headlessly, without a macOS host at all.
+#
+# Verified working end-to-end (live, not just built) via:
+#   podman machine init/start on an Apple Silicon Mac (applehv provider,
+#   Rosetta enabled) - see "Why linux/amd64" below for why this matters.
+#
+# Build (from the repo root):
+#   podman build --platform linux/amd64 -t pebble-another-timer-tests \
+#     -f tests/functional/docker/Containerfile .
+#
+# Run ONE sequence (see tests/functional/docker/run_container.sh for the
+# wrapper this is meant to be driven through - it handles --init,
+# read-only source mount, and the writable output mount correctly):
+#   podman run --rm --init --platform linux/amd64 \
+#     -v "$PWD":/src:ro \
+#     -v "$PWD/tests/functional/out":/out \
+#     pebble-another-timer-tests \
+#     tests/functional/sequences/walkthroughs/create_and_start_timer.seq
+#
+# --- Why linux/amd64 (not the host's native arch) ---
+# pypkjs (PebbleKit JS execution inside the emulator) depends on stpyv8, a
+# V8 binding. stpyv8 publishes prebuilt wheels for macOS (x86_64+arm64),
+# Windows, and Linux - but its Linux wheels are manylinux_x86_64 ONLY, no
+# aarch64/arm64 Linux wheel exists, and building it from source means
+# building V8 itself (not practical for a lightweight image). Confirmed by
+# querying PyPI directly. So this image targets linux/amd64 always, even
+# on an ARM host - on Apple Silicon with Podman's applehv machine and
+# Rosetta enabled (`podman machine inspect` should show "Rosetta": true),
+# amd64 containers run via Rosetta binary translation, not slow QEMU
+# user-mode emulation, so this has near-native performance despite the
+# architecture mismatch. (There is then a SECOND, unrelated layer of
+# emulation inside the container - qemu-pebble itself, TCG-emulating the
+# watch's Cortex-M33 - but that's true on bare macOS too and isn't
+# affected by the container's own architecture.)
+#
+# --- Why --init is required at `podman run` time (not baked in here) ---
+# pebble-tool spawns qemu-pebble and pypkjs as child processes and tracks
+# their liveness by PID (e.g. to decide whether `pebble install` should
+# reuse a running emulator or launch a fresh one). Without a real init
+# process as PID 1 to reap them, a `pebble kill`'d emulator's orphaned
+# children become permanent zombies (defunct, but still present in the
+# process table) - and a zombie's PID still answers "yes I'm alive" to a
+# liveness check, so every subsequent pebble command after the first
+# kill+wipe+install cycle starts failing with `[Errno 111] Connection
+# refused`. Live-verified: this was 100% reproducible with a bare `sleep
+# infinity` entrypoint and 100% fixed by re-running the same container
+# with `--init` (podman's built-in lightweight init, catatonit). This is a
+# `podman run` flag, not something a Containerfile can set for its
+# caller, so run_container.sh always passes it - don't drop it if you
+# invoke this image some other way.
+FROM debian:bookworm-slim
+
+ARG SDK_VERSION=4.33.1
+
+RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends \
+      curl ca-certificates git \
+      python3 python3-venv python3-pip \
+      nodejs npm \
+      procps \
+      libpixman-1-0 libsdl2-2.0-0 libasound2 libpulse0 libpng16-16 libglib2.0-0 \
+      libfaketime \
+      imagemagick \
+      xvfb xdotool x11-utils \
+    && rm -rf /var/lib/apt/lists/*
+# xvfb/xdotool/x11-utils are ONLY used by the opt-in TOUCH instruction (see
+# functional_framework/lib/steps.sh run_touch and run_container.sh's --touch
+# flag) - real touchscreen input only reaches this app's touch_service at
+# all when qemu-pebble opens a genuine SDL/X11 window (i.e. `pebble install`
+# run WITHOUT --vnc) that xdotool's XTest-based clicks can target; qemu's own
+# `-vnc` framebuffer (what every other sequence uses) is display-only and
+# never delivers touch events to the guest, live-verified by adding a debug
+# APP_LOG to touch_dial/touch.c's handle_touch_event and confirming it never
+# fired for a raw VNC pointer click, but did fire (Touchdown/Liftoff at the
+# exact target coordinates) for an xdotool click against a real Xvfb-hosted
+# window. A held press (mousedown, sleep, mouseup - not a bare click) is
+# required: the app treats a too-quick tap-and-release as a cancelled
+# gesture (touch_dial/config.c's touchLiftMinDurationMs, default 100ms) and
+# reverts out of touch-select mode without ever visibly opening the dial.
+# This path is container-only by design - there is no supported native
+# equivalent. On a real desktop (macOS or otherwise), delivering a
+# correctly-hit-tested click into a specific window requires moving the
+# real OS mouse cursor (confirmed: CGEventPostToPid, which target a process
+# directly without moving the cursor, does NOT get properly window-hit-
+# tested and produces no touch event at all) and granting OS-level
+# automation permissions (Accessibility, on macOS) - both undesirable to
+# require of a real interactive desktop session. Inside a disposable
+# container's own Xvfb, nobody is looking at "the cursor" at all, so none
+# of that tradeoff applies.
+
+ENV PATH="/root/.local/bin:${PATH}"
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# The coredevices/pebble-tool fork, not PyPI's own "pebble-tool" package -
+# PyPI's is stale and pulls in an old pypkjs whose OWN stpyv8 dependency
+# fails outright (a completely separate, older breakage from the
+# aarch64-wheel gap above - confirmed by trying `pip install pebble-tool`
+# directly; it fails even on plain linux/amd64 with a `ModuleNotFoundError:
+# No module named 'settings'` from stpyv8's legacy setup.py).
+RUN uv tool install "git+https://github.com/coredevices/pebble-tool.git"
+
+RUN pebble sdk install "${SDK_VERSION}"
+
+WORKDIR /src
+COPY tests/functional/docker/run-sequence-in-container.sh /usr/local/bin/run-sequence-in-container.sh
+RUN chmod +x /usr/local/bin/run-sequence-in-container.sh
+ENTRYPOINT ["/usr/local/bin/run-sequence-in-container.sh"]
