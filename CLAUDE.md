@@ -202,6 +202,74 @@ or read by the phone app: a testing/screenshot backdoor (see
 index into an exact state/remaining-time combo, bypassing the normal
 start/pause/reset flow.
 
+`FreezeDisplay`/`FreezeElapsedSeconds` are independent of `SetTimerIndex`
+(unlike the fields above, they're acted on even alone, with zero timers
+present) but commonly sent alongside it in the same message. `FreezeDisplay`
+`1`/`0` freezes/unfreezes literally every live time/remaining/elapsed
+display app-wide: main-list running/paused rows (text, progress arrow, AND
+the overtime/running background color tint - all three previously could
+disagree once frozen, since the color used a separate un-frozen `now_s()`
+call; fixed), the wakeup-conflict window's identifying banner, the bottom
+bar's clock and elapsed-since-launch, the alarm screen's live overtime
+counter, the detail window's legacy header, and the delete-confirm/
+start-confirmation screens. `FreezeElapsedSeconds` sets the exact bottom-bar
+elapsed-since-launch value shown while frozen (a direct test-supplied
+number, not derived from real app-launch timing, which would itself still
+vary run to run).
+
+Exists purely to make golden/pixel-comparison screenshot testing
+deterministic - most of these otherwise depend on exactly how much real
+wall-clock time elapsed between some setup step and the screenshot actually
+being taken, which varies run to run even under the containerized test
+harness's pinned clock (see `tests/functional/docker/README.md`) -
+replacing the need to `--mask-rect` those regions out of golden comparison
+at all. Sending `FreezeDisplay=1` alongside `SetTimerState`/
+`SetTimerRemaining` in the *same* `SetTimerIndex` message captures the
+identical `now` just used to compute a timer's `end_time`, so its frozen
+value is exact (e.g. always precisely `5:00` remaining), not just "whatever
+was left when the freeze happened to arrive". The bottom bar's clock text
+can't be pinned by overriding `now_s()` alone since `clock_copy_time_string()`
+reads the system time-of-day directly - `draw_bottom_bar()` substitutes a
+hardcoded placeholder (`copy_frozen_clock_string()`, `main.c`, always
+`"10:00"`) while active instead. Deliberately NOT derived from
+`s_test_freeze_now` (unlike a timer's remaining time, there's no
+"correct" clock value to preserve, and deriving it from whichever real
+second `FreezeDisplay` happened to be sent on would itself vary run to
+run - a fixed constant sidesteps that). Only affects what's
+drawn (`display_now()`, `main.c`) - every other `now_s()` call site (expiry
+sweep, wakeup rearm, sort order, persistence) is untouched, so a frozen
+screenshot can never mask a real expiry/wakeup bug. Not `APP_TEST_HOOKS`-gated
+(available in every build, like the `Set*` keys above it) since it can't
+affect real behavior, only rendering.
+
+`TestBlockedSystemWakeupMinuteOffsetsPos`/`...Neg` are also watch-only, but
+unlike the `Set*` keys above they're only handled when the build was made
+with `APP_TEST_HOOKS=1` in the environment (`APP_TEST_HOOKS=1 pebble
+build`) — a normal build still declares both keys (harmless, unused
+integers) but silently ignores the messages. Each is a comma-separated list
+of non-negative whole-minute offsets (e.g. `"0,2"`), simulating another
+app's wakeup occupying those minutes *relative to whichever timer's own
+end_time is currently being evaluated* — Pos counts minutes at/after that
+reference minute, Neg counts minutes before it, split into two fields
+specifically so parsing never has to handle a signed list. `test_wakeup_
+schedule()` (`main.c`) intercepts the ~3 real `wakeup_schedule()` call
+sites and refuses a request exactly like Pebble's real ±60s exclusion
+window would if it lands near a configured offset, otherwise calls through
+to the real API unchanged. Because the reference re-centers fresh on every
+call, offset `"0"` alone keeps blocking the right timer's own minute even
+as its end_time shifts (`+1 min`, `-1 min`) or as a *different* timer
+becomes the current target — no reconfiguration needed between phases of a
+multi-timer test. Sending either field re-triggers an immediate re-check
+(`handle_wakeup_result(rearm_wakeup(), ...)`); an absent field leaves that
+side's list unchanged, send an empty string to explicitly clear one side.
+This exists specifically for
+`tests/functional/sequences/walkthroughs/wakeup_conflict_*.seq` (see
+"Tests" below); replaces the old ad hoc `// TEMP-TEST-FORCE` one-line edit
+mentioned in the `tests/wakeup_test_app` note (and an earlier, less
+realistic single-timer-id `TestForceWakeupFailFor` version of this same
+hook) with something permanent, scriptable, and much closer to how the
+real exclusion window actually behaves.
+
 ## Tests
 
 - `tests/test_timer_calc.c` — plain `assert`-based C program, no framework,
@@ -212,3 +280,83 @@ start/pause/reset flow.
   needed: the modules under test take injected `get`/`set` storage functions,
   and tests supply an in-memory `Map`-backed `fakeStore` in place of
   `localStorage`.
+- `tests/wakeup_test_app/` — a separate, bare-minimum Pebble project (own
+  UUID/`.pbw`, since a watchapp is one process per package) for testing the
+  wakeup-conflict feature against a REAL other app's wakeup, not the
+  temporary `// TEMP-TEST-FORCE` hack sessions have used before (a one-line
+  edit forcing `rearm_wakeup()` in `main.c` to always return
+  `WAKEUP_ARM_FAILED`, reverted before finishing) - that hack is still fine
+  for simpler self-only conflict simulation, but never exercises Pebble's
+  actual cross-app wakeup exclusion or real pre-emption/graceful-close
+  timing the way this app does. Entirely AppMessage-driven
+  (`ScheduleWakeup`/`CancelWakeup` int keys) - see its own README for usage
+  and an end-to-end cross-app conflict test recipe. Build/install it
+  independently
+  (`cd tests/wakeup_test_app && pebble build && pebble install --emulator
+  emery --vnc`) alongside the main app in the same emulator.
+- `tests/functional_framework/` — a generic (app-agnostic, copyable to other
+  Pebble projects) bash interpreter for scripted emulator walkthroughs:
+  flat plain-text `.seq` files (button presses, AppMessages, sleeps,
+  screenshots, installs, raw `pebble` CLI passthrough, with `IMPORT` to
+  share setup between sequences) run via `run_sequence.sh`. See its own
+  README for the instruction-set reference. `tests/functional/` holds this
+  app's own config (`app.conf`) and sequences (`sequences/common/` for
+  shared setup like wipe+prep, `sequences/walkthroughs/` for actual test
+  scenarios), e.g.:
+  ```bash
+  tests/functional_framework/run_sequence.sh \
+    --conf tests/functional/app.conf \
+    --seq  tests/functional/sequences/walkthroughs/create_and_start_timer.seq
+  ```
+  Still subject to every gotcha in the `pebble-emulator` skill (idle-exit,
+  `--vnc` consistency, `--app-uuid` matching) - the framework applies those
+  structurally (every emulator-facing step gets `--emulator`/`--vnc`
+  automatically) but doesn't remove the underlying constraints.
+
+  `sequences/walkthroughs/wakeup_conflict_*.seq` cover the conflict-window
+  feature end to end under its current single-Ok/Don't-exit/Exit-anyway
+  design (silent auto-resolution when a free early-wake slot exists vs.
+  the single-row "Ok" informational window when none does, the 2-row
+  exit-guard re-prompt, the `handle_wakeup_result()` re-entrancy guard,
+  multi-timer plan eviction, natural-fire-while-open, and pausing a timer
+  that holds an accepted plan) using
+  `TestBlockedSystemWakeupMinuteOffsetsPos`/`...Neg` (see above) instead of
+  `tests/wakeup_test_app`'s real cross-app timing - deterministic and fast,
+  at the cost of needing an `APP_TEST_HOOKS=1` build (`IMPORT
+  ../common/wipe_and_prep_test_hooks.seq` instead of `wipe_and_prep.seq`;
+  its own header comment explains the trap of running these against a
+  normal build - the hook AppMessage is silently ignored, not an error).
+  Written without a live emulator run available at the time (only read
+  against the source, not confirmed on screen) - verify the exact
+  row-index button sequences before trusting these as standing regression
+  tests, per each file's own "unverified" note.
+
+  The rest of `sequences/walkthroughs/` covers core, non-wakeup-conflict
+  functionality along the same lines: run-control (pause/resume/stop,
+  ±1 min, restart), natural expiry + the alarm queue, the "+ New timer"
+  wizard (including discarding a draft), the long-press edit menu
+  (duration/label/after-finished/vibration/sound), `RunningFirst`,
+  `TimerConfig` reconcile preserving a running timer's live state across a
+  same-id edit, idle-exit actually firing, and the empty-list state. None
+  of these need `APP_TEST_HOOKS` - `wipe_and_prep.seq` is enough. Same
+  "unverified against a live emulator at authoring time" caveat applies;
+  a few (label rename, direct single-item delete) are deliberately scoped
+  down to what's reachable with button-only input and no live
+  confirmation of the multitap keyboard's exact controls - see those
+  files' own header comments for what's intentionally left as a manual-only
+  gap.
+
+  **`tests/functional/run_all.sh` (the "does the whole suite pass" /
+  CI / golden-approval entrypoint) is containerized-only - it has no
+  native mode.** A native run against a shared host emulator (via
+  `tests/functional_framework/run_sequence.sh` directly, as in the single-
+  sequence example above) is still fully supported and is the right choice
+  for fast interactive dev/debugging, but its screenshots aren't
+  reproducible run to run for anything the `FreezeDisplay` test hook (see
+  above) doesn't cover, so it's never trusted as a real pass/fail verdict
+  or as a source for approving a golden baseline - `update_golden()`/
+  `promote_golden.sh` (`tests/functional_framework/lib/golden.sh`)
+  mechanically refuse to do so from a native run. See
+  `tests/functional/docker/README.md` for setup. Any CI job for this
+  project must call `run_all.sh`, not `run_sequence.sh` against a native
+  emulator.

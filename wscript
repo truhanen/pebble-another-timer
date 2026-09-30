@@ -40,6 +40,8 @@ def build(ctx):
         defines = ['USE_FAKE_TIME'] if os.environ.get('FAKE_TIME') else []
         if os.environ.get('SCREENSHOT_FIXTURES'):
             defines.append('SCREENSHOT_FIXTURES')  # seed demo data for appstore screenshots
+        if os.environ.get('APP_TEST_HOOKS'):
+            defines.append('APP_TEST_HOOKS')  # compiles in test-only AppMessage hooks, see main.c
         ctx.pbl_build(source=ctx.path.ant_glob('src/c/**/*.c'), target=app_elf, bin_type='app', defines=defines)
 
         if build_worker:

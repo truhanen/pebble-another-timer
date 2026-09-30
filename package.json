@@ -49,7 +49,11 @@
       "VibePattern",
       "AudioVolume",
       "DefaultVibrationEnabled",
-      "DefaultSoundEnabled"
+      "DefaultSoundEnabled",
+      "TestBlockedSystemWakeupMinuteOffsetsPos",
+      "TestBlockedSystemWakeupMinuteOffsetsNeg",
+      "FreezeDisplay",
+      "FreezeElapsedSeconds"
     ],
     "resources": {
       "media": [

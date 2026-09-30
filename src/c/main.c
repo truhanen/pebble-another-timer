@@ -148,14 +148,20 @@ static MenuLayer *s_del_menu;
 typedef enum { DELCONF_ACTION, DELCONF_TOGGLE_STOPPED, DELCONF_TOGGLE_RUNNING } DelConfirmKind;
 static DelConfirmKind s_del_confirm_kind;
 
-// ---- wakeup-conflict menu: shown when a just-started/restarted timer's
-// wakeup could not be placed at all (see finish_start_tail/rearm_wakeup) ----
+// ---- wakeup-conflict window: purely informational. If a just-started/
+// restarted/edited timer's wakeup can't be placed at all (see rearm_wakeup),
+// an early wake-up slot is tried and adopted SILENTLY if found (see
+// try_auto_early_wake) - the user is never asked to choose. This window only
+// appears when no early slot exists at all: it tells the user the app must
+// stay open, and blocks accidental exit while that's true. ----
 static Window    *s_wakeup_conflict_window;
 static MenuLayer *s_wakeup_conflict_menu;
 static TextLayer *s_wakeup_conflict_msg;
-static Layer     *s_wakeup_conflict_ident_layer;   // duration (left) / label (right), same layout as the main list
-static char       s_wakeup_conflict_ident_dur[24];
-static char       s_wakeup_conflict_ident_label[NAME_LEN + 1];
+// Full timer row (icon/duration/label/progress) - drawn with the exact same
+// code and colors as the main list's own selected row (see
+// wc_ident_update_proc, ml_draw_primary_line/ml_draw_detail_line), read
+// live from the Timer* each redraw rather than a cached snapshot.
+static Layer     *s_wakeup_conflict_ident_layer;
 // Persistent Timer.id (0 = none), NOT an array index - a raw index cached
 // across the whole time this window stays open (or the render window could
 // be reordered from under it by a phone TimerConfig reconcile, which isn't
@@ -163,48 +169,100 @@ static char       s_wakeup_conflict_ident_label[NAME_LEN + 1];
 // wakeup_conflict_remaining_sites memory notes). Resolved to a current
 // index only at the point of use.
 static uint32_t   s_wakeup_conflict_timer_id = 0;
-static time_t     s_wakeup_conflict_slot_time;   // 0 = no free slot found
-static WakeupId   s_wakeup_conflict_slot_id = -1;
-static char       s_wakeup_conflict_option_buf[40];
-static char       s_wakeup_conflict_keep_buf[48];
 static char       s_wakeup_conflict_msg_buf[140];
 // Guards the window_unload fallback: set true once the user has actually
-// picked a row (or BACK), so unload doesn't ALSO run the decline cleanup in
-// the normal case - only when the window is torn down some other way (e.g.
-// the app closing) with no explicit choice made.
+// picked a row (or BACK), so unload doesn't ALSO run the "keep in
+// foreground" cleanup in the normal case - only when the window is torn
+// down some other way (e.g. the app closing) with no explicit choice made.
 static bool       s_wakeup_conflict_decided;
-// What "Cancel" should actually do, set per call site by open_wakeup_conflict_window_ex():
-// - RESET_IDLE: abort a fresh start/restart (the original behavior).
-// - REVERT_DELTA: undo exactly the +/-N seconds this action just applied to an
-//   already-running timer (e.g. a failed +1 min extend/snooze), leaving it
-//   running as it was before.
-// - NOOP: the timer being warned about isn't the one this call site acted on
-//   (see handle_wakeup_result) - just release the speculative slot and leave
-//   its schedule untouched.
-typedef enum { WC_DECLINE_RESET_IDLE, WC_DECLINE_REVERT_DELTA, WC_DECLINE_NOOP } WcDeclineMode;
-static WcDeclineMode s_wakeup_conflict_decline_mode;
-static int32_t       s_wakeup_conflict_decline_revert_delta;
-// False only for the "you're trying to exit" re-prompt (see
-// open_wakeup_conflict_window()) - the last row becomes "Exit anyway
-// (risky)" instead of "Cancel" in that case (see WC_ROW_EXIT_ANYWAY), and
-// BACK behaves like "Keep app in foreground" instead of stopping the timer.
-static bool          s_wakeup_conflict_allow_cancel = true;
-// Set true only when the conflict window is opened mid alarm-dismiss chain
-// (alarm_add_minute's snooze) so wc_accept()/wc_decline() can resume it
-// (show_next_pending_alarm()/alarm_dismiss_tail()) once the user decides.
-static bool       s_wakeup_conflict_resume_alarm_chain;
-// Set by wc_keep_foreground (the "Keep app in foreground" option) to the
-// held timer's persistent id (never 0 while set - 0 = "none assigned",
-// see Timer.id) so idle_reset() can suppress auto-exit-to-watchface until
-// that specific timer stops running (fires, is stopped, or is deleted) -
-// checked/self-clearing there, not polled anywhere else.
+// True only for the "you're trying to exit" re-prompt (see
+// open_wakeup_conflict_window()): the window shows two rows, "Don't exit"
+// (default) and "Exit anyway", instead of the single informational "Ok"
+// row. BACK always means "Don't exit"/"Ok" (stay) in both cases - "Exit
+// anyway" is only reachable by explicitly selecting its own row.
+static bool          s_wakeup_conflict_is_exit_prompt = false;
+// Set by wc_ok() (the "Ok"/"Don't exit" action) to the held timer's
+// persistent id (never 0 while set - 0 = "none assigned", see Timer.id) so
+// idle_reset() can suppress auto-exit-to-watchface until that specific
+// timer stops running (fires, is stopped, or is deleted) - checked/
+// self-clearing there, not polled anywhere else.
 static uint32_t   s_foreground_hold_timer_id = 0;
 
 static int64_t now_s(void) { return (int64_t)time(NULL); }
 
+// Test-only: freezes every live time/remaining/elapsed display app-wide -
+// main list rows and the wakeup-conflict banner (ml_draw_detail_line(),
+// including the running/overtime color tint - see ml_draw_row()/
+// wc_ident_update_proc()), the bottom bar's clock and elapsed-since-launch
+// (draw_bottom_bar()), the alarm screen's live overtime counter
+// (format_alarm_elapsed()) AND its own bottom-left clock
+// (refresh_alarm_clock_text()), the detail window's legacy header
+// (dl_draw_header()/open_detail_window()), the delete-confirm and
+// start-confirmation screens - without touching any timer's real
+// end_time/state or anything else that reads now_s() for LOGIC
+// (sweep_expiries(), rearm_wakeup(), sort order, ...) - so a frozen
+// screenshot can never mask a real expiry/wakeup bug, only pins what gets
+// painted. Set via the FreezeDisplay/FreezeElapsedSeconds fields on the
+// SetTimerIndex AppMessage (see inbox_received()) - sending FreezeDisplay
+// alongside SetTimerState/SetTimerRemaining in the SAME message captures
+// the EXACT same `now` just used to compute a timer's end_time, making
+// its shown remaining value exact and reproducible (e.g. "always exactly
+// 5:00") rather than "whatever was left when the freeze happened to
+// arrive". Always compiled, like SetTimerIndex/SetTimerState/
+// SetTimerRemaining themselves (below) - not APP_TEST_HOOKS-gated like
+// the wakeup-blocking hooks, since this can only ever affect what's
+// painted, never real behavior, so there's no production-safety reason to
+// require a special build for it.
+static bool    s_test_freeze_display = false;
+static int64_t s_test_freeze_now = 0;
+// The bottom bar's elapsed-since-launch while frozen - a DIRECT
+// test-supplied value, not derived from s_app_launch_s/now_s() at all
+// (unlike s_test_freeze_now above), since real app-launch timing itself
+// still varies run to run and there is nothing to compute an exact value
+// FROM. See FreezeElapsedSeconds in inbox_received().
+static int32_t s_test_freeze_elapsed = 0;
+
+// What ml_draw_detail_line()/wc_ident_update_proc()/the other display
+// sites listed above use as "now" - the real clock, unless frozen (see
+// above). Every LOGIC now_s() call site (expiry, wakeup, persistence,
+// sort order, ...) is untouched by this.
+static int64_t display_now(void) {
+  return s_test_freeze_display ? s_test_freeze_now : now_s();
+}
+
+// A deliberately simple always-24h "HH:MM" rendering of display_now(),
+// used by draw_bottom_bar() and refresh_alarm_clock_text() (the alarm
+// screen's own bottom-left clock) in place of the real
+// clock_copy_time_string()/localtime(time(NULL)) while frozen - both of
+// those read the system time-of-day directly, not through now_s()/
+// display_now(), so neither can be pinned by overriding our own clock;
+// substituting our own minimal render is the only way to make either
+// test-deterministic too. Plain UTC seconds-of-day arithmetic on the
+// frozen epoch value, not localtime()/strftime() - avoids any timezone/
+// locale uncertainty, and test screenshots don't need to replicate the
+// real clock's exact 12h/AM-PM typography, just be stable.
+static void copy_frozen_clock_string(char *buf, size_t n) {
+  // A fixed, hardcoded placeholder - NOT derived from s_test_freeze_now.
+  // Unlike a timer's remaining time (which must correlate with whatever
+  // real end_time was just seeded, so it deliberately DOES use
+  // s_test_freeze_now), there is no "correct" clock value to preserve
+  // here - any stable string is equally fine. Deriving it from
+  // s_test_freeze_now would make it depend on exactly which real second
+  // FreezeDisplay happened to be sent on, which is NOT reproducible
+  // across separate runs (real container startup/setup timing varies) -
+  // a hardcoded constant sidesteps that entirely. "12:00" deliberately
+  // matches the containerized test harness's own FAKETIME start instant
+  // (see run-sequence-in-container.sh) - purely cosmetic (a sequence that
+  // deliberately runs unfrozen, like alarm_overtime_display.seq, reads
+  // real time near "12:00" too instead of near "00:00"), never load-
+  // bearing.
+  snprintf(buf, n, "12:00");
+}
+
 // Seconds since app launch, regardless of the launch-sync config toggle — used
 // for the bottom bar's always-on elapsed display.
 static int32_t raw_launch_elapsed_s(void) {
+  if (s_test_freeze_display) { return s_test_freeze_elapsed; }
   if (s_app_launch_s <= 0) { return 0; }
   int64_t d = now_s() - s_app_launch_s;
   if (d < 0) { d = 0; }
@@ -278,7 +336,8 @@ static void draw_bottom_bar(GContext *gctx, GRect bounds) {
     0, GCornerNone);
 
   char left[16];
-  clock_copy_time_string(left, sizeof(left));
+  if (s_test_freeze_display) { copy_frozen_clock_string(left, sizeof(left)); }
+  else { clock_copy_time_string(left, sizeof(left)); }
   char elapsed[16];
   tc_format_remaining(elapsed, sizeof(elapsed), raw_launch_elapsed_s());
   char right[24];
@@ -324,14 +383,15 @@ static bool wc_is_open(void) {
 // declared further down); forward-declared here for close_to_watchface().
 //
 // s_last_wakeup_arm_result is a single global flag, not per-timer - right
-// after wc_accept() evicts a DIFFERENT timer's plan to accept one for the
-// current target, this flag reads OK (describing the current target, whose
-// accept just succeeded), so this function will say "no conflict" even
-// though the evicted timer now has zero real wakeup. This looks like a bug
-// and was flagged as one in review, then retracted as safe - see the
-// invariant spelled out in wc_accept()'s own comment (idx is always the
-// current soonest target, so any timer it evicts is guaranteed to have a
-// LATER real end_time, and idx's own new wakeup is guaranteed to fire
+// after try_auto_early_wake() evicts a DIFFERENT timer's plan to adopt one
+// for the current target, this flag reads OK (describing the current
+// target, whose adoption just succeeded), so this function will say "no
+// conflict" even though the evicted timer now has zero real wakeup. This
+// looks like a bug and was flagged as one in review, then retracted as
+// safe - see the invariant spelled out in try_auto_early_wake()'s own
+// comment (idx is always the current soonest target, so any timer it
+// evicts is guaranteed to have a LATER real end_time, and idx's own new
+// wakeup is guaranteed to fire
 // before idx's own end - so the evicted timer always gets revisited with
 // time to spare before its own deadline, never after it). Don't
 // "fix" this by making the flag timer-aware without re-reading that
@@ -433,8 +493,8 @@ static void idle_fire(void *ctx) {
 static void idle_reset(void) {
   if (s_config_open) return;           // never (re)arm while the phone config page is open
   if (s_foreground_hold_timer_id) {
-    // "Keep app in foreground" was chosen from the wakeup-conflict window
-    // (wc_keep_foreground): suppress auto-exit-to-watchface entirely until
+    // "Ok"/"Don't exit" was chosen from the wakeup-conflict window
+    // (wc_ok): suppress auto-exit-to-watchface entirely until
     // that specific timer stops running (fires, is stopped, or deleted) -
     // self-clearing here rather than polled anywhere else, so every normal
     // idle_reset() call site (button presses, window .appear) just works.
@@ -496,6 +556,85 @@ static WakeupArmResult s_last_wakeup_arm_result = WAKEUP_ARM_NONE;
 // whatever was blocking it may well have cleared.
 static int find_soonest_unarmed_running_idx(void); // defined below; the real culprit for WAKEUP_ARM_FAILED
 static void abandon_early_wake_if_for(uint32_t timer_id); // defined below; retires a matching accepted early-wake plan
+#ifdef APP_TEST_HOOKS
+// Test-only: simulates other apps' wakeups occupying specific minutes,
+// without needing a real colliding wakeup from another app (see
+// tests/wakeup_test_app for that alternative). Each configured offset is
+// relative to whichever timer's end_time a given wakeup_schedule() attempt
+// is actually FOR - not an absolute epoch time - so the same configuration
+// keeps meaning the same thing regardless of which timer is currently
+// being evaluated or how long test setup took to run. Split into two
+// arrays (>=0 minutes after the target's own minute / >0 minutes before
+// it) rather than one signed list, so parsing never has to deal with a
+// leading '-' - see MESSAGE_KEY_TestBlockedSystemWakeupMinuteOffsetsPos/Neg
+// in inbox_received(). Deliberately small fixed arrays: this is test
+// configuration typed by hand, not real data.
+#define TEST_BLOCKED_MINUTES_MAX 8
+static int s_test_blocked_after[TEST_BLOCKED_MINUTES_MAX];
+static int s_test_blocked_after_count = 0;
+static int s_test_blocked_before[TEST_BLOCKED_MINUTES_MAX];
+static int s_test_blocked_before_count = 0;
+
+// Parses a comma-separated list of non-negative decimal integers (e.g.
+// "0,1,2") into `out`, up to `max` entries - extra entries beyond `max`
+// are silently ignored (plenty of headroom for hand-typed test config).
+// Malformed/empty tokens are skipped rather than treated as errors.
+static void test_parse_offsets(const char *s, int *out, int *out_count, int max) {
+  *out_count = 0;
+  if (!s) { return; }
+  const char *p = s;
+  while (*p && *out_count < max) {
+    int v = 0;
+    bool any_digit = false;
+    while (*p >= '0' && *p <= '9') { v = v * 10 + (*p - '0'); p++; any_digit = true; }
+    if (any_digit) { out[(*out_count)++] = v; }
+    while (*p && *p != ',') { p++; }
+    if (*p == ',') { p++; }
+  }
+}
+
+// Test-only stand-in for wakeup_schedule(): refuses `at` exactly like the
+// real ±60s exclusion window would if `at` lands near any configured
+// occupied minute relative to `ref_end` (the end_time this specific
+// attempt is for), otherwise calls the real API through unchanged. Mirrors
+// wakeup_schedule()'s own "0 = repeating? no, this app never repeats
+// wakeups" third argument implicitly (always `true`, matching every real
+// call site below).
+//
+// The `diff > -60 && diff < 60` check below is a strict, open interval -
+// confirmed against the real firmware, not guessed: PebbleOS's actual
+// exclusion check (prv_check_count_and_availability_callback,
+// src/fw/services/normal/wakeup.c) is `(entry.timestamp -
+// WAKEUP_EVENT_WINDOW < candidate) && (candidate < entry.timestamp +
+// WAKEUP_EVENT_WINDOW)` with WAKEUP_EVENT_WINDOW=60 (wakeup.h) - exactly
+// this shape, boundary-exclusive on both sides. A candidate exactly 60s
+// from an existing wakeup is NOT refused. Since every configured offset
+// and every real search candidate (wakeup_find_early_slot()/
+// wakeup_find_soonest_slot() below) are whole-minute-aligned, two
+// adjacent minutes are always exactly 60s apart - i.e. exactly on this
+// excluded boundary - so a single offset does NOT also block its
+// neighboring minute. Don't "fix" this to `<=`/inclusive to let
+// spaced-out offsets span a range - that would stop matching real
+// hardware; list every minute you want occupied explicitly instead (see
+// wipe_and_prep_test_hooks.seq's own note on this).
+static WakeupId test_wakeup_schedule(time_t at, time_t ref_end) {
+  time_t ref_minute = (ref_end / 60) * 60;
+  for (int i = 0; i < s_test_blocked_after_count; i++) {
+    time_t occupied = ref_minute + (time_t)s_test_blocked_after[i] * 60;
+    time_t diff = at - occupied;
+    if (diff > -60 && diff < 60) { return -1; }
+  }
+  for (int i = 0; i < s_test_blocked_before_count; i++) {
+    time_t occupied = ref_minute - (time_t)s_test_blocked_before[i] * 60;
+    time_t diff = at - occupied;
+    if (diff > -60 && diff < 60) { return -1; }
+  }
+  return wakeup_schedule(at, 0, true);
+}
+#define WAKEUP_SCHEDULE_FOR(at, ref_end) test_wakeup_schedule((at), (ref_end))
+#else
+#define WAKEUP_SCHEDULE_FOR(at, ref_end) wakeup_schedule((at), 0, true)
+#endif
 static WakeupArmResult rearm_wakeup(void) {
   int32_t old = store_load_wakeup_id();
   int64_t soon;
@@ -512,7 +651,7 @@ static WakeupArmResult rearm_wakeup(void) {
   // 1) Try the exact desired time while KEEPING the old wakeup, so a success never
   //    leaves a gap with nothing armed. Fresh arms and changed-soonest re-arms take
   //    this path and land exactly on time.
-  WakeupId id = wakeup_schedule(base, 0, true);
+  WakeupId id = WAKEUP_SCHEDULE_FOR(base, (time_t)soon);
   if (id >= 0) {
     if (old >= 0 && old != id) { wakeup_cancel(old); }
     store_save_wakeup_id(id);
@@ -532,7 +671,7 @@ static WakeupArmResult rearm_wakeup(void) {
   //    freeing our own stale reservation. If a different app's wakeup is what's
   //    actually blocking it, this retry fails too, and that's reported as-is.
   if (old >= 0) { wakeup_cancel(old); store_save_wakeup_id(-1); }
-  id = wakeup_schedule(base, 0, true);
+  id = WAKEUP_SCHEDULE_FOR(base, (time_t)soon);
   if (id >= 0) {
     store_save_wakeup_id(id);
     int soonest_idx = find_soonest_unarmed_running_idx();
@@ -577,7 +716,7 @@ static bool wakeup_find_early_slot(time_t end_time, time_t *out_time, WakeupId *
   time_t candidate = (end_time / 60) * 60 - 60;   // whole minute, strictly before end_time
   for (int i = 0; i < WAKEUP_SLOT_SEARCH_MAX_MIN; i++) {
     if (candidate <= time(NULL)) { return false; }   // no room left before the real end
-    WakeupId id = wakeup_schedule(candidate, 0, true);
+    WakeupId id = WAKEUP_SCHEDULE_FOR(candidate, end_time);
     if (id >= 0) { *out_time = candidate; *out_id = id; return true; }
     candidate -= 60;
   }
@@ -723,10 +862,8 @@ static void apply_overwrite_only(int idx, int32_t secs, const char *name); // de
 static void wc_refresh_live_text(void); // defined below; live countdown in the wakeup-conflict menu
 static void wc_dismiss_for_natural_fire(void); // defined below; held timer fired while that menu was open
 static int find_soonest_unarmed_running_idx(void); // defined below; the real culprit for WAKEUP_ARM_FAILED
-static void handle_wakeup_result(WakeupArmResult wr, int acted_idx, bool resume_alarm_chain,
-    WcDeclineMode acted_mode, int32_t acted_revert_delta); // defined below; every rearm_wakeup() call routes through this
-static void open_wakeup_conflict_window_ex(int idx, bool resume_alarm_chain,
-    WcDeclineMode decline_mode, int32_t revert_delta, bool allow_cancel); // defined below
+static bool handle_wakeup_result(WakeupArmResult wr); // defined below; every rearm_wakeup() call routes through this. Returns true iff the conflict window is now blocking (caller should not chain onward itself).
+static void open_wakeup_conflict_window_ex(int idx, bool is_exit_prompt); // defined below
 
 static void start_with_secs(Timer *t, int32_t secs) {
   tc_extend(t, secs, now_s());  // secs may be <=0 (immediate expiry on next sweep/check)
@@ -734,19 +871,18 @@ static void start_with_secs(Timer *t, int32_t secs) {
 
 typedef enum { START_FIRED, START_OK } StartTailResult;
 
-// idx is the timer that was just started/restarted - handle_wakeup_result()
-// decides on its own whether that's actually the timer lacking a wakeup (the
-// common case: WC_DECLINE_RESET_IDLE, "Cancel" aborts this start) or some
-// other already-running timer entirely (WC_DECLINE_NOOP, this one is left
-// alone) and opens the conflict window itself when needed - callers no
-// longer need to branch on a separate "conflict" outcome.
+// handle_wakeup_result() figures out on its own whether the newly-
+// started/restarted timer (or some other already-running one) is the one
+// lacking a wakeup, and either silently arms an early wake or opens the
+// conflict window - callers don't need to branch on a separate "conflict"
+// outcome. A start always proceeds regardless of the outcome.
 static StartTailResult finish_start_tail(int idx) {
   int fired = sweep_expiries();
   persist_all();
   WakeupArmResult wr = rearm_wakeup();
   ensure_ticking(); reload_ui();
   if (fired) { show_next_pending_alarm(); return START_FIRED; }
-  handle_wakeup_result(wr, idx, false, WC_DECLINE_RESET_IDLE, 0);
+  handle_wakeup_result(wr);
   return START_OK;
 }
 
@@ -874,7 +1010,7 @@ static void alarm_stop(ClickRecognizerRef rec, void *ctx) {
       abandon_early_wake_if_for(s_timers[s_alarm_idx].id);
     }
     persist_all();
-    handle_wakeup_result(rearm_wakeup(), -1, false, WC_DECLINE_NOOP, 0);
+    handle_wakeup_result(rearm_wakeup());
     reload_ui();
   }
   if (show_next_pending_alarm()) { return; }
@@ -884,26 +1020,24 @@ static void alarm_stop(ClickRecognizerRef rec, void *ctx) {
 static void alarm_add_minute(ClickRecognizerRef rec, void *ctx) {
   // Snooze: run the finished timer for 1 more minute, then land back on
   // whatever was showing before (or chain to another queued alarm) - the
-  // timer keeps running throughout. If the wakeup for this can't be placed,
-  // the conflict window opens (resume_alarm_chain=true) instead of chaining
-  // immediately - wc_accept()/wc_decline() resume this same chain once the
-  // user decides; "Keep in foreground" pops the alarm window itself instead.
+  // timer keeps running throughout regardless of whether a wakeup could be
+  // placed for it. If a free early-wake slot exists, handle_wakeup_result()
+  // silently arms it and we chain onward immediately below; if not, the
+  // informational conflict window takes over instead ("Ok" pops the alarm
+  // window itself, landing on the main list without chaining further -
+  // same as if the user had picked "Keep app in foreground" here before).
   close_stale_timer_menus(s_alarm_idx);
   int idx = s_alarm_idx;
   if (idx >= 0 && idx < s_count) {
     tc_add(&s_timers[idx], 60, now_s());
     persist_all();
-    // Same reasoning as DACT_PLUS/DACT_MINUS: this timer's own end_time just
-    // moved, so any accepted early-wake plan already on file for it is
-    // stale - retire it so the rearm below is an honest fresh attempt
-    // against the new end_time.
+    // This timer's own end_time just moved, so any accepted early-wake plan
+    // already on file for it is stale - retire it so the rearm below is an
+    // honest fresh attempt against the new end_time.
     abandon_early_wake_if_for(s_timers[idx].id);
     WakeupArmResult wr = rearm_wakeup();
     ensure_ticking(); reload_ui();
-    if (wr == WAKEUP_ARM_FAILED) {
-      handle_wakeup_result(wr, idx, true, WC_DECLINE_REVERT_DELTA, 60);
-      return;
-    }
+    if (wr == WAKEUP_ARM_FAILED && handle_wakeup_result(wr)) { return; }
   }
   if (show_next_pending_alarm()) { return; }
   alarm_dismiss_tail();
@@ -1152,6 +1286,11 @@ static GFont alarm_title_font(const char *text, int box_w, int max_h, GSize *out
 // no need for a separate once-a-minute tick service (this app has none).
 static void refresh_alarm_clock_text(void) {
   if (!s_alarm_time) { return; }
+  if (s_test_freeze_display) {
+    copy_frozen_clock_string(s_alarm_clock_buf, sizeof(s_alarm_clock_buf));
+    text_layer_set_text(s_alarm_time, s_alarm_clock_buf);
+    return;
+  }
   time_t t = time(NULL);
   struct tm *lt = localtime(&t);
   if (clock_is_24h_style()) {
@@ -1415,7 +1554,7 @@ static void format_alarm_sub(int count) {
 // window is on top).
 static void format_alarm_elapsed(int idx) {
   if (idx < 0 || idx >= s_count) { s_alarm_elapsed_buf[0] = '\0'; return; }
-  int32_t elapsed = (int32_t)(now_s() - s_timers[idx].end_time);
+  int32_t elapsed = (int32_t)(display_now() - s_timers[idx].end_time);
   if (elapsed < 0) { elapsed = 0; }
   char buf[16];
   tc_format_remaining(buf, sizeof(buf), elapsed);
@@ -1473,8 +1612,8 @@ static void trigger_alarm(int idx, int count) {
 static void tick_cb(void *ctx) {
   int fired = sweep_expiries();
   // The wakeup-conflict window's held timer just fired naturally - only
-  // possible because "Keep app in foreground" kept the app open past its
-  // real end_time (see wc_keep_foreground). Get the window out of the way
+  // possible because "Ok"/"Don't exit" kept the app open past its
+  // real end_time (see wc_ok). Get the window out of the way
   // before show_next_pending_alarm() below, so the real alarm screen shows
   // cleanly on the list instead of stacking on top of this one.
   if (fired && s_wakeup_conflict_window && window_stack_get_top_window() == s_wakeup_conflict_window) {
@@ -1518,7 +1657,7 @@ static void tick_cb(void *ctx) {
     // Push before show_next_pending_alarm(): a just-fired alarm is more
     // urgent, so it should end up on top - plain window-stack semantics then
     // reveal the conflict window (if any) right after the alarm's dismissed.
-    handle_wakeup_result(rearm_wakeup(), -1, false, WC_DECLINE_NOOP, 0);
+    handle_wakeup_result(rearm_wakeup());
     show_next_pending_alarm();
   }
   s_tick = app_timer_register(1000, tick_cb, NULL);
@@ -1918,7 +2057,7 @@ static void dl_draw_header(GContext *gctx, const Layer *cell, uint16_t section, 
   if (s_detail_style == DSTYLE_LONG_EXISTING) { return; }
   if (s_detail_idx < 0 || s_detail_idx >= s_count) { return; }
   Timer *t = &s_timers[s_detail_idx];
-  int32_t shown = (s_detail_style == DSTYLE_LEGACY) ? tc_remaining_now(t, now_s()) : s_detail_edit_secs;
+  int32_t shown = (s_detail_style == DSTYLE_LEGACY) ? tc_remaining_now(t, display_now()) : s_detail_edit_secs;
   char rem_head[36];
   tc_format_remaining(rem_head, sizeof(rem_head), shown);
   const char *title = t->name[0] ? t->name : "<No label>";
@@ -2019,7 +2158,7 @@ static void dl_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
         // later for a timer that isn't even running anymore.
         abandon_early_wake_if_for(t->id);
         persist_all();
-        handle_wakeup_result(rearm_wakeup(), -1, false, WC_DECLINE_NOOP, 0);
+        handle_wakeup_result(rearm_wakeup());
         ensure_ticking();
         reload_ui();
         select_timer_row(idx);
@@ -2064,7 +2203,7 @@ static void dl_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
           abandon_early_wake_if_for(t->id);
         }
         persist_all();
-        handle_wakeup_result(rearm_wakeup(), -1, false, WC_DECLINE_NOOP, 0);
+        handle_wakeup_result(rearm_wakeup());
         reload_ui();
         if (!was_delete_on_finish) { select_timer_row(idx); }
         if (s_auto_return_stop) { close_to_watchface(); }
@@ -2096,17 +2235,12 @@ static void dl_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
         // retire it so rearm_wakeup() below makes an honest fresh exact-time
         // attempt against the NEW end_time instead of silently trusting a
         // plan that may no longer even land before the new end_time (see
-        // rearm_wakeup's own early-wake-covered fast path). If it turns out
-        // still conflicted, handle_wakeup_result() reopens the conflict
-        // window below with a freshly recomputed slot, same as any other
-        // fresh conflict.
+        // rearm_wakeup's own early-wake-covered fast path). The delta stays
+        // applied either way - handle_wakeup_result() silently arms an
+        // early wake if one's available, or opens the conflict window if
+        // not; it's never undone.
         if (was_running) { abandon_early_wake_if_for(t->id); }
-        // Only a TS_RUNNING timer's own wakeup is even in play here - a
-        // TS_PAUSED timer doesn't need one at all, so a conflict there can
-        // only be about some other timer entirely (WC_DECLINE_NOOP via
-        // acted_idx=-1), not this one's own +/-60s delta.
-        handle_wakeup_result(rearm_wakeup(), was_running ? idx : -1, false,
-            WC_DECLINE_REVERT_DELTA, secs);
+        handle_wakeup_result(rearm_wakeup());
         ensure_ticking();
         reload_ui(); menu_layer_reload_data(s_detail_menu);
         break;
@@ -2402,7 +2536,7 @@ static void del_confirm_do(void) {
   else { send_delete_timer(idx); }
   remove_timer_at(idx);
   persist_all();
-  handle_wakeup_result(rearm_wakeup(), -1, false, WC_DECLINE_NOOP, 0);
+  handle_wakeup_result(rearm_wakeup());
   reload_ui();
   s_detail_idx = -1;
   window_stack_remove(s_del_window, false);
@@ -2489,90 +2623,56 @@ static void open_delete_confirm(DelConfirmKind kind) {
 }
 
 // ---- wakeup-conflict menu ----
-// Row 0 is always "Keep app in foreground" (staying open sidesteps the
-// wakeup problem entirely - see wc_keep_foreground). Row 1 is
-// s_wakeup_conflict_option_buf, only present when an early slot was found
-// (see wakeup_find_early_slot) - accepting it wakes the app a little early,
-// vibrates once, and holds it open until the real fire time (see wc_accept
-// and init()'s early-wake consumption), without changing that real time at
-// all. The last row is always present too: "Cancel" (stops the timer) at a
-// fresh conflict, or "Exit anyway (risky)" (leaves it running with no
-// wakeup at all - see wc_exit_anyway) in the "you're trying to exit"
-// re-prompt, where silently stopping the timer would be the wrong default
-// - see s_wakeup_conflict_allow_cancel. The two full-sentence rows are
-// taller/wrap, unlike the single-word last row.
-typedef enum { WC_ROW_KEEP, WC_ROW_WAKE_EARLY, WC_ROW_CANCEL, WC_ROW_EXIT_ANYWAY } WcRowKind;
+// Row 0 is always "Ok" (informational open) or "Don't exit" (exit-attempt
+// re-prompt, see s_wakeup_conflict_is_exit_prompt) - both mean the same
+// thing: stay in the foreground, see wc_ok(). A second row, "Exit anyway",
+// is present only in the exit-attempt re-prompt - the deliberate, explicit
+// way to leave despite the unresolved conflict (see wc_exit_anyway). Both
+// rows are plain single-line labels, no live countdown text.
+typedef enum { WC_ROW_OK, WC_ROW_EXIT_ANYWAY } WcRowKind;
 
 static WcRowKind wc_row_kind(uint16_t row) {
-  if (row == 0) { return WC_ROW_KEEP; }
-  if (s_wakeup_conflict_slot_time && row == 1) { return WC_ROW_WAKE_EARLY; }
-  return s_wakeup_conflict_allow_cancel ? WC_ROW_CANCEL : WC_ROW_EXIT_ANYWAY;
+  return (row == 0) ? WC_ROW_OK : WC_ROW_EXIT_ANYWAY;
 }
 
-// KEEP and the last row (CANCEL or EXIT_ANYWAY - see wc_row_kind) are
-// always present; WAKE_EARLY only if a slot was found.
 static uint16_t wc_num_rows(MenuLayer *ml, uint16_t section, void *ctx) {
-  uint16_t n = 2;
-  if (s_wakeup_conflict_slot_time) { n++; }
-  return n;
+  return s_wakeup_conflict_is_exit_prompt ? 2 : 1;
 }
 static int16_t wc_cell_height(MenuLayer *ml, MenuIndex *ci, void *ctx) {
-  // Only WC_ROW_KEEP ("Keep app in foreground\nfor hh:mm:ss") is long
-  // enough to need two lines - WC_ROW_WAKE_EARLY ("Wake early in hh:mm:ss"),
-  // "Cancel" and "Exit anyway (risky)" all fit on one.
-  return wc_row_kind(ci->row) == WC_ROW_KEEP ? 64 : 34;
+  return 34;
 }
 
 static void wc_draw_row(GContext *gctx, const Layer *cell, MenuIndex *ci, void *ctx) {
   GRect b = layer_get_bounds(cell);
   WcRowKind kind = wc_row_kind(ci->row);
   GFont f = fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD);
-  if (kind == WC_ROW_KEEP) {
-    // Only this row is long enough to need wrapping across two lines - top-
-    // anchored to fill its (taller) cell, same as before.
-    graphics_draw_text(gctx, s_wakeup_conflict_keep_buf, f, GRect(6, 2, b.size.w - 12, b.size.h - 4),
-      GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
-    return;
-  }
-  // WC_ROW_WAKE_EARLY and the last row both fit on one line - vertically
-  // centered in their (shorter) cell, same treatment for both. In
-  // WC_DECLINE_NOOP contexts (the timer shown isn't the one this action
-  // acted on - see handle_wakeup_result), "Cancel" would be misleading:
-  // nothing is actually undone, the shown timer just keeps running with no
-  // wakeup at all - "Dismiss (risky)" says that honestly instead. Same
-  // "leaves it running, no wakeup" outcome as WC_ROW_EXIT_ANYWAY - see
-  // wc_exit_anyway.
   const char *label;
-  if (kind == WC_ROW_WAKE_EARLY) {
-    label = s_wakeup_conflict_option_buf;
-  } else if (kind == WC_ROW_EXIT_ANYWAY) {
-    label = "Exit anyway (risky)";
-  } else if (s_wakeup_conflict_decline_mode == WC_DECLINE_NOOP) {
-    label = "Dismiss (risky)";
+  if (kind == WC_ROW_OK) {
+    label = s_wakeup_conflict_is_exit_prompt ? "Don't exit" : "Ok";
   } else {
-    label = "Cancel";
+    label = "Exit anyway";
   }
   // -4: graphics_draw_text leaves a chunk of empty leading above the cap
   // line within its box (measured ~10px for GOTHIC_24_BOLD against a 26px
-  // box), so a naive (h-26)/2 - which centers the box, not the ink - leaves
-  // single-line text sitting visibly low in its cell. Confirmed by pixel
-  // measurement against an emulator screenshot: "Cancel" at the un-nudged
-  // offset had 14px clear above it vs 6px below; this nudge brings it to
-  // ~10/10.
+  // box), so a naive (h-26)/2 - which centers the box, not the ink -
+  // leaves single-line text sitting visibly low in its cell. Confirmed by
+  // pixel measurement against an emulator screenshot: the un-nudged offset
+  // had 14px clear above vs 6px below; this nudge brings it to ~10/10.
   int16_t y = (b.size.h - 26) / 2 - 4;
   graphics_draw_text(gctx, label, f, GRect(6, y, b.size.w - 12, 26),
     GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter, NULL);
 }
 
-// Cancels and forgets a pending ACCEPTED early-wake plan (see wc_accept),
-// but only if it's for `timer_id` specifically. early_wake_timer_id/
-// early_wake_wakeup_id track at most one accepted plan at a time by design -
-// wc_accept() deliberately just overwrites whichever timer currently holds
-// it when a different timer needs the slot instead (see wc_accept's own
-// comment for why that's fine: the existing rearm_wakeup()/conflict-
-// detection machinery re-prompts the evicted timer on its own, promptly,
-// once it matters again, so nothing needs to be preserved on its behalf
-// here). This function's job is narrower: retiring the CURRENT holder's
+// Cancels and forgets a pending ACCEPTED early-wake plan (see
+// try_auto_early_wake), but only if it's for `timer_id` specifically.
+// early_wake_timer_id/early_wake_wakeup_id track at most one accepted plan
+// at a time by design - try_auto_early_wake() deliberately just overwrites
+// whichever timer currently holds it when a different timer needs the slot
+// instead (see its own comment for why that's fine: the existing
+// rearm_wakeup()/conflict-detection machinery re-prompts the evicted timer
+// on its own, promptly, once it matters again, so nothing needs to be
+// preserved on its behalf here). This function's job is narrower: retiring
+// the CURRENT holder's
 // plan the moment it stops needing one (pause/stop/delete/etc.), rather
 // than leaving it dangling until incidentally overwritten later.
 static void abandon_early_wake_if_for(uint32_t timer_id) {
@@ -2583,178 +2683,31 @@ static void abandon_early_wake_if_for(uint32_t timer_id) {
   store_save_early_wake_timer_id(0);
 }
 
-// Shared cleanup for declining (Cancel, BACK, or the window being torn down
-// without an explicit choice): give up the speculatively-reserved slot if
-// one was found (it's not being used) and reset the timer to idle rather
-// than leave it running under a false promise that it will ever fire while
-// the app is closed.
-static void wc_apply_decline(void) {
-  s_wakeup_conflict_decided = true;
-  if (s_wakeup_conflict_slot_id >= 0) {
-    wakeup_cancel(s_wakeup_conflict_slot_id);
-    s_wakeup_conflict_slot_id = -1;
-  }
-  int idx = find_timer_index_by_id(s_wakeup_conflict_timer_id);
-  if (idx >= 0) {
-    Timer *t = &s_timers[idx];
-    abandon_early_wake_if_for(t->id);
-    switch (s_wakeup_conflict_decline_mode) {
-      case WC_DECLINE_RESET_IDLE:
-        tc_reset(t, now_s());
-        select_timer_row(idx);
-        break;
-      case WC_DECLINE_REVERT_DELTA:
-        // Undo exactly the +/-N seconds this call site just applied (a
-        // failed +1 min extend/snooze), leaving the timer running as it was
-        // before - resetting it to idle here would kill a timer that was
-        // running fine before this specific action.
-        tc_add(t, -s_wakeup_conflict_decline_revert_delta, now_s());
-        break;
-      case WC_DECLINE_NOOP:
-        // This timer isn't the one the triggering action acted on (see
-        // handle_wakeup_result) - leave its schedule untouched.
-        break;
-    }
-  }
-  persist_all(); rearm_wakeup(); ensure_ticking(); reload_ui();
-}
-
-// Resumes the alarm-dismiss chain if this window was opened mid-snooze
-// (see alarm_add_minute) - "Cancel"/"Use X" both continue exactly where
-// that action left off (chain to another queued alarm, or reveal whatever
-// was on screen before). "Keep in foreground" (wc_keep_foreground) instead
-// clears this itself, since it deliberately skips further chaining.
-static void wc_resume_alarm_chain_if_needed(void) {
-  if (!s_wakeup_conflict_resume_alarm_chain) { return; }
-  s_wakeup_conflict_resume_alarm_chain = false;
-  if (show_next_pending_alarm()) { return; }
-  alarm_dismiss_tail();
-}
-
-static void wc_decline(void) {
-  wc_apply_decline();
-  window_stack_remove(s_wakeup_conflict_window, true);
-  wc_resume_alarm_chain_if_needed();
-}
-
-// "Exit anyway (risky)": only offered in the "you're trying to exit"
-// re-prompt (see s_wakeup_conflict_allow_cancel/wc_row_kind), where "Cancel"
-// is deliberately unavailable because silently stopping a timer the user
-// already chose to keep running would be a surprising side effect of just
-// trying to exit. This is the escape hatch for that case instead: leave the
-// timer's own schedule completely untouched (same outcome as
-// WC_DECLINE_NOOP - see wc_apply_decline) and actually close the app, rather
-// than leaving the user stuck in the foreground with no way out until the
-// conflict resolves itself. Gives up the speculative early-wake reservation
-// first (not being used). Mirrors close_to_watchface's own successful-exit
-// path (exit_reason_set + window_stack_pop_all) instead of calling that
-// helper directly - it would just bail out while this window is still open
-// (see its own wc_is_open() guard).
+// "Exit anyway": only offered in the "you're trying to exit" re-prompt
+// (see s_wakeup_conflict_is_exit_prompt/wc_row_kind) - the deliberate,
+// explicit way to leave despite the unresolved conflict. Leaves the
+// timer's own schedule completely untouched and actually closes the app.
+// Mirrors close_to_watchface's own successful-exit path (exit_reason_set +
+// window_stack_pop_all) instead of calling that helper directly - it
+// would just bail out while this window is still open (see its own
+// wc_is_open() guard).
 static void wc_exit_anyway(void) {
   s_wakeup_conflict_decided = true;
-  if (s_wakeup_conflict_slot_id >= 0) {
-    wakeup_cancel(s_wakeup_conflict_slot_id);
-    s_wakeup_conflict_slot_id = -1;
-  }
   abandon_early_wake_if_for(s_wakeup_conflict_timer_id);
   exit_reason_set(APP_EXIT_ACTION_PERFORMED_SUCCESSFULLY);
   window_stack_pop_all(true);
 }
 
-// Accepting the early wake-up: the speculative reservation from
-// wakeup_find_early_slot() becomes the app's real tracked wakeup as-is (no
-// separate cancel/reschedule needed - it was already a valid, armed
-// wakeup_schedule() success). Unlike the old "Use X" row this replaced,
-// the timer's own end_time is deliberately left untouched - the real fire
-// time never changes, only whether the app happens to be open for it.
-// store_save_early_wake_timer_id() records which timer this wake-up is for
-// so init() can recognize it (vibrate + hold foreground) even after a full
-// app restart. Tracked in its OWN persisted slot (store_save_early_wake_
-// wakeup_id), separate from store_save_wakeup_id's "primary" wakeup - a
-// LATER rearm_wakeup() for a completely different running timer only ever
-// touches the primary slot, so it can never cancel this accepted early
-// wake out from under an unrelated timer (see rearm_wakeup/deinit()'s own
-// scoped checks). Marking s_last_wakeup_arm_result OK here (a wakeup IS
-// armed now, just an early one) is what lets the already-existing
-// exit-guard (exit_guard_appear) silently allow closing the app afterward.
-static void wc_accept(void) {
+// "Ok" (informational open) / "Don't exit" (exit-attempt re-prompt): both
+// rows mean the same thing - sidestep the wakeup problem by staying in the
+// foreground, since tick_cb's own 1s loop catches an expiry directly
+// regardless of any wakeup conflict. Holds off idle_reset()'s own
+// auto-exit-to-watchface until this specific timer stops running (see
+// s_foreground_hold_timer_id), then returns to the main list specifically,
+// regardless of which entry point (list/detail menu/dial) this window was
+// opened from.
+static void wc_ok(void) {
   s_wakeup_conflict_decided = true;
-  if (s_wakeup_conflict_timer_id && s_wakeup_conflict_slot_time) {
-    // Only one accepted early-wake plan is tracked at a time (by design).
-    // The existing entry usually IS just a stale leftover (this same
-    // timer's own earlier plan) - but it can legitimately belong to a
-    // DIFFERENT, still-running timer that's still relying on it (its own
-    // conflict never got re-resolved, it's just no longer the current
-    // global-soonest target). This deliberately evicts it anyway, rather
-    // than trying to preserve or rescue it: the existing rearm_wakeup()/
-    // find_soonest_unarmed_running_idx() machinery re-derives, from
-    // scratch, on nearly every subsequent action and tick, which running
-    // timer currently lacks a wakeup - so the evicted timer gets a fresh,
-    // accurate conflict prompt of its own the moment it matters again
-    // (becomes the global-soonest target), rather than silently trusting a
-    // possibly-stale old plan. The cost is an occasional re-prompt for a
-    // conflict the user technically already answered once; the benefit is
-    // not needing a second, side persisted mechanism (tried once, reverted -
-    // see wakeup_conflict_remaining_sites memory notes) just to avoid it.
-    //
-    // NOT A BUG, despite looking like one at first glance: right after this
-    // eviction, s_last_wakeup_arm_result is about to be set OK below for
-    // `idx` (this timer), while the evicted timer now has zero real wakeup -
-    // so has_unresolved_wakeup_conflict() (and thus the exit-guard/
-    // close_to_watchface) will NOT warn if the app is closed immediately
-    // afterward. This was flagged as a bug in review, then retracted: it's
-    // actually safe, by an invariant that always holds here. `idx` is only
-    // ever the CURRENT find_soonest_unarmed_running_idx() target (that's
-    // the only way this window opens at all - see open_wakeup_conflict_
-    // window_ex/handle_wakeup_result), so whichever timer's plan is being
-    // evicted here (if still running) necessarily has a LATER real end_time
-    // than idx's. And idx's own new wakeup (s_wakeup_conflict_slot_id) is
-    // always scheduled strictly BEFORE idx's own end_time (see
-    // wakeup_find_early_slot). Chaining those two facts: idx's wakeup is
-    // guaranteed to fire before idx's own end, which is before the evicted
-    // timer's end - so closing the app now cannot cause the evicted timer's
-    // alarm to be silently missed. Its own conflict (if it's still ongoing)
-    // gets a fresh, accurate re-prompt once idx's wakeup brings the app back
-    // and idx stops being the priority target - with time to spare before
-    // the evicted timer's real deadline, never after it. Don't try to "fix"
-    // this by making s_last_wakeup_arm_result / has_unresolved_wakeup_
-    // conflict() timer-aware - there's no actual safety gap to close, only
-    // a missing informational heads-up that a different timer's earlier
-    // resolution was quietly discarded.
-    int32_t old_ewid = store_load_early_wake_wakeup_id();
-    if (old_ewid >= 0) { wakeup_cancel(old_ewid); }
-    store_save_early_wake_wakeup_id(s_wakeup_conflict_slot_id);
-    store_save_early_wake_timer_id(s_wakeup_conflict_timer_id);
-    s_last_wakeup_arm_result = WAKEUP_ARM_OK;
-    persist_all();
-  }
-  // Ownership of this WakeupId has now transferred to the dedicated early-
-  // wake slot above (a real, adopted wakeup, not a speculative reservation
-  // anymore) - clear our own tracking of it so a LATER conflict (opening
-  // this same window again, for this or another timer) can't mistake it
-  // for a stale leftover and wakeup_cancel() the wakeup we just
-  // deliberately accepted (see the defensive cancel at the top of
-  // open_wakeup_conflict_window_ex).
-  s_wakeup_conflict_slot_id = -1;
-  window_stack_remove(s_wakeup_conflict_window, true);
-  wc_resume_alarm_chain_if_needed();
-}
-
-// "Keep app in foreground": sidesteps the wakeup problem entirely rather
-// than resolving it - a timer only needs a wakeup to fire while the app is
-// CLOSED, since tick_cb's own 1s foreground loop catches an expiry directly
-// regardless of any wakeup conflict. Gives up the speculative reservation
-// (not needed - the original exact end_time is untouched) and holds off
-// idle_reset()'s own auto-exit-to-watchface until this specific timer
-// stops running (see s_foreground_hold_timer_id), then returns to the main
-// list specifically, regardless of which entry point (list/detail
-// menu/dial) this window was opened from.
-static void wc_keep_foreground(void) {
-  s_wakeup_conflict_decided = true;
-  if (s_wakeup_conflict_slot_id >= 0) {
-    wakeup_cancel(s_wakeup_conflict_slot_id);
-    s_wakeup_conflict_slot_id = -1;
-  }
   abandon_early_wake_if_for(s_wakeup_conflict_timer_id);
   if (s_wakeup_conflict_timer_id) { s_foreground_hold_timer_id = s_wakeup_conflict_timer_id; }
   idle_cancel();
@@ -2771,39 +2724,21 @@ static void wc_keep_foreground(void) {
     window_stack_remove(s_alarm_window, false);
     s_alarm_from_wakeup_launch = false;
   }
-  // Deliberately skips wc_resume_alarm_chain_if_needed() - "keep in
-  // foreground" always lands on the main list without further chaining.
-  s_wakeup_conflict_resume_alarm_chain = false;
 }
 
 // The held timer fired naturally while this window was still open (only
-// possible because the app stayed in the foreground - see
-// wc_keep_foreground/tick_cb) - the conflict is moot, so just get out of
-// the way for the real alarm screen rather than running any decline/accept
-// cleanup (the timer legitimately expired; it must not be reset to idle).
+// possible because the app stayed in the foreground - see wc_ok/tick_cb) -
+// the conflict is moot, so just get out of the way for the real alarm
+// screen (the timer legitimately expired; it must not be touched).
 static void wc_dismiss_for_natural_fire(void) {
   s_wakeup_conflict_decided = true;
-  if (s_wakeup_conflict_slot_id >= 0) {
-    wakeup_cancel(s_wakeup_conflict_slot_id);
-    s_wakeup_conflict_slot_id = -1;
-  }
-  // This timer just fired for real, so any accepted early-wake plan still
-  // on file FOR IT is now moot too (same reasoning as wc_apply_decline/
-  // wc_exit_anyway/wc_keep_foreground) - without this, a plan that
-  // survived a re-conflict on this same timer (accept early wake, then
-  // get re-prompted again before it fired - see rearm_wakeup's own
-  // early-wake awareness) would leak: its real OS-level wakeup never
-  // cancelled, and unreachable forever once this timer stops running,
-  // since timer ids are never reused.
   abandon_early_wake_if_for(s_wakeup_conflict_timer_id);
   window_stack_remove(s_wakeup_conflict_window, true);
 }
 
 static void wc_menu_select(MenuLayer *ml, MenuIndex *ci, void *ctx) {
   switch (wc_row_kind(ci->row)) {
-    case WC_ROW_KEEP: wc_keep_foreground(); break;
-    case WC_ROW_WAKE_EARLY: wc_accept(); break;
-    case WC_ROW_CANCEL: wc_decline(); break;
+    case WC_ROW_OK: wc_ok(); break;
     case WC_ROW_EXIT_ANYWAY: wc_exit_anyway(); break;
   }
 }
@@ -2825,14 +2760,10 @@ static void wc_down_click(ClickRecognizerRef rec, void *ctx) {
 }
 
 static void wc_back_click(ClickRecognizerRef rec, void *ctx) {
-  // In the "you're trying to exit" re-prompt (see
-  // open_wakeup_conflict_window()), BACK means the same thing "Keep app in
-  // foreground" does (stay) rather than "Cancel"'s stop-the-timer, or
-  // "Exit anyway"'s force-exit - both of the latter are deliberately only
-  // reachable by explicitly selecting their own row, not via a plain BACK
-  // press that could be an accidental double-press.
-  if (s_wakeup_conflict_allow_cancel) { wc_decline(); }
-  else { wc_keep_foreground(); }
+  // BACK always means "Ok"/"Don't exit" (stay) - "Exit anyway" is
+  // deliberately only reachable by explicitly selecting its own row, not
+  // via a plain BACK press that could be an accidental double-press.
+  wc_ok();
 }
 
 static void wc_click_config(void *ctx) {
@@ -2843,53 +2774,93 @@ static void wc_click_config(void *ctx) {
 }
 
 static void ml_draw_state_icon(GContext *gctx, int x, int y, TimerState st, GColor color); // defined below
+static void ml_draw_arrow_progress(GContext *gctx, GRect box, float frac, GColor outline, GColor fill); // defined below
+static void ml_row_colors(const Timer *t, bool selected, int64_t now, GColor *bg, GColor *fg); // defined below
+static void ml_draw_primary_line(GContext *gctx, GRect b, const Timer *t, GColor fg); // defined below
+static void ml_draw_detail_line(GContext *gctx, GRect b, const Timer *t, GColor fg); // defined below
 
-// Identifying row: state icon + duration (left), label (right) - same
-// left/right layout and icon as the main list's own single-line row
-// (ml_draw_row), so the timer this warning is about reads consistently
-// with how it's shown everywhere else.
+// Row heights for the main list's primary (single-line) and detail
+// (remaining -> elapsed) sub-rows - also used by the wakeup-conflict
+// window's identifying banner (see wc_ident_update_proc) since it reuses
+// this same two-line layout at the same sizes. Redefined identically at
+// the main list's own MlRowKind block further down (ml_row_height_for_kind).
+#define ML_ROW_H_PRIMARY 32
+#define ML_ROW_H_DETAIL  28
+
+// Identifying banner: the conflicting timer's full row, drawn with the
+// SAME code the main list uses for its own selected/expanded row
+// (ml_draw_primary_line/ml_draw_detail_line + ml_row_colors, selected=true
+// - the only style the main list ever shows this two-line layout in) so it
+// reads and colors identically to "looking straight at this timer's row"
+// there, rather than a separately-maintained re-implementation.
 static void wc_ident_update_proc(Layer *layer, GContext *gctx) {
   GRect b = layer_get_bounds(layer);
-  graphics_context_set_fill_color(gctx, GColorRed);
-  graphics_fill_rect(gctx, b, 0, GCornerNone);
-  graphics_context_set_text_color(gctx, GColorWhite);
-  GFont f = fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD);
-  int ty = (b.size.h - 26) / 2;
-  TimerState st = TS_RUNNING;
   Timer *wct = find_timer_by_id(s_wakeup_conflict_timer_id);
-  if (wct) { st = wct->state; }
-  int icon_x = 6;
-  int icon_y = ty + (26 - 12) / 2 + 3;
-  ml_draw_state_icon(gctx, icon_x, icon_y, st, GColorWhite);
-  int dur_x = icon_x + 16;
-  graphics_draw_text(gctx, s_wakeup_conflict_ident_dur, f, GRect(dur_x, ty, b.size.w - dur_x - 6, 26),
-    GTextOverflowModeFill, GTextAlignmentLeft, NULL);
-  graphics_draw_text(gctx, s_wakeup_conflict_ident_label, f, GRect(6, ty, b.size.w - 12, 26),
-    GTextOverflowModeTrailingEllipsis, GTextAlignmentRight, NULL);
+  GColor bg = GColorBlack, fg = GColorWhite;
+  if (wct) { ml_row_colors(wct, /*selected=*/true, display_now(), &bg, &fg); }
+  graphics_context_set_fill_color(gctx, bg);
+  graphics_fill_rect(gctx, b, 0, GCornerNone);
+  if (!wct) { return; }
+  GRect top = GRect(b.origin.x, b.origin.y, b.size.w, ML_ROW_H_PRIMARY);
+  GRect bottom = GRect(b.origin.x, b.origin.y + ML_ROW_H_PRIMARY, b.size.w, ML_ROW_H_DETAIL);
+  ml_draw_primary_line(gctx, top, wct, fg);
+  ml_draw_detail_line(gctx, bottom, wct, fg);
 }
 
 static void wc_window_load(Window *w) {
+  // MenuLayer only fills the rows get_num_rows() actually reports (34px
+  // each - see wc_cell_height); with fewer rows than fit the menu's own
+  // allocated height, whatever's left below them is empty space, not
+  // painted by MenuLayer's normal-row color at all. Set the window's own
+  // background to the same red so that leftover space (and any of the
+  // window visible for a frame before the menu layer is added) matches
+  // instead of showing through as the default black/white.
+  window_set_background_color(w, GColorRed);
   Layer *root = window_get_root_layer(w);
   GRect b = layer_get_bounds(root);
   // Same size as the main list's own hint text (empty_hint_update_proc),
   // bolded for emphasis here. Height is measured from the actual message
-  // rather than a fixed guess, so the menu below sits right after it
-  // instead of leaving a large gap for shorter messages.
+  // rather than a fixed guess (with minimal padding - see msg_h below), so
+  // the menu below sits right after it instead of leaving a gap.
   GFont msg_font = fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD);
-  // Identifying row (icon + duration left, label right) sits above the
-  // explanation text, both on the same red, edge-to-edge, top-flush banner.
-  const int ident_h = 32;
+  // Identifying banner (the timer's full row, in its own main-list-style
+  // colors - see wc_ident_update_proc) sits above the red warning text,
+  // top-flush, edge to edge.
+  const int ident_h = ML_ROW_H_PRIMARY + ML_ROW_H_DETAIL;
   s_wakeup_conflict_ident_layer = layer_create(GRect(0, 0, b.size.w, ident_h));
   layer_set_update_proc(s_wakeup_conflict_ident_layer, wc_ident_update_proc);
   layer_add_child(root, s_wakeup_conflict_ident_layer);
 
   // Text still wraps at a slightly narrower width (a little breathing room
   // off each edge) even though the red background itself spans the full
-  // screen width, edge to edge.
+  // screen width, edge to edge. This message box is the only red element
+  // in the window - the identifying banner and action rows use their own
+  // (non-red) coloring.
   const int msg_text_w = b.size.w - 8;
   GSize msg_sz = graphics_text_layout_get_content_size(s_wakeup_conflict_msg_buf, msg_font,
       GRect(0, 0, msg_text_w, 2000), GTextOverflowModeWordWrap, GTextAlignmentCenter);
-  const int msg_h = msg_sz.h + 6;
+  // graphics_text_layout_get_content_size() over-reports height for
+  // word-wrapped GOTHIC_24_BOLD text - confirmed by pixel measurement
+  // against an emulator screenshot: reported height left a lot of dead red
+  // space below the last line's actual ink. The over-report scales with
+  // line count (not a flat constant), so a flat subtraction from msg_sz.h
+  // works for whatever line count it happened to be tuned against and
+  // clips text for any other line count (confirmed - a longer message that
+  // wrapped to the same visual line count as before still got its last
+  // line clipped). Instead, derive the actual line count by dividing by a
+  // single line's own reported height (both figures share the same
+  // per-line over-report, so the ratio is accurate regardless of it), then
+  // size the box from that line count times a known-good tight per-line
+  // height (26px - matches the GOTHIC_24_BOLD single-line box height used
+  // elsewhere in this window, e.g. wc_draw_row) plus a small margin.
+  GSize one_line_sz = graphics_text_layout_get_content_size("Ag", msg_font,
+      GRect(0, 0, msg_text_w, 100), GTextOverflowModeFill, GTextAlignmentCenter);
+  int line_count = 1;
+  if (one_line_sz.h > 0) {
+    line_count = (msg_sz.h + one_line_sz.h / 2) / one_line_sz.h;
+    if (line_count < 1) { line_count = 1; }
+  }
+  const int msg_h = line_count * 26 + 6;
   s_wakeup_conflict_msg = text_layer_create(GRect(0, ident_h, b.size.w, msg_h));
   text_layer_set_background_color(s_wakeup_conflict_msg, GColorRed);
   text_layer_set_text_color(s_wakeup_conflict_msg, GColorWhite);
@@ -2899,7 +2870,7 @@ static void wc_window_load(Window *w) {
   text_layer_set_text(s_wakeup_conflict_msg, s_wakeup_conflict_msg_buf);
   layer_add_child(root, text_layer_get_layer(s_wakeup_conflict_msg));
 
-  const int menu_top = ident_h + msg_h + 10;
+  const int menu_top = ident_h + msg_h;   // flush against the message box, no gap
   s_wakeup_conflict_menu = menu_layer_create(GRect(0, menu_top, b.size.w, b.size.h - menu_top));
   menu_layer_set_callbacks(s_wakeup_conflict_menu, NULL, (MenuLayerCallbacks){
     .get_num_rows = wc_num_rows,
@@ -2907,7 +2878,12 @@ static void wc_window_load(Window *w) {
     .draw_row = wc_draw_row,
     .select_click = wc_menu_select,
   });
-  menu_layer_set_normal_colors(s_wakeup_conflict_menu, GColorWhite, GColorBlack);
+  // The action rows (and the space below them, filled by MenuLayer with
+  // its own normal-row color) continue the same red used by the warning
+  // message box above, rather than switching to the main list's ordinary
+  // white/black scheme - unselected rows are red bg, the selected row
+  // inverts to black bg. Text stays white in both states.
+  menu_layer_set_normal_colors(s_wakeup_conflict_menu, GColorRed, GColorWhite);
   menu_layer_set_highlight_colors(s_wakeup_conflict_menu, GColorBlack, GColorWhite);
   window_set_click_config_provider(w, wc_click_config);
   layer_add_child(root, menu_layer_get_layer(s_wakeup_conflict_menu));
@@ -2916,47 +2892,27 @@ static void wc_window_load(Window *w) {
 static void wc_window_unload(Window *w) {
   if (!s_wakeup_conflict_decided) {
     // Torn down without an explicit choice (e.g. the app itself closing) -
-    // decline defensively (but don't also try to pop this already-unloading
-    // window - see wc_decline) so a reserved-but-unused speculative wakeup
-    // is never left dangling and the timer isn't left running under a false
-    // promise that it will fire.
-    wc_apply_decline();
+    // apply the same safe default as "Ok"/"Don't exit" (stay foregrounded),
+    // without trying to pop this already-unloading window or any other
+    // (see wc_ok) - just the state bookkeeping.
+    s_wakeup_conflict_decided = true;
+    abandon_early_wake_if_for(s_wakeup_conflict_timer_id);
+    if (s_wakeup_conflict_timer_id) { s_foreground_hold_timer_id = s_wakeup_conflict_timer_id; }
   }
   text_layer_destroy(s_wakeup_conflict_msg); s_wakeup_conflict_msg = NULL;
   layer_destroy(s_wakeup_conflict_ident_layer); s_wakeup_conflict_ident_layer = NULL;
   menu_layer_destroy(s_wakeup_conflict_menu); s_wakeup_conflict_menu = NULL;
 }
 
-// Recomputes both option labels from the current time, so they count down
-// live rather than staying frozen at whatever they read when the window
-// opened. Both are fixed-width "hh:mm:ss" (tc_format_fixed, not
-// tc_format_remaining) so it's always unambiguous which field is which.
-// Called once from open_wakeup_conflict_window (initial text) and every
-// tick thereafter while the window is on top (see tick_cb).
+// Marks the identifying banner dirty so its live remaining/elapsed time and
+// progress bar (drawn straight from the Timer* - see wc_ident_update_proc)
+// redraw with the current values. Called once from
+// open_wakeup_conflict_window_ex (initial draw) and every tick thereafter
+// while the window is on top (see tick_cb). The menu rows themselves are
+// static labels ("Ok"/"Don't exit"/"Exit anyway") with no live text, so
+// they don't need reloading here.
 static void wc_refresh_live_text(void) {
-  Timer *wct = find_timer_by_id(s_wakeup_conflict_timer_id);
-  if (wct) {
-    int32_t remain = (int32_t)(wct->end_time - now_s());
-    if (remain < 0) { remain = 0; }
-    char dur[24];
-    tc_format_fixed(dur, sizeof(dur), remain);
-    snprintf(s_wakeup_conflict_keep_buf, sizeof(s_wakeup_conflict_keep_buf),
-        "Keep app in foreground\nfor %s", dur);
-  }
-  // s_wakeup_conflict_option_buf mirrors the same live-countdown treatment:
-  // slot_time is the early wake-up moment on offer (see wakeup_find_early_slot),
-  // strictly before the timer's own end_time (untouched by accepting this),
-  // so slot_time - now() is how long until that early wake-up - the same
-  // quantity/shape as the "keep in foreground" row above, just counting
-  // down to a different (earlier) target time.
-  if (s_wakeup_conflict_slot_time) {
-    int32_t remain = (int32_t)(s_wakeup_conflict_slot_time - now_s());
-    if (remain < 0) { remain = 0; }
-    char dur[24];
-    tc_format_fixed(dur, sizeof(dur), remain);
-    snprintf(s_wakeup_conflict_option_buf, sizeof(s_wakeup_conflict_option_buf), "Wake early in %s", dur);
-  }
-  if (s_wakeup_conflict_menu) { menu_layer_reload_data(s_wakeup_conflict_menu); }
+  if (s_wakeup_conflict_ident_layer) { layer_mark_dirty(s_wakeup_conflict_ident_layer); }
 }
 
 // Finds the timer a WAKEUP_ARM_FAILED result is actually about - mirrors
@@ -2982,94 +2938,111 @@ static bool has_unresolved_wakeup_conflict(int *out_idx) {
   return true;
 }
 
+// Tries to silently resolve a conflict by adopting an early wake-up: the
+// speculative reservation from wakeup_find_early_slot() becomes the app's
+// real tracked wakeup as-is (no separate cancel/reschedule needed - it was
+// already a valid, armed wakeup_schedule() success) if a free slot exists.
+// The timer's own end_time is deliberately left untouched - the real fire
+// time never changes, only whether the app happens to be open for it. This
+// is never a user decision - if a slot exists, it's adopted immediately,
+// no window shown at all. Returns true if resolved this way.
+//
+// store_save_early_wake_timer_id() records which timer this wake-up is for
+// so init() can recognize it (vibrate + hold foreground) even after a full
+// app restart. Tracked in its OWN persisted slot (store_save_early_wake_
+// wakeup_id), separate from store_save_wakeup_id's "primary" wakeup - a
+// LATER rearm_wakeup() for a completely different running timer only ever
+// touches the primary slot, so it can never cancel this accepted early
+// wake out from under an unrelated timer (see rearm_wakeup/deinit()'s own
+// scoped checks).
+static bool try_auto_early_wake(int idx) {
+  Timer *t = &s_timers[idx];
+  time_t slot_time = 0;
+  WakeupId slot_id = -1;
+  if (!wakeup_find_early_slot(t->end_time, &slot_time, &slot_id)) { return false; }
+  // Only one accepted early-wake plan is tracked at a time (by design). The
+  // existing entry usually IS just a stale leftover (this same timer's own
+  // earlier plan) - but it can legitimately belong to a DIFFERENT,
+  // still-running timer that's still relying on it (its own conflict never
+  // got re-resolved, it's just no longer the current global-soonest
+  // target). This deliberately evicts it anyway: rearm_wakeup()/
+  // find_soonest_unarmed_running_idx() re-derive, from scratch, on nearly
+  // every subsequent action and tick, which running timer currently lacks
+  // a wakeup - so the evicted timer gets a fresh, accurate conflict check
+  // of its own the moment it matters again (becomes the global-soonest
+  // target), rather than silently trusting a possibly-stale old plan.
+  //
+  // NOT A BUG, despite looking like one at first glance: right after this
+  // eviction, s_last_wakeup_arm_result is about to be set OK below for
+  // `idx` (this timer), while the evicted timer now has zero real wakeup -
+  // so has_unresolved_wakeup_conflict() (and thus the exit-guard/
+  // close_to_watchface) will NOT warn if the app is closed immediately
+  // afterward. This was flagged as a bug in review, then retracted: it's
+  // actually safe, by an invariant that always holds here. `idx` is only
+  // ever the CURRENT find_soonest_unarmed_running_idx() target, so
+  // whichever timer's plan is being evicted here (if still running)
+  // necessarily has a LATER real end_time than idx's. And idx's own new
+  // wakeup (slot_id) is always scheduled strictly BEFORE idx's own
+  // end_time (see wakeup_find_early_slot). Chaining those two facts: idx's
+  // wakeup is guaranteed to fire before idx's own end, which is before the
+  // evicted timer's end - so closing the app now cannot cause the evicted
+  // timer's alarm to be silently missed. Its own conflict (if still
+  // ongoing) gets a fresh, accurate check once idx's wakeup brings the app
+  // back and idx stops being the priority target - with time to spare
+  // before the evicted timer's real deadline, never after it. Don't try to
+  // "fix" this by making s_last_wakeup_arm_result / has_unresolved_wakeup_
+  // conflict() timer-aware - there's no actual safety gap to close, only a
+  // missing informational heads-up that a different timer's earlier
+  // resolution was quietly discarded.
+  int32_t old_ewid = store_load_early_wake_wakeup_id();
+  if (old_ewid >= 0) { wakeup_cancel(old_ewid); }
+  store_save_early_wake_wakeup_id(slot_id);
+  store_save_early_wake_timer_id(t->id);
+  s_last_wakeup_arm_result = WAKEUP_ARM_OK;
+  persist_all();
+  return true;
+}
+
 // Every rearm_wakeup() call site routes its result through here instead of
-// ignoring it. `acted_idx` is the timer (if any) this specific call site
-// just changed, with `acted_mode`/`acted_revert_delta` describing how
-// "Cancel" should undo THAT action - but only if it turns out to actually be
-// the timer lacking a wakeup. If the real culprit is a different
-// still-running timer entirely (the common case for stop/pause/delete/
-// reconcile/tick/init, none of which change what that other timer needs),
-// "Cancel" degrades to WC_DECLINE_NOOP: release the speculative slot and
-// leave that timer's schedule untouched, since there's no reason to alter a
-// timer the user didn't just act on.
-static void handle_wakeup_result(WakeupArmResult wr, int acted_idx, bool resume_alarm_chain,
-    WcDeclineMode acted_mode, int32_t acted_revert_delta) {
+// ignoring it. Returns true iff the informational conflict window is now
+// open and blocking (either freshly opened by this call, or already open
+// from an earlier one) - a caller that would otherwise proceed immediately
+// (e.g. alarm_add_minute's chain-to-next-alarm) checks this to know it must
+// wait instead of racing ahead. Returns false whenever nothing needs to
+// wait: no conflict, or one silently resolved via an automatic early wake.
+static bool handle_wakeup_result(WakeupArmResult wr) {
   s_last_wakeup_arm_result = wr;
-  if (wr != WAKEUP_ARM_FAILED) { return; }
+  if (wr != WAKEUP_ARM_FAILED) { return false; }
   int target = find_soonest_unarmed_running_idx();
-  if (target < 0) { return; }
+  if (target < 0) { return false; }
   // A conflict window is already open and already describing this EXACT
   // target - leave it alone. This function is called from many unrelated
   // sites (tick_cb's fired-branch, pause/stop, phone-config reconcile, ...)
-  // with their own acted_idx/mode, almost always -1/NOOP, purely for
-  // background bookkeeping about whatever THEY touched - not to make any
-  // statement about a timer they had nothing to do with. If that unrelated
-  // call's own freshly-recomputed `target` happens to be the SAME timer a
-  // window is already open for (the ordinary case: nothing about that
-  // timer's situation changed, it's just still the soonest), falling
-  // through to open_wakeup_conflict_window_ex() below would silently
-  // overwrite the window's established, possibly more specific context
-  // (decline_mode/revert_delta/allow_cancel/resume_alarm_chain - all reset
-  // to this call's generic defaults) even though nothing about the shown
-  // timer's own conflict actually changed. Confirmed to have silently
-  // turned "Cancel" into a no-op mid-display, dropped the "show the next
-  // queued alarm after this" obligation, and re-enabled "Cancel" in the
-  // exit-guard's deliberately non-cancellable re-prompt - see
-  // wakeup_conflict_remaining_sites memory notes. The window's own
-  // wc_refresh_live_text() (called every tick) already keeps its countdown
-  // accurate against the still-valid, already-reserved wakeup; nothing here
-  // needs to change just because an unrelated action also called rearm.
-  if (wc_is_open() && s_wakeup_conflict_timer_id == s_timers[target].id) { return; }
-  if (target == acted_idx) {
-    open_wakeup_conflict_window_ex(target, resume_alarm_chain, acted_mode, acted_revert_delta, true);
-  } else {
-    open_wakeup_conflict_window_ex(target, resume_alarm_chain, WC_DECLINE_NOOP, 0, true);
-  }
+  // purely for background bookkeeping about whatever THEY touched - not to
+  // make any statement about a timer they had nothing to do with. The
+  // window's own wc_refresh_live_text() (called every tick) already keeps
+  // its countdown accurate; nothing here needs to change just because an
+  // unrelated action also called rearm. See wakeup_conflict_remaining_sites
+  // memory notes for the original bug this guards against.
+  if (wc_is_open() && s_wakeup_conflict_timer_id == s_timers[target].id) { return true; }
+  // Wake-early is never a user decision - try it silently first. Only if
+  // no free slot exists does the informational window appear at all.
+  if (try_auto_early_wake(target)) { return false; }
+  open_wakeup_conflict_window_ex(target, false);
+  return true;
 }
 
-// Shown whenever handle_wakeup_result() sees a WAKEUP_ARM_FAILED: idx's
-// wakeup could not be placed at all (see rearm_wakeup/WAKEUP_ARM_FAILED).
-// Searches for (and speculatively reserves) the first whole-minute slot
-// wakeup_schedule() will actually accept, so the offered alternative time
-// is exact, not a guess. allow_cancel is false only for the re-prompt
-// opened via open_wakeup_conflict_window() (exit_guard_appear/
-// close_to_watchface) - see that wrapper's own comment for why.
-static void open_wakeup_conflict_window_ex(int idx, bool resume_alarm_chain,
-    WcDeclineMode decline_mode, int32_t revert_delta, bool allow_cancel) {
+// Shown whenever handle_wakeup_result() sees a WAKEUP_ARM_FAILED with no
+// free early-wake slot at all (see try_auto_early_wake): idx's wakeup
+// can't be placed by any means, so the app must stay open. is_exit_prompt
+// is true only for the re-prompt opened via open_wakeup_conflict_window()
+// (exit_guard_appear/close_to_watchface) - see that wrapper's own comment.
+static void open_wakeup_conflict_window_ex(int idx, bool is_exit_prompt) {
   s_wakeup_conflict_timer_id = s_timers[idx].id;
   s_wakeup_conflict_decided = false;
-  s_wakeup_conflict_resume_alarm_chain = resume_alarm_chain;
-  s_wakeup_conflict_decline_mode = decline_mode;
-  s_wakeup_conflict_decline_revert_delta = revert_delta;
-  s_wakeup_conflict_allow_cancel = allow_cancel;
-  // This can be re-entered while a previous, still-undecided reservation is
-  // outstanding - e.g. tick_cb()'s fired-branch calls handle_wakeup_result()
-  // for whichever timer just naturally expired regardless of whether this
-  // window is already open for a DIFFERENT timer's conflict. Without this,
-  // the old s_wakeup_conflict_slot_id is silently overwritten below and
-  // never cancelled: a real OS-level wakeup_schedule() reservation leaks
-  // permanently (until it fires on its own, as an unexplained early wake),
-  // and it can itself go on to self-conflict with a later, completely
-  // unrelated arm attempt - "another app has a wakeup" that's actually just
-  // this app's own forgotten one.
-  if (s_wakeup_conflict_slot_id >= 0) {
-    wakeup_cancel(s_wakeup_conflict_slot_id);
-  }
-  s_wakeup_conflict_slot_id = -1;
-  s_wakeup_conflict_slot_time = 0;
-  Timer *t = &s_timers[idx];
-  bool found = wakeup_find_early_slot(t->end_time, &s_wakeup_conflict_slot_time, &s_wakeup_conflict_slot_id);
-  // Identify which timer this is about - the window can now appear for a
-  // timer the user wasn't just interacting with (see handle_wakeup_result),
-  // so naming it (total duration + label) is essential, not just decorative.
-  // Drawn as its own row (see wc_ident_update_proc), same left/right layout
-  // as the main list's own rows (duration left, label right).
-  tc_format_fixed(s_wakeup_conflict_ident_dur, sizeof(s_wakeup_conflict_ident_dur), t->duration);
-  snprintf(s_wakeup_conflict_ident_label, sizeof(s_wakeup_conflict_ident_label), "%s",
-      t->name[0] ? t->name : "");
+  s_wakeup_conflict_is_exit_prompt = is_exit_prompt;
   snprintf(s_wakeup_conflict_msg_buf, sizeof(s_wakeup_conflict_msg_buf), "%s",
-      found ? "Conflicts with another app. Will wake early."
-            : "Conflicts with another app. Must stay foreground.");
+      "Timer conflicts with\nanother app's wakeup.\nMUST STAY OPEN.");
   wc_refresh_live_text();
   if (!s_wakeup_conflict_window) {
     s_wakeup_conflict_window = window_create();
@@ -3077,31 +3050,14 @@ static void open_wakeup_conflict_window_ex(int idx, bool resume_alarm_chain,
       .load = wc_window_load, .unload = wc_window_unload });
   }
   window_stack_push(s_wakeup_conflict_window, true);
+  vibes_short_pulse();
 }
 
 // Used exclusively by the "you're trying to exit and this is still
 // unresolved" re-prompt (exit_guard_appear/exit_guard_deferred_reopen,
-// close_to_watchface's redirect) - never for a fresh conflict. By this
-// point the timer isn't "just started" (that already happened, possibly a
-// while ago, and the user already chose to keep it going once) - offering
-// a "Cancel" that silently resets/stops it here would be a surprising,
-// destructive side effect of what's really just an exit attempt. So this
-// context swaps that row for "Exit anyway (risky)" instead (see
-// wc_exit_anyway/WC_ROW_EXIT_ANYWAY) - it still lets the user actually
-// leave, just without silently touching the timer to do it. If the user
-// actually wants to stop the timer, that stays a deliberate, separate
-// action via the detail menu's own Stop, not an incidental click here.
-//
-// decline_mode is WC_DECLINE_NOOP, not RESET_IDLE, even though the row
-// shown here is never actually WC_ROW_CANCEL (allow_cancel=false always
-// picks WC_ROW_EXIT_ANYWAY instead - see wc_row_kind): it's still the mode
-// wc_window_unload()'s abandoned-without-a-choice fallback would apply if
-// this window is torn down before the user picks anything. That fallback
-// must match "Exit anyway"'s own promise (leave the timer's schedule
-// completely untouched), not silently reset it - RESET_IDLE here would be
-// exactly the destructive surprise this whole re-prompt exists to avoid.
+// close_to_watchface's redirect) - never for a fresh conflict.
 static void open_wakeup_conflict_window(int idx) {
-  open_wakeup_conflict_window_ex(idx, false, WC_DECLINE_NOOP, 0, false);
+  open_wakeup_conflict_window_ex(idx, true);
 }
 
 // s_exit_guard_window's only handler. Reached whenever it becomes the top of
@@ -3223,7 +3179,7 @@ static void open_detail_window(int timer_idx, DetailStyle style) {
   if (timer_idx >= 0 && timer_idx < s_count) {
     Timer *t = &s_timers[timer_idx];
     if (style == DSTYLE_LEGACY) {
-      int32_t rem = tc_remaining_now(t, now_s());
+      int32_t rem = tc_remaining_now(t, display_now());
       s_detail_edit_secs = rem >= 1 ? rem : t->duration;
     } else if (style == DSTYLE_LONG_EXISTING) {
       s_detail_edit_secs = t->duration;
@@ -3567,6 +3523,111 @@ static int16_t ml_cell_height(MenuLayer *ml, MenuIndex *ci, void *ctx) {
   return ml_row_height_for_kind(info.kind);
 }
 
+// Detail sub-row content: value (remaining, or duration once stopped) plus
+// the arrow-shaped progress bar and elapsed time while running/paused (or
+// a plain "remaining" suffix once idle) - shared verbatim between the main
+// list's own selected/expanded row (ML_ROW_TIMER_DETAIL, called from
+// ml_draw_row below) and the wakeup-conflict window's identifying banner
+// (wc_ident_update_proc), so both render pixel-identically. `b` is the
+// sub-row's own box - all drawing is relative to its origin, so it can be
+// positioned anywhere (a menu cell always at (0,0); the conflict banner's
+// bottom half at a nonzero y).
+static void ml_draw_detail_line(GContext *gctx, GRect b, const Timer *t, GColor fg) {
+  graphics_context_set_text_color(gctx, fg);
+  bool small = (b.size.w <= 144);
+  bool running = (t->state == TS_RUNNING);
+  bool paused = (t->state == TS_PAUSED);
+  bool stopped = (t->state != TS_RUNNING && t->state != TS_PAUSED);
+  GFont f_value = fonts_get_system_font(
+    small
+      ? ((running || paused) ? FONT_KEY_GOTHIC_18_BOLD : FONT_KEY_GOTHIC_18)
+      : ((running || paused) ? FONT_KEY_GOTHIC_24_BOLD : FONT_KEY_GOTHIC_24)
+  );
+  GFont f_suffix = fonts_get_system_font(small ? FONT_KEY_GOTHIC_18 : FONT_KEY_GOTHIC_24);
+  int th = small ? 22 : 28;
+  int ty = (b.size.h - th) / 2 - 5;
+  char rem[24];
+  int32_t detail_secs = stopped ? t->duration : tc_remaining_now(t, display_now());
+  tc_format_fixed(rem, sizeof(rem), detail_secs);
+  char value_display[40];
+  snprintf(value_display, sizeof(value_display), "%s", rem);
+  if (!running && launch_sync_applies_for_timer(t)) {
+    char sync[16];
+    format_launch_sync_suffix(sync, sizeof(sync));
+    size_t len = strlen(value_display);
+    if (len + 1 < sizeof(value_display)) {
+      value_display[len++] = ' ';
+      value_display[len] = '\0';
+    }
+    strncat(value_display, sync, sizeof(value_display) - strlen(value_display) - 1);
+  }
+  graphics_draw_text(gctx, value_display, f_value, GRect(b.origin.x + 4, b.origin.y + ty, b.size.w - 8, th),
+    GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
+  GSize vw = graphics_text_layout_get_content_size(value_display, f_value,
+    GRect(0, 0, b.size.w, th), GTextOverflowModeFill, GTextAlignmentLeft);
+  int suffix_x = 4 + vw.w + 4;
+  if (running || paused) {
+    // "<remaining> -> <elapsed>": the arrow is a progress bar, filling
+    // left-to-right as elapsed grows toward the configured duration (fully
+    // filled once in overtime, since elapsed then exceeds duration). Shown
+    // for paused timers too, frozen at their remaining/elapsed at pause.
+    int32_t elapsed = t->duration - detail_secs;
+    float frac = (t->duration > 0) ? ((float)elapsed / (float)t->duration) : 1.f;
+    char elapsed_str[24];
+    tc_format_fixed(elapsed_str, sizeof(elapsed_str), elapsed);
+    GSize ew = graphics_text_layout_get_content_size(elapsed_str, f_value,
+      GRect(0, 0, b.size.w, th), GTextOverflowModeFill, GTextAlignmentLeft);
+    int arrow_h = small ? 10 : 12;
+    int arrow_y = ty + (th - arrow_h) / 2 + 1 + 2;
+    // Elapsed time anchors to the screen's right edge; the arrow stretches
+    // to fill whatever's left between the remaining-time text and it.
+    int elapsed_x = b.size.w - 4 - ew.w;
+    int arrow_x = suffix_x + 2;
+    int arrow_w = elapsed_x - 6 - arrow_x;
+    if (arrow_w >= 10) {
+      ml_draw_arrow_progress(gctx, GRect(b.origin.x + arrow_x, b.origin.y + arrow_y, arrow_w, arrow_h), frac, fg, fg);
+      graphics_context_set_text_color(gctx, fg);
+      graphics_draw_text(gctx, elapsed_str, f_value, GRect(b.origin.x + elapsed_x, b.origin.y + ty, b.size.w - 4 - elapsed_x, th),
+        GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
+    }
+  } else if (suffix_x < b.size.w - 8) {
+    graphics_draw_text(gctx, "remaining", f_suffix, GRect(b.origin.x + suffix_x, b.origin.y + ty, b.size.w - 4 - suffix_x, th),
+      GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
+  }
+}
+
+// Primary sub-row content: state icon + fixed-width HH:MM:SS time, then the
+// description - shared verbatim between the main list's single-line row
+// (ml_draw_row below) and the wakeup-conflict window's identifying banner.
+// See ml_draw_detail_line's own comment for the `b`-is-a-relocatable-box
+// convention.
+static void ml_draw_primary_line(GContext *gctx, GRect b, const Timer *t, GColor fg) {
+  graphics_context_set_text_color(gctx, fg);
+  bool small = (b.size.w <= 144);
+  GFont tf = fonts_get_system_font(small ? FONT_KEY_GOTHIC_18_BOLD : FONT_KEY_GOTHIC_24_BOLD);
+  int th = small ? 22 : 28;
+  int ty = (b.size.h - th) / 2 - 2;
+  int icon_x = 4;
+  int icon_y = ty + (th - 12) / 2 + 3;
+  ml_draw_state_icon(gctx, b.origin.x + icon_x, b.origin.y + icon_y, t->state, fg);
+  int time_x = icon_x + 16;
+  bool show_full_duration = (t->state == TS_RUNNING) || (t->state == TS_PAUSED);
+  int32_t primary_secs = show_full_duration ? t->duration : tc_remaining_now(t, now_s());
+  char rem[16]; tc_format_fixed(rem, sizeof(rem), primary_secs);
+  graphics_draw_text(gctx, rem, tf, GRect(b.origin.x + time_x, b.origin.y + ty, b.size.w - time_x - 4, th),
+    GTextOverflowModeFill, GTextAlignmentLeft, NULL);
+  // Start the description just after the time text (the fixed format renders a
+  // constant width) with a small gap — much tighter than the old 96px column.
+  GSize tw = graphics_text_layout_get_content_size(rem, tf,
+    GRect(0, 0, b.size.w, th), GTextOverflowModeFill, GTextAlignmentLeft);
+  int desc_x = time_x + tw.w + 4;
+  if (t->name[0]) {
+    graphics_draw_text(gctx, t->name, tf,
+      GRect(b.origin.x + desc_x, b.origin.y + ty, b.size.w - 4 - desc_x, th),
+      GTextOverflowModeTrailingEllipsis, GTextAlignmentRight, NULL);
+  }
+}
+
 static void ml_draw_row(GContext *gctx, const Layer *cell, MenuIndex *ci, void *ctx) {
   MlRowInfo info;
   if (!ml_row_info_for(ci->row, s_menu_selected_timer_idx, &info)) { return; }
@@ -3604,7 +3665,12 @@ static void ml_draw_row(GContext *gctx, const Layer *cell, MenuIndex *ci, void *
   // row uses a DARK shade of the same hue + white text so it still reads as the
   // cursor AND keeps its state colour; idle selected stays the plain black highlight.
   bool selected = (s_menu_selected_timer_idx == info.timer_idx);
-  int64_t now = now_s();
+  // display_now(), not now_s() - the overtime/running color tint must use
+  // the SAME time base as the printed remaining/elapsed text below
+  // (ml_draw_detail_line, also display_now()), or a frozen-for-testing row
+  // could show inconsistent text/color if real time crosses end_time
+  // before the screenshot is actually taken.
+  int64_t now = display_now();
   GColor bg, fg, sel_bg, unused_fg;
   ml_row_colors(t, false, now, &bg, &unused_fg);
   ml_row_colors(t, true, now, &sel_bg, &unused_fg);
@@ -3627,66 +3693,7 @@ static void ml_draw_row(GContext *gctx, const Layer *cell, MenuIndex *ci, void *
   graphics_context_set_text_color(gctx, fg);
   GRect b = layer_get_bounds(cell);
   if (info.kind == ML_ROW_TIMER_DETAIL) {
-    bool small = (b.size.w <= 144);
-    bool running = (t->state == TS_RUNNING);
-    bool paused = (t->state == TS_PAUSED);
-    bool stopped = (t->state != TS_RUNNING && t->state != TS_PAUSED);
-    GFont f_value = fonts_get_system_font(
-      small
-        ? ((running || paused) ? FONT_KEY_GOTHIC_18_BOLD : FONT_KEY_GOTHIC_18)
-        : ((running || paused) ? FONT_KEY_GOTHIC_24_BOLD : FONT_KEY_GOTHIC_24)
-    );
-    GFont f_suffix = fonts_get_system_font(small ? FONT_KEY_GOTHIC_18 : FONT_KEY_GOTHIC_24);
-    int th = small ? 22 : 28;
-    int ty = (b.size.h - th) / 2 - 5;
-    char rem[24];
-    int32_t detail_secs = stopped ? t->duration : tc_remaining_now(t, now_s());
-    tc_format_fixed(rem, sizeof(rem), detail_secs);
-    char value_display[40];
-    snprintf(value_display, sizeof(value_display), "%s", rem);
-    if (!running && launch_sync_applies_for_timer(t)) {
-      char sync[16];
-      format_launch_sync_suffix(sync, sizeof(sync));
-      size_t len = strlen(value_display);
-      if (len + 1 < sizeof(value_display)) {
-        value_display[len++] = ' ';
-        value_display[len] = '\0';
-      }
-      strncat(value_display, sync, sizeof(value_display) - strlen(value_display) - 1);
-    }
-    graphics_draw_text(gctx, value_display, f_value, GRect(4, ty, b.size.w - 8, th),
-      GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
-    GSize vw = graphics_text_layout_get_content_size(value_display, f_value,
-      GRect(0, 0, b.size.w, th), GTextOverflowModeFill, GTextAlignmentLeft);
-    int suffix_x = 4 + vw.w + 4;
-    if (running || paused) {
-      // "<remaining> -> <elapsed>": the arrow is a progress bar, filling
-      // left-to-right as elapsed grows toward the configured duration (fully
-      // filled once in overtime, since elapsed then exceeds duration). Shown
-      // for paused timers too, frozen at their remaining/elapsed at pause.
-      int32_t elapsed = t->duration - detail_secs;
-      float frac = (t->duration > 0) ? ((float)elapsed / (float)t->duration) : 1.f;
-      char elapsed_str[24];
-      tc_format_fixed(elapsed_str, sizeof(elapsed_str), elapsed);
-      GSize ew = graphics_text_layout_get_content_size(elapsed_str, f_value,
-        GRect(0, 0, b.size.w, th), GTextOverflowModeFill, GTextAlignmentLeft);
-      int arrow_h = small ? 10 : 12;
-      int arrow_y = ty + (th - arrow_h) / 2 + 1 + 2;
-      // Elapsed time anchors to the screen's right edge; the arrow stretches
-      // to fill whatever's left between the remaining-time text and it.
-      int elapsed_x = b.size.w - 4 - ew.w;
-      int arrow_x = suffix_x + 2;
-      int arrow_w = elapsed_x - 6 - arrow_x;
-      if (arrow_w >= 10) {
-        ml_draw_arrow_progress(gctx, GRect(arrow_x, arrow_y, arrow_w, arrow_h), frac, fg, fg);
-        graphics_context_set_text_color(gctx, fg);
-        graphics_draw_text(gctx, elapsed_str, f_value, GRect(elapsed_x, ty, b.size.w - 4 - elapsed_x, th),
-          GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
-      }
-    } else if (suffix_x < b.size.w - 8) {
-      graphics_draw_text(gctx, "remaining", f_suffix, GRect(suffix_x, ty, b.size.w - 4 - suffix_x, th),
-        GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
-    }
+    ml_draw_detail_line(gctx, b, t, fg);
     if (ml_is_item_boundary_row(ci->row, s_menu_selected_timer_idx)) {
       graphics_context_set_stroke_color(gctx, GColorDarkGray);
       graphics_draw_line(gctx, GPoint(0, b.size.h - 1), GPoint(b.size.w - 1, b.size.h - 1));
@@ -3694,31 +3701,8 @@ static void ml_draw_row(GContext *gctx, const Layer *cell, MenuIndex *ci, void *
     return;
   }
   // Single line: fixed-width HH:MM:SS time first (bold) so the column aligns and is
-  // easy to compare, then the description. State is conveyed by the row tint. On
-  // smaller (144px) displays use a smaller font so the description fits.
-  bool small = (b.size.w <= 144);
-  GFont tf = fonts_get_system_font(small ? FONT_KEY_GOTHIC_18_BOLD : FONT_KEY_GOTHIC_24_BOLD);
-  int th = small ? 22 : 28;
-  int ty = (b.size.h - th) / 2 - 2;
-  int icon_x = 4;
-  int icon_y = ty + (th - 12) / 2 + 3;
-  ml_draw_state_icon(gctx, icon_x, icon_y, t->state, fg);
-  int time_x = icon_x + 16;
-  bool show_full_duration = (t->state == TS_RUNNING) || (t->state == TS_PAUSED);
-  int32_t primary_secs = show_full_duration ? t->duration : tc_remaining_now(t, now_s());
-  char rem[16]; tc_format_fixed(rem, sizeof(rem), primary_secs);
-  graphics_draw_text(gctx, rem, tf, GRect(time_x, ty, b.size.w - time_x - 4, th),
-    GTextOverflowModeFill, GTextAlignmentLeft, NULL);
-  // Start the description just after the time text (the fixed format renders a
-  // constant width) with a small gap — much tighter than the old 96px column.
-  GSize tw = graphics_text_layout_get_content_size(rem, tf,
-    GRect(0, 0, b.size.w, th), GTextOverflowModeFill, GTextAlignmentLeft);
-  int desc_x = time_x + tw.w + 4;
-  if (t->name[0]) {
-    graphics_draw_text(gctx, t->name, tf,
-      GRect(desc_x, ty, b.size.w - 4 - desc_x, th),
-      GTextOverflowModeTrailingEllipsis, GTextAlignmentRight, NULL);
-  }
+  // easy to compare, then the description. State is conveyed by the row tint.
+  ml_draw_primary_line(gctx, b, t, fg);
   if (ml_is_item_boundary_row(ci->row, s_menu_selected_timer_idx)) {
     graphics_context_set_stroke_color(gctx, GColorDarkGray);
     graphics_draw_line(gctx, GPoint(0, b.size.h - 1), GPoint(b.size.w - 1, b.size.h - 1));
@@ -3774,7 +3758,7 @@ static void confirm_window_unload(Window *w) {
 // Only called on a start action when AutoReturnStart is on.
 static void show_start_confirmation(int idx) {
   Timer *t = &s_timers[idx];
-  tc_format_remaining(s_confirm_time, sizeof(s_confirm_time), tc_remaining_now(t, now_s()));
+  tc_format_remaining(s_confirm_time, sizeof(s_confirm_time), tc_remaining_now(t, display_now()));
   s_confirm_named = (t->name[0] != 0);
   if (s_confirm_named) {
     strncpy(s_confirm_name, t->name, sizeof(s_confirm_name));
@@ -4074,7 +4058,7 @@ static void inbox_received(DictionaryIterator *iter, void *ctx) {
     }
     sweep_expiries();   // catch stale expiries (overtime); no alarm for a config reconcile
     persist_all();
-    handle_wakeup_result(rearm_wakeup(), -1, false, WC_DECLINE_NOOP, 0);
+    handle_wakeup_result(rearm_wakeup());
     ensure_ticking();
     // reload_ui() below only refreshes the main list - if the per-timer edit menu
     // is open (e.g. showing "After finished") its label was just built from
@@ -4082,6 +4066,32 @@ static void inbox_received(DictionaryIterator *iter, void *ctx) {
     if (s_detail_menu && s_detail_window && window_stack_contains_window(s_detail_window)) {
       menu_layer_reload_data(s_detail_menu);
     }
+  }
+  // Shared by both testing/screenshot helpers below, so a timer seeded via
+  // SetTimerIndex and frozen via FreezeDisplay in the same message use the
+  // literal same `now` for both - see FreezeDisplay's own comment.
+  int64_t now = now_s();
+  // Testing/screenshot helper: freezes every live time/remaining/elapsed
+  // display app-wide (main list rows, wakeup-conflict banner, bottom bar
+  // clock+elapsed, alarm overtime counter, detail header, delete-confirm,
+  // start-confirmation flash - see display_now()'s own comment for the
+  // full list and why real expiry/wakeup/persistence logic is deliberately
+  // untouched by this). Independent of SetTimerIndex below (works even
+  // with zero timers, e.g. to freeze the bottom bar alone).
+  // FreezeDisplay: absent = leave frozen state as it was; 1 = freeze to
+  // now; 0 = unfreeze (resume the real clock). FreezeElapsedSeconds: the
+  // exact value the bottom bar's elapsed-since-launch shows while frozen -
+  // deliberately NOT derived from real app-launch timing (which would
+  // still vary run to run), just whatever number the test wants shown;
+  // defaults to 0 if never sent.
+  Tuple *freeze_t = dict_find(iter, MESSAGE_KEY_FreezeDisplay);
+  if (freeze_t) {
+    s_test_freeze_display = (freeze_t->value->int32 != 0);
+    s_test_freeze_now = now;
+  }
+  Tuple *freeze_elapsed_t = dict_find(iter, MESSAGE_KEY_FreezeElapsedSeconds);
+  if (freeze_elapsed_t) {
+    s_test_freeze_elapsed = freeze_elapsed_t->value->int32;
   }
   // Testing/screenshot helper: force a timer's state and/or remaining time
   // directly by index, bypassing the normal start/pause/reset UI flow, so a
@@ -4094,7 +4104,6 @@ static void inbox_received(DictionaryIterator *iter, void *ctx) {
       Timer *t = &s_timers[idx];
       Tuple *state_t = dict_find(iter, MESSAGE_KEY_SetTimerState);
       Tuple *rem_t = dict_find(iter, MESSAGE_KEY_SetTimerRemaining);
-      int64_t now = now_s();
       // TimerState values: 0=idle/stopped, 1=running, 2=paused (see timer_calc.h).
       TimerState want = state_t ? (TimerState)state_t->value->int32 : t->state;
       int32_t secs = rem_t ? rem_t->value->int32
@@ -4123,9 +4132,44 @@ static void inbox_received(DictionaryIterator *iter, void *ctx) {
         t->alarm_notified = false;
       }
       sweep_expiries();   // catch an immediate overtime (e.g. remaining set to 0 while running)
-      persist_all(); rearm_wakeup(); ensure_ticking();
+      persist_all();
+      // Route through handle_wakeup_result(), not a bare rearm_wakeup(), so a
+      // WAKEUP_ARM_FAILED here (e.g. a test-simulated conflict via
+      // TestBlockedSystemWakeupMinuteOffsetsPos/Neg) actually opens the
+      // wakeup-conflict window, matching what a real Start/Restart via
+      // finish_start_tail() would do - this backdoor is meant to reach the
+      // same states a real start/pause/resume/stop can, and silently
+      // discarding the result here left every wakeup_conflict_*.seq test
+      // that seeds a running timer via SetTimerIndex unable to ever
+      // actually reach the conflict window.
+      handle_wakeup_result(rearm_wakeup());
+      ensure_ticking();
     }
   }
+#ifdef APP_TEST_HOOKS
+  // Testing helper: simulates other apps' wakeups occupying specific
+  // minutes relative to whichever timer's end_time is actually being
+  // evaluated at the moment, without needing a real colliding wakeup from
+  // another app - see s_test_blocked_after/before and
+  // test_wakeup_schedule(). Either field alone is fine; an absent field
+  // leaves that side's list unchanged, not cleared - send an empty string
+  // to explicitly clear one side. Triggers an immediate re-check so a test
+  // script sees the conflict window (or its absence) right away. Compiled
+  // in only with APP_TEST_HOOKS=1 - see wscript/CLAUDE.md.
+  Tuple *tba = dict_find(iter, MESSAGE_KEY_TestBlockedSystemWakeupMinuteOffsetsPos);
+  Tuple *tbb = dict_find(iter, MESSAGE_KEY_TestBlockedSystemWakeupMinuteOffsetsNeg);
+  if (tba || tbb) {
+    if (tba) {
+      test_parse_offsets(tba->value->cstring, s_test_blocked_after, &s_test_blocked_after_count,
+          TEST_BLOCKED_MINUTES_MAX);
+    }
+    if (tbb) {
+      test_parse_offsets(tbb->value->cstring, s_test_blocked_before, &s_test_blocked_before_count,
+          TEST_BLOCKED_MINUTES_MAX);
+    }
+    handle_wakeup_result(rearm_wakeup());
+  }
+#endif
   reload_ui();
 }
 
@@ -4294,7 +4338,7 @@ static void apply_overwrite_only(int idx, int32_t secs, const char *name) {
   assign_unnamed_star_for_duration(idx, t->duration);
   s_delete_on_finish[idx] = was_delete_on_finish;
   persist_all();
-  handle_wakeup_result(rearm_wakeup(), -1, false, WC_DECLINE_NOOP, 0);
+  handle_wakeup_result(rearm_wakeup());
   reload_ui();
   if (!was_delete_on_finish) { send_update_timer(idx, secs, name); }
   window_stack_remove(s_detail_window, true);
@@ -4499,7 +4543,7 @@ static void init(void) {
     Timer *early_held = find_timer_by_id(early_wake_id);
     if (early_held && early_held->state == TS_RUNNING) {
       if (by_wakeup) { vibes_short_pulse(); }
-      s_foreground_hold_timer_id = early_held->id;   // same mechanism wc_keep_foreground() uses
+      s_foreground_hold_timer_id = early_held->id;   // same mechanism wc_ok() uses
     }
   }
 
@@ -4527,7 +4571,7 @@ static void init(void) {
   // wakeup-conflict window onto - rearm_wakeup() ran before window creation
   // in an earlier version of this function, which meant a launch-time
   // WAKEUP_ARM_FAILED had nowhere to be shown at all.
-  handle_wakeup_result(rearm_wakeup(), -1, false, WC_DECLINE_NOOP, 0);
+  handle_wakeup_result(rearm_wakeup());
 
   // A timer finished since the app last closed -> show the alarm over the list and
   // buzz. This covers the wakeup-launched case AND a manual open where the wakeup
