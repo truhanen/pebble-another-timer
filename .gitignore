@@ -23,6 +23,9 @@ compile_commands.json
 Releases/
 *.pbw
 
+# Per-run output (screenshots, logs) from tests/functional_framework
+tests/functional/out/
+
 # Ignore Apple Files
 # General
 .DS_Store

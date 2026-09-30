@@ -67,3 +67,36 @@ long_press_select_emulator:
 .PHONY: create_screenshots
 create_screenshots:
 	scripts/create_screenshots.sh
+
+.PHONY: test_core
+test_core:
+	gcc -I src/c tests/test_timer_calc.c src/c/timer_calc.c -o /tmp/pebble-another-timer-test_core
+	/tmp/pebble-another-timer-test_core
+
+# Rebuild whenever tests/functional/docker/Containerfile or
+# run-sequence-in-container.sh change - NOT needed for app source changes,
+# since run_container.sh copies the repo fresh into every container run.
+.PHONY: build_functional_test_image
+build_functional_test_image:
+	podman build --platform linux/amd64 -t pebble-another-timer-tests \
+		-f tests/functional/docker/Containerfile .
+
+# Plain pass/fail run of the whole functional suite, containerized (see
+# tests/functional/docker/README.md for why this is required rather than
+# just recommended) - no golden comparison.
+.PHONY: test_functional
+test_functional:
+	tests/functional/run_all.sh
+
+# What CI should run: the full suite, compared against the committed
+# golden baseline.
+.PHONY: test_functional_golden
+test_functional_golden:
+	tests/functional/run_all.sh --golden-dir tests/functional/golden
+
+# Re-approves the current output of every sequence as the new golden
+# baseline - run this after a deliberate, reviewed UI change, never as a
+# way to make a failing test_functional_golden pass without looking at why.
+.PHONY: update_functional_golden
+update_functional_golden:
+	tests/functional/run_all.sh --golden-dir tests/functional/golden --update-golden
