@@ -1,0 +1,6 @@
+# Freshly wiped app with zero timers - confirms the empty-hint text
+# renders instead of a blank/broken list.
+#
+# NOTE: unverified against a live emulator at authoring time.
+IMPORT ../common/wipe_and_prep.seq
+SCREENSHOT empty_list_hint_text

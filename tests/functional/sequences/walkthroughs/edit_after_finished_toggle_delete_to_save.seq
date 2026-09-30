@@ -1,0 +1,48 @@
+# Complements after_finished_delete_toggle.seq: the reversible, later-
+# deferred version of the "After finished" toggle, which only exists for a
+# RUNNING timer (DELCONF_TOGGLE_RUNNING in main.c's del_confirm_do() -
+# confirming "Delete" here just sets s_delete_on_finish[idx]=true and
+# keeps the timer running, unlike the STOPPED-timer case in
+# after_finished_delete_toggle.seq, which deletes immediately). The
+# reverse direction, Delete -> Save, applies with NO confirmation at all
+# (main.c's own comment: "Delete -> Save needs no confirmation - it only
+# keeps more, never destroys anything").
+#
+# CORRECTED after a live run of the original (stopped-timer) version of
+# this file found the reversible-toggle premise doesn't hold for a
+# stopped timer at all - see after_finished_delete_toggle.seq's own
+# comment for what actually happens there instead.
+IMPORT ../common/wipe_and_prep.seq
+
+APPMSG --string 10000="$(printf 'Quick Timer\037300\0371')"
+SLEEP 1
+APPMSG --int 10020=0 10021=1 10022=300 10029=1
+SLEEP 1
+SCREENSHOT running_300s
+
+# "+ New timer" sits at row 0 and is where a fresh list's selection
+# defaults to - ml_select_long() is a no-op there, so move down first.
+TAP down
+LONGPRESS select
+SCREENSHOT edit_menu
+TAP down
+TAP down
+SCREENSHOT after_finished_row_selected
+TAP select
+SLEEP 1
+SCREENSHOT delete_confirm_shown
+
+# Confirm "Delete" - for a RUNNING timer this only sets the flag and
+# returns to the edit menu; the timer itself keeps running untouched.
+# Live-verified: the edit menu's own selection stays on "After finished"
+# across this round trip through the confirm sub-window - it does NOT
+# reset to row 0 - so no further navigation is needed before toggling it
+# straight back (an earlier version of this file wrongly pressed DOWN
+# twice more here, overshooting onto "Sound" instead).
+TAP select
+SLEEP 1
+SCREENSHOT now_set_to_delete_still_running
+
+TAP select
+SLEEP 1
+SCREENSHOT should_go_straight_to_save_no_confirm_menu_still_running

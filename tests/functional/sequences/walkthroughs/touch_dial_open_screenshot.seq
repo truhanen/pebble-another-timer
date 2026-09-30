@@ -1,0 +1,34 @@
+# Captures the round touch dial UI (touch_dial/touch.c) actually OPEN,
+# using TOUCHDOWN/TOUCHUP instead of the atomic TOUCH - TOUCH always
+# releases before returning, so a SCREENSHOT taken after it can only ever
+# show the dial already closed again (see touch_dial_cancel.seq, whose two
+# screenshots are identical for exactly this reason). Splitting the press
+# and release lets this sequence screenshot the UI state that only exists
+# while a finger is actually down - live-verified (via this same
+# TOUCHDOWN/SCREENSHOT/TOUCHUP shape, run by hand against a prototype of
+# this framework change) to show the round dial with hour markers and a
+# center "Cancel" label.
+#
+# Container-only: run via
+#   tests/functional/docker/run_container.sh \
+#     tests/functional/sequences/walkthroughs/touch_dial_open_screenshot.seq --touch
+# See functional_framework/README.md's TOUCH/TOUCHDOWN/TOUCHUP rows and
+# tests/functional/docker/README.md's TOUCH section for why.
+IMPORT ../common/wipe_and_prep.seq
+
+TAP select
+SCREENSHOT duration_dial_default
+
+# (100, 114) is this screen's dead center - touch_dial/touch.c's own hit
+# test (is_touch_in_outer_ring) puts a press here in the INNER "Cancel"
+# zone, but that only matters at RELEASE (TouchEvent_Liftoff) - the dial
+# itself opens unconditionally on TouchEvent_Touchdown regardless of inner
+# vs. outer, so this is the same point touch_dial_cancel.seq uses.
+TOUCHDOWN 100 114
+SCREENSHOT touch_dial_open
+TOUCHUP
+
+# Releasing over the inner zone cancels the gesture (see
+# touch_dial_cancel.seq) - the dial should be closed again here, with the
+# duration unchanged from duration_dial_default above.
+SCREENSHOT duration_dial_after_release

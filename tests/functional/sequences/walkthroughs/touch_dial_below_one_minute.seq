@@ -1,0 +1,62 @@
+# Sets a new timer's duration via a CIRCULAR DRAG that winds anticlockwise
+# past the dial's 0-minute mark into its "seconds windup" submode, landing
+# on a duration below one minute (0:00:55) - not a single touch-and-hold at
+# a fixed position (see touch_dial_set_via_position.seq for that).
+#
+# The gesture (touch_dial/touch.c's apply_windup): starting on the outer
+# ring past the 20-minute mark, dragging anticlockwise (decreasing
+# screenspace angle) does two things in order:
+#   1. Crossing the 20-minute mark (120 degrees) anticlockwise ARMS seconds
+#      windup (sets s_windup_on_inner_touch/is_windup_seconds_enablable -
+#      this exists specifically to avoid accidentally entering seconds mode
+#      from a small, unintended wobble near 0).
+#   2. Continuing on to cross the 0/"12 o'clock" mark anticlockwise then
+#      ACTIVATES it: s_is_windup_seconds=true, hours/minutes reset to 0,
+#      and every subsequent touch position is read as SECONDS instead of
+#      minutes (is_mode_windup_seconds()) - an absolute position read (not
+#      a cumulative counter), so wherever the touch is at the moment of
+#      release is the final seconds value, regardless of the path taken to
+#      get there.
+# This is this app's equivalent of a countdown-timer bezel that can be
+# wound past zero for a short (sub-minute) duration - exactly what's
+# needed here.
+#
+# Container-only: run via
+#   tests/functional/docker/run_container.sh \
+#     tests/functional/sequences/walkthroughs/touch_dial_below_one_minute.seq --touch
+# See functional_framework/README.md's TOUCHDRAG row and
+# tests/functional/docker/README.md's TOUCH section for why.
+IMPORT ../common/wipe_and_prep.seq
+
+APPMSG --int 10016=0 10015=0 10003=0
+SCREENSHOT list_empty
+
+TAP select
+SCREENSHOT duration_dial_default
+
+# Dial centre (100, 135) and radius 70 - same as
+# touch_dial_set_via_position.seq, see its own comment for the derivation.
+# start_deg=150 (the "25 minutes" mark) is comfortably past the 20-minute
+# mark (120 degrees) with margin to spare before the sweep even begins.
+# end_deg=-30 is 30 degrees past the 0 mark in the SAME anticlockwise
+# sweep (continuous parameterization, not a second gesture) - equivalent to
+# 330 degrees, the "55 seconds" mark, once seconds-windup has activated.
+# 36 steps over this 180-degree sweep is 5 degrees/step, comfortably
+# inside apply_windup's ~45-degree-wide crossing-detection windows so
+# neither the 20-minute-mark nor the 0-mark crossing can be skipped over.
+#
+# TOUCHDOWN/TOUCHSWEEP/SCREENSHOT/TOUCHUP instead of the atomic TOUCHDRAG
+# (compare touch_dial_cancel.seq's atomic TOUCH vs.
+# touch_dial_set_via_position.seq's split form) - this captures the dial
+# already in seconds-windup mode, selection line pointing at the "55" mark,
+# before release commits it. TOUCHDOWN's point (135, 196) is TOUCHSWEEP's
+# own start_deg=150 waypoint - see _touch_arc_waypoints in lib/steps.sh;
+# same formula as touch_dial_set_via_position.seq's single point.
+TOUCHDOWN 135 196
+TOUCHSWEEP 100 135 70 150 -30 36
+SCREENSHOT touch_dial_open_below_one_minute
+TOUCHUP
+
+# Same deferred-confirm settle as touch_dial_set_via_position.seq.
+SLEEP 0.5
+SCREENSHOT timer_created

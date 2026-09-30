@@ -1,0 +1,72 @@
+# Direct regression test for the handle_wakeup_result() re-entrancy guard:
+# an unrelated call that recomputes the SAME target timer while its
+# conflict window is already open must NOT reset the window's established
+# context back to generic defaults - specifically, the exit-guard's 2-row
+# "Don't exit"/"Exit anyway" re-prompt must not silently collapse back
+# into the plain 1-row "Ok" informational window mid-display.
+#
+# In production this is triggered by something like tick_cb's fired-branch
+# noticing an unrelated timer expire, or a phone config sync - both just
+# end up calling handle_wakeup_result(rearm_wakeup()) (is_exit_prompt
+# implicitly false, the normal open path) while a window may already be
+# open for whatever the current target is, possibly in a DIFFERENT
+# context (the exit-guard re-prompt). Re-sending the same block config
+# here is used as a convenient stand-in for "any such unrelated
+# recompute" - the guard under test (main.c's `if (wc_is_open() &&
+# s_wakeup_conflict_timer_id == target) { return; }` in
+# handle_wakeup_result()) doesn't care where the re-entrant call came
+# from, only whether a window is already open for the same target, so
+# this exercises the exact same code path.
+#
+# NOTE: unverified against a live emulator at authoring time - see the
+# same caveat in wakeup_conflict_basic_resolutions.seq.
+IMPORT ../common/wipe_and_prep_test_hooks.seq
+
+# Timer A: short (180s) duration + a handful of blocked minutes (0-5).
+# wakeup_find_early_slot() only has ~2-3 backward candidates available
+# before its own `candidate <= time(NULL)` cutoff at this duration, so
+# blocking offsets 0-5 (within TEST_BLOCKED_MINUTES_MAX=8) exhausts all of
+# them - the window shows as the informational "Ok" open first, every time
+# it's (re-)opened. (A long-duration timer has far more than 8 blockable
+# candidates and can't be exhausted this way - see the eviction test.)
+APPMSG --string 10028="0,1,2,3,4,5"
+APPMSG --string 10000="$(printf 'Timer A\037180\0371')"
+SLEEP 1
+APPMSG --int 10020=0 10021=1 10022=180 10029=1
+SLEEP 1
+
+# Acknowledge the informational "Ok" window - back to the main list, but
+# s_last_wakeup_arm_result stays WAKEUP_ARM_FAILED (wc_ok() never resolves
+# the underlying conflict), so it's still genuinely unresolved.
+TAP select
+SLEEP 1
+
+# BACK on the main list bypasses close_to_watchface() entirely -
+# exit_guard_appear() is the only thing that catches this, and re-opens
+# the conflict window as the 2-row exit-attempt re-prompt: "Don't exit"
+# (row 0) / "Exit anyway" (row 1) - no "Ok" row in this context.
+TAP back
+SLEEP 1
+SCREENSHOT exit_guard_reprompt_open
+# Expect: two rows, "Don't exit" / "Exit anyway".
+
+# The re-entrant call: re-send the SAME block config while the re-prompt
+# above is still open and undecided. Before the fix, this would have
+# fallen through to open_wakeup_conflict_window_ex() again with the
+# generic is_exit_prompt=false default (the normal informational-open
+# path), silently collapsing the 2-row re-prompt back into a single "Ok"
+# row. After the fix, wc_is_open() && s_wakeup_conflict_timer_id == target
+# makes handle_wakeup_result() return immediately without touching
+# anything.
+APPMSG --string 10028="0,1,2,3,4,5"
+SLEEP 1
+SCREENSHOT after_reentrant_call_should_still_show_two_rows
+# Expect: STILL two rows, "Don't exit" / "Exit anyway" - not collapsed to
+# a single "Ok".
+
+# Select "Exit anyway" (row 1) and confirm the app genuinely exits -
+# i.e. the fix held, not just that the labels looked right.
+TAP down
+TAP select
+SLEEP 1
+SCREENSHOT after_exit_anyway

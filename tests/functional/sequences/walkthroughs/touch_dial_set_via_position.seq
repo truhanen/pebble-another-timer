@@ -1,0 +1,54 @@
+# Sets a new timer's duration via a single touch-and-hold at the correct
+# dial position - not a drag (see touch_dial_below_one_minute.seq for
+# that) - exercising this app's real "MinuteWindup" gesture end to end:
+# touch_dial/config.c's default TouchTimerSetMethod (MinuteWindup, not
+# TwoTouch) means a single press-and-hold on the outer ring commits a
+# duration directly on release, with no second touch/field-advance step
+# needed (see touch_dial/touch.c's handle_touch_event: Touchdown goes
+# straight to SELECTMODE_WINDUP, and Liftoff on that mode commits
+# immediately, unlike SELECTMODE_HOUR/TwoTouch which needs a second touch
+# for the minute field).
+#
+# Container-only: run via
+#   tests/functional/docker/run_container.sh \
+#     tests/functional/sequences/walkthroughs/touch_dial_set_via_position.seq --touch
+# See functional_framework/README.md's TOUCH row and
+# tests/functional/docker/README.md's TOUCH section for why.
+IMPORT ../common/wipe_and_prep.seq
+
+# Same setup as create_and_start_timer.seq: skip the post-dial label
+# keyboard (commits with an empty label) and stop RunOnCreate/
+# AutoReturnStart from racing this sequence's own screenshot.
+APPMSG --int 10016=0 10015=0 10003=0
+SCREENSHOT list_empty
+
+TAP select
+SCREENSHOT duration_dial_default
+
+# Dial centre is (100, 135): grect_center_point of the full 200x228 window
+# ({100, 114}) plus touch_dial/touch.c's own TOUCH_DIAL_CENTER_Y_OFFSET
+# (21). A point at radius 70 - outside THRESHOLD_RADIUS (45), i.e.
+# squarely in the OUTER selection ring, not the inner "Cancel" zone - and
+# screenspace angle 90 degrees (0 = straight up, clockwise - see
+# touch_dial/misc.c's point_from_angle) lands exactly on the "15 minutes"
+# mark: x = 100 + 70*sin(90deg) = 170, y = 135 - 70*cos(90deg) = 135.
+#
+# TOUCHDOWN/SCREENSHOT/TOUCHUP instead of the atomic TOUCH (compare
+# touch_dial_cancel.seq, which only needs the atomic form since it never
+# screenshots the dial itself) - this captures the dial actually open,
+# selection line pointing at the "15" mark, before release commits it. A
+# brief SLEEP before the screenshot lets the dial's own appear animation
+# (touch.c's animate_circle/circle_grow, ~100ms) finish first.
+TOUCHDOWN 170 135
+SLEEP 0.2
+SCREENSHOT touch_dial_open_at_15
+TOUCHUP
+
+# The touch dial commits and confirms in one step (dial_touch_selected in
+# main.c defers straight to dial_confirm(), unlike the physical/button
+# dial which needs an explicit final SELECT once all 3 fields are
+# stepped through) - a brief settle for that deferred (10ms) confirm timer
+# and the dial's own close animation before the list screen is stable to
+# screenshot.
+SLEEP 0.5
+SCREENSHOT timer_created

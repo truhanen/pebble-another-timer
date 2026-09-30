@@ -1,0 +1,69 @@
+# Long-press edit menu, Duration row (DSTYLE_LONG_EXISTING row 0) on two
+# timers: an IDLE one (duration change should update its remaining time
+# too) and a RUNNING one (duration change should NOT touch its live
+# end_time/remaining - only future starts use the new duration).
+#
+# CORRECTED after a live run: "+ New timer" sits at row 0 always (moved
+# to the top of the list) and is where a fresh list's selection defaults
+# to - ml_select_long() is a no-op there (see other walkthroughs' same
+# note), so every long-press below needs an explicit navigation first.
+# Also corrected the assumed row order: the default sort (running-first)
+# puts "Running Timer" at row 1 and "Idle Timer" at row 2, not the other
+# way around - confirmed via a live screenshot, not assumed.
+IMPORT ../common/wipe_and_prep.seq
+
+APPMSG --string 10000="$(printf 'Idle Timer\03760\0371\036Running Timer\037300\0372')"
+SLEEP 1
+APPMSG --int 10020=1 10021=1 10022=300 10029=1
+SLEEP 1
+SCREENSHOT initial_list
+
+# --- Idle Timer: row 2 (row 0 = "+ New timer", row 1 = Running Timer,
+# row 2 = Idle Timer) ---
+TAP down
+TAP down
+LONGPRESS select
+SCREENSHOT idle_edit_menu
+TAP select
+SCREENSHOT idle_duration_dial
+TAP up
+TAP select
+TAP up
+TAP select
+SLEEP 1
+SCREENSHOT idle_duration_changed_remaining_should_match
+
+# Confirming the dial's last field (apply_overwrite_only) already pops
+# BOTH the dial and the edit menu in one step, landing directly back on
+# the main list - live-verified an earlier version of this file was wrong
+# to also press BACK twice more here, which instead exited the whole app
+# to the watchface (BACK on the main list is not a no-op).
+# Also live-verified: selection lands back on the just-edited timer (row
+# 2, Idle Timer here), not on "+ New timer" - and the list does NOT wrap
+# at the end (a real, deliberate app behavior - see git history), so the
+# earlier "TAP down" here was a no-op that left the long-press re-opening
+# Idle Timer's own menu again. UP (not down) is what actually reaches
+# Running Timer at row 1 from here.
+SCREENSHOT back_on_main_list_already
+
+# --- Running Timer: row 1 ---
+TAP up
+LONGPRESS select
+SCREENSHOT running_edit_menu
+TAP select
+SCREENSHOT running_duration_dial
+TAP up
+TAP select
+TAP up
+TAP select
+SLEEP 1
+SCREENSHOT running_duration_changed_should_NOT_affect_live_countdown
+# Display is frozen (10029=1 above), so this is now a clean pixel check
+# rather than an arithmetic one: the running row's FIRST/left number on
+# its second line (the genuine remaining time) should read EXACTLY the
+# same "5:00" it did in initial_list, completely unaffected by the
+# duration edit. The SECOND/right number on that line is NOT "time since
+# the timer actually started" - it's duration-minus-remaining, so it DOES
+# change here, reflecting the just-edited (new) duration even though the
+# frozen remaining value didn't move. Don't misread that second number as
+# evidence of a bug - check the first one.

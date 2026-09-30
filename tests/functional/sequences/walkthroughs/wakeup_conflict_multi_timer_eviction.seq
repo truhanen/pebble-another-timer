@@ -1,0 +1,93 @@
+# Demonstrates the "nuke and re-prompt" eviction design: try_auto_early_
+# wake() silently adopting an early-wake slot for a newly-conflicted timer
+# B deliberately evicts a DIFFERENT, still-running timer A's earlier
+# accepted plan (the single shared early-wake slot is unconditionally
+# overwritten) - and then confirms A gets a fresh, working conflict check
+# of its own once it becomes the priority target again, rather than
+# silently never being revisited (see try_auto_early_wake's own "NOT A
+# BUG" comment block and the wakeup_conflict_remaining_sites memory notes
+# for the full reasoning/invariant this relies on).
+#
+# Since acceptance is now fully silent/automatic, this walkthrough can't
+# directly observe the eviction moment (no window, no log/persisted-
+# storage assertions - v1 framework limitation, see
+# tests/functional_framework/README.md's "What this v1 does not do") -
+# only prove A wasn't silently abandoned via the final re-prompt step.
+#
+# NOTE: unverified against a live emulator at authoring time - see the
+# same caveat in wakeup_conflict_basic_resolutions.seq.
+IMPORT ../common/wipe_and_prep_test_hooks.seq
+
+# Timer A (id 1, 300s) - seeded and started first, becomes the initial
+# target (rearm_wakeup() always evaluates the GLOBALLY soonest running
+# timer via tc_soonest_end()/find_soonest_unarmed_running_idx() - it does
+# NOT matter which timer's SetTimerIndex was just touched). Only its own
+# exact minute is blocked (offset 0 relative to whichever timer is
+# currently being evaluated - see wakeup_conflict_basic_resolutions.seq
+# for why Pos offset 0 alone doesn't actually constrain wakeup_find_
+# early_slot()'s backward search), leaving room elsewhere -
+# try_auto_early_wake() silently finds and adopts a slot for it.
+# Live-verified (2026-09-27, native emulator + APP_LOG instrumentation)
+# with 300s/150s durations - see below for why B must be strictly SHORTER
+# than A, not merely a different value.
+APPMSG --string 10027="0"
+APPMSG --string 10000="$(printf 'Timer A\037300\0371')"
+SLEEP 1
+APPMSG --int 10020=0 10021=1 10022=300 10029=1
+SLEEP 1
+SCREENSHOT a_silently_resolved
+
+# Timer B (id 2, 150s) - seeded and started AFTER A, with a SHORTER
+# duration than A's remaining - this is the one thing that actually makes
+# B (not A) the new global-soonest target from this point on, since
+# rearm_wakeup()'s target is always whichever running timer's end_time is
+# earliest overall, not whichever timer a message happened to touch. (An
+# earlier draft of this test gave A and B equal durations, on the mistaken
+# assumption that "started later" alone was enough to make B the target -
+# live-verified false: with equal durations A, started first, keeps the
+# earlier end_time and stays the target forever, so B's own conflict path
+# is never even exercised and nothing is ever evicted.) Duration is
+# moderate (150s, not the original 60s) so there's enough backward room in
+# wakeup_find_early_slot() for the still-irrelevant offset-0 block to
+# succeed immediately as expected - at 60s there's almost no room before
+# the `candidate <= time(NULL)` cutoff, and try_auto_early_wake() can fail
+# outright regardless of blocking. B's own try_auto_early_wake() finds a
+# slot and unconditionally evicts A's earlier accepted plan. Still no
+# window.
+APPMSG --string 10000="$(printf 'Timer A\037300\0371\036Timer B\037150\0372')"
+SLEEP 1
+APPMSG --int 10020=1 10021=1 10022=150 10029=1
+SLEEP 1
+SCREENSHOT b_silently_resolved_evicted_a
+
+# Widen the block to offsets 0-7 (using the full TEST_BLOCKED_MINUTES_MAX=8
+# budget) - safe to send now even though B is still the current target,
+# since B's already-accepted plan shields it via rearm_wakeup()'s
+# early-wake-covered fast path (no re-test happens as long as the plan's
+# owner is still the target).
+APPMSG --string 10028="0,1,2,3,4,5,6,7"
+SLEEP 1
+SCREENSHOT b_still_fine_after_widened_block
+
+# Take B out of the running pool - A becomes the global-soonest target
+# again (the only running timer left). SetTimerIndex's own handler calls
+# abandon_early_wake_if_for() on the timer it's stopping BEFORE its
+# rearm_wakeup() call, so B's accepted plan (and the early_wake_timer_id
+# bookkeeping pointing at it) is explicitly retired here, not left
+# dangling - then the same handler's routing through handle_wakeup_
+# result() re-triggers a fresh check for whichever timer is now globally
+# soonest (A). Since A's own earlier plan was evicted by B back when B
+# adopted its slot, and A's remaining duration by now is short enough that
+# only a few backward candidates exist before wakeup_find_early_slot()'s
+# `candidate <= time(NULL)` cutoff, the offsets-0-7 block above exhausts
+# all of them. This should genuinely fail and open a FRESH conflict window
+# for A, proving it wasn't silently abandoned when its plan was evicted.
+APPMSG --int 10020=1 10021=0
+SLEEP 1
+SCREENSHOT a_gets_fresh_reprompt
+# Expect: the single-row "Ok" informational window, naming Timer A.
+
+# Clean up: acknowledge it.
+TAP select
+SLEEP 1
+SCREENSHOT final_state

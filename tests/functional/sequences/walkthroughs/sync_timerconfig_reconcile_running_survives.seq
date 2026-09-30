@@ -1,0 +1,23 @@
+# tc_reconcile matches an incoming TimerConfig row to an existing timer by
+# persistent id, not list position - confirms a running timer's LIVE state
+# (remaining time, TS_RUNNING) survives a second TimerConfig push that
+# edits its name/duration (same id), rather than being reset to idle or
+# treated as a delete+recreate pair. Distinct from sort_order_change.seq,
+# which only ever reorders, never actually re-syncs an existing row's
+# fields.
+#
+# NOTE: unverified against a live emulator at authoring time.
+IMPORT ../common/wipe_and_prep.seq
+
+APPMSG --string 10000="$(printf 'Original Name\037300\0371')"
+SLEEP 1
+APPMSG --int 10020=0 10021=1 10022=200 10029=1
+SLEEP 1
+SCREENSHOT running_with_200s_left
+
+# Same id (1), different name/duration - per tc_reconcile's "same id,
+# changed name/duration: keep state but re-derive timing" branch, this
+# should keep TS_RUNNING and the live end_time, NOT reset to idle/duration.
+APPMSG --string 10000="$(printf 'Renamed\037600\0371')"
+SLEEP 1
+SCREENSHOT should_show_new_name_still_running_about_200s_left_not_600

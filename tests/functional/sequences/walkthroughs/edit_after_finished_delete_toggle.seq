@@ -1,0 +1,40 @@
+# "After finished: Save/Delete" toggle (DSTYLE_LONG_EXISTING row 2) on a
+# STOPPED (idle) timer.
+#
+# CORRECTED after a live run: this does NOT just flip a flag for a stopped
+# timer - del_confirm_do() (main.c) deletes it immediately on confirmation
+# (DELCONF_TOGGLE_STOPPED), since there's no future "finish" event left to
+# defer the decision to. That's only a real, later-deferred toggle for a
+# RUNNING timer (DELCONF_TOGGLE_RUNNING, which just sets s_delete_on_
+# finish[idx]=true and keeps running) - see
+# after_finished_toggle_delete_to_save.seq for that case instead.
+#
+# Live-verified: TAP down (off "+ New timer", row 0, onto the just-seeded
+# timer) + LONGPRESS select actually opens the edit menu; row 2 = "After
+# finished"; the confirm menu's row 0 = "Delete".
+IMPORT ../common/wipe_and_prep.seq
+
+APPMSG --string 10000="$(printf 'Quick Timer\0375\0371')"
+SLEEP 1
+SCREENSHOT initial_idle
+
+# "+ New timer" sits at row 0 (moved to the top of the list) and is where
+# a fresh list's selection defaults to - ml_select_long() is a deliberate
+# no-op on that row (see main.c's ml_resolve_selected_target/is_new
+# check), so long-pressing without first moving off it does nothing at
+# all. One DOWN moves selection onto the just-seeded timer row.
+TAP down
+LONGPRESS select
+SCREENSHOT edit_menu
+TAP down
+TAP down
+SCREENSHOT after_finished_row_selected
+TAP select
+SLEEP 1
+SCREENSHOT delete_confirm_shown
+
+# Confirming "Delete" here deletes the timer immediately - no snoozing,
+# no waiting for it to fire.
+TAP select
+SLEEP 1
+SCREENSHOT should_be_gone_from_list_immediately

@@ -1,0 +1,27 @@
+# Backing out of "+ New timer" via BACK before committing should leave no
+# phantom idle timer behind (s_new_timer_idx cleanup in detail_disappear).
+# KeyboardOnNewTimer stays 0 throughout this suite - multitap keyboard
+# button semantics (multitap_keyboard_window.c) weren't verified against a
+# live emulator at authoring time, so scripting real text entry was judged
+# too likely to be wrong without a chance to confirm it on screen; only
+# the blank-label path (already default) is exercised anywhere here.
+#
+# NOTE: unverified against a live emulator at authoring time.
+IMPORT ../common/wipe_and_prep.seq
+APPMSG --int 10016=0 10015=0 10003=0
+SCREENSHOT list_empty
+
+TAP select
+SCREENSHOT duration_dial_default
+
+# dial_back() walks fields backward one at a time (minute -> hour) before
+# actually popping the dial - it only exits once already on the first
+# (hour) field. The dial defaults to the minute field focused, so this
+# needs two BACK presses: one to reach the hour field, one more to exit -
+# live-verified (a single BACK only moved focus to the hour field, leaving
+# the dial still open).
+TAP back
+SCREENSHOT duration_dial_hour_field_focused
+TAP back
+SLEEP 1
+SCREENSHOT should_still_be_empty_no_phantom_timer

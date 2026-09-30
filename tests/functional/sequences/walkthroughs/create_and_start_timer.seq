@@ -1,0 +1,42 @@
+# Creates a new timer via the "+ New timer" duration dial and starts it,
+# using button presses only (no touch, no phone/Clay config).
+#
+# Pushes KeyboardOnNewTimer=0/RunOnCreate=0/AutoReturnStart=0 first so the
+# outcome is deterministic regardless of this app's persisted defaults:
+# - KeyboardOnNewTimer=0 skips the post-dial label-entry keyboard, committing
+#   the timer with an empty label the same way confirming that keyboard with
+#   no text would (see main.c's dial_confirm()/DSTYLE_LONG_NEW handling).
+# - RunOnCreate=0/AutoReturnStart=0 stop a freshly created timer from
+#   auto-starting and popping the app back to the watchface on its own,
+#   which would otherwise race this sequence's own explicit start step.
+IMPORT ../common/wipe_and_prep.seq
+# Unfreeze: this timer is started for real via the button-driven wizard
+# flow below, not the SetTimerIndex backdoor, so its end_time comes from a
+# real now_s() call this sequence doesn't control - leaving the display
+# frozen to wipe_and_prep.seq's early setup-time anchor would make
+# timer_running below show a stale/confusing value instead of a
+# recognizable one. See run_control_pause_resume_stop.seq's own comment
+# for the same reasoning applied to a real state transition.
+APPMSG --int 10029=0
+APPMSG --int 10016=0 10015=0 10003=0
+SCREENSHOT list_empty
+
+# SELECT on the (only) "+ New timer" row opens the duration dial, header
+# "Duration", defaulting to 00:01:00 with the minute field focused.
+TAP select
+SCREENSHOT duration_dial_default
+
+# UP/DOWN adjust the focused field; SELECT advances hour -> minute -> second
+# and, once on the last field, confirms instead of advancing further.
+TAP up
+SCREENSHOT duration_minute_adjusted
+TAP select
+TAP up
+SCREENSHOT duration_seconds_adjusted
+TAP select
+SCREENSHOT timer_created
+
+# A short SELECT on the newly created (and already-focused) timer row
+# starts it - confirmed by the green background/countdown row.
+TAP select
+SCREENSHOT timer_running

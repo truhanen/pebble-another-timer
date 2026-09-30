@@ -1,0 +1,31 @@
+# A short timer actually runs out -> full-screen alarm appears -> Stop ->
+# back to the list.
+#
+# AutoReturnStop=1 is set below but deliberately has NO EFFECT here -
+# confirmed by reading alarm_dismiss_tail()'s own comment in main.c: it
+# is explicit that AutoReturnStart/Stop govern only *voluntary* start/stop
+# actions taken from the run-control menu (see DACT_STOP), not dismissing
+# an alarm screen the user never asked to see. Dismissing a naturally-fired
+# alarm always reveals whatever was on screen before it fired (the main
+# list here), regardless of AutoReturnStop - live-verified. So the
+# expected final screenshot is the list, not the watchface, even with
+# AutoReturnStop=1.
+#
+# The alarm screen's Stop button is DOWN (confirmed) - see main.c's alarm
+# click config.
+IMPORT ../common/wipe_and_prep.seq
+
+APPMSG --int 10018=1
+APPMSG --string 10000="$(printf 'Quick Timer\0375\0371')"
+SLEEP 1
+APPMSG --int 10020=0 10021=1 10022=5 10029=1
+SLEEP 1
+SCREENSHOT running_5s
+
+# Let real time cross the 5s end while the app stays foregrounded.
+SLEEP 7
+SCREENSHOT alarm_screen_should_be_showing
+
+TAP down
+SLEEP 1
+SCREENSHOT after_stop_should_be_list_autoreturnstop_has_no_effect_on_alarm_dismissal

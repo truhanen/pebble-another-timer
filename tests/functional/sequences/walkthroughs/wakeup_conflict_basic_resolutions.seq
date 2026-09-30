@@ -1,0 +1,59 @@
+# Exercises the two possible resolutions to a wakeup conflict under the
+# current (silent-early-wake) design: (1) a free early-wake slot exists ->
+# resolved automatically by try_auto_early_wake(), no window shown at all;
+# (2) no free slot anywhere in the search window -> the single-row
+# informational "Ok" window appears, and acknowledging it returns to the
+# main list with the timer still running (foreground hold).
+#
+# Uses TestBlockedSystemWakeupMinuteOffsetsPos (APP_TEST_HOOKS=1 build
+# required - see wipe_and_prep_test_hooks.seq) instead of a real colliding
+# wakeup from another app. The offset list is relative to whichever timer
+# is currently the target (find_soonest_unarmed_running_idx), so it
+# automatically re-centers as the target changes.
+#
+# NOTE: unverified against a live emulator at authoring time - row/field
+# indices below are derived from reading main.c (wc_row_kind,
+# try_auto_early_wake, wakeup_find_early_slot), not confirmed on screen.
+# Treat this as a first draft to validate before trusting it as a
+# standing regression test.
+IMPORT ../common/wipe_and_prep_test_hooks.seq
+
+## --- Timer A (id 1, 1200s): only its own exact minute is blocked ---
+# leaving 14 other whole minutes free within wakeup_find_early_slot()'s
+# 15-candidate search window - try_auto_early_wake() finds one and adopts
+# it automatically. No conflict window should ever appear.
+APPMSG --string 10027="0"
+APPMSG --string 10000="$(printf 'Timer A\0371200\0371')"
+SLEEP 1
+APPMSG --int 10020=0 10021=1 10022=1200 10029=1
+SLEEP 1
+SCREENSHOT a_silently_resolved_still_running
+# Expect: plain running list, NOT a conflict window.
+
+# Take A out of the running pool so it stops being the global-soonest
+# target and B (below) becomes it instead.
+APPMSG --int 10020=0 10021=0
+SLEEP 1
+
+## --- Timer B (id 2, 180s): short duration + a handful of blocked ---
+# minutes before B's own end_time - with only ~2-3 backward candidates
+# available before wakeup_find_early_slot()'s `candidate <= time(NULL)`
+# cutoff, blocking offsets 0-5 (well within TEST_BLOCKED_MINUTES_MAX=8)
+# exhausts all of them, so no free slot exists, and the single-row "Ok"
+# informational window should appear instead. (A longer duration would
+# leave far more than 8 blockable candidates - see the eviction test's
+# comments for why exhaustive blocking doesn't scale to long durations.)
+APPMSG --string 10028="0,1,2,3,4,5"
+APPMSG --string 10000="$(printf 'Timer A\0371200\0371\036Timer B\037180\0372')"
+SLEEP 1
+APPMSG --int 10020=1 10021=1 10022=180 10029=1
+SLEEP 1
+SCREENSHOT b_ok_window_shown
+# Expect: red "Timer conflicts with / another app's wakeup. / MUST STAY
+# OPEN." message (see open_wakeup_conflict_window_ex's msg_buf), single
+# "Ok" row underneath (wc_num_rows()==1 when s_wakeup_conflict_is_exit_
+# prompt is false - this is the plain informational open, not the
+# exit-attempt re-prompt).
+TAP select
+SLEEP 1
+SCREENSHOT b_ok_dismissed_back_on_list

@@ -1,0 +1,4 @@
+# Standalone idle-exit-disable push, for use mid-walkthrough (e.g. after a
+# `pebble wipe` triggered some other way) without a full wipe+reinstall.
+# IdleExitSec=0, key 10011 - see emulator_configuration.mk.
+APPMSG --int 10011=0

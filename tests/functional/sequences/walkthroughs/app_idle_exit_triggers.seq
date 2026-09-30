@@ -1,0 +1,15 @@
+# The positive case for idle auto-exit: pushing a short nonzero
+# IdleExitSec and then sitting idle past it should actually pop the app to
+# the watchface on its own. This is the inverse of what
+# disable_idle_exit.seq/wipe_and_prep.seq exist to prevent during every
+# OTHER walkthrough - kept as its own explicit test since a broken
+# idle-exit could otherwise go unnoticed (every other sequence actively
+# suppresses it).
+#
+# NOTE: unverified against a live emulator at authoring time.
+IMPORT ../common/wipe_and_prep.seq
+
+APPMSG --int 10011=5
+SCREENSHOT list_idle_exit_5s
+SLEEP 8
+SCREENSHOT should_have_auto_exited_to_watchface

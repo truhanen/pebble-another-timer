@@ -1,0 +1,80 @@
+# Exercises pausing a timer that currently holds an ACCEPTED early-wake
+# plan - main.c's abandon_early_wake_if_for() should retire that plan (a
+# real, separately-tracked WakeupId) the moment the timer stops being
+# TS_RUNNING, via the DACT_PAUSE call site.
+#
+# Getting into the "accepted early-wake" state is now fully automatic
+# (try_auto_early_wake() - no menu, no button press): a timer just needs a
+# free early-wake slot available when its wakeup conflicts, which happens
+# silently and shows no window at all.
+#
+# HONEST LIMITATION: this framework has no log or persisted-storage
+# assertions (v1, screenshots only - see tests/functional_framework/
+# README.md's "What this v1 does not do"). A LEAKED plan's only real
+# symptom is a stray, already-armed OS wakeup that fires on its own at
+# some future moment (a spurious vibration/relaunch for a timer that's no
+# longer even running) - this walkthrough can exercise the pause-while-
+# holding-a-plan code path and confirm the app doesn't misbehave visibly
+# (no crash, correct PAUSED state shown, no immediate spurious alarm), but
+# it CANNOT positively confirm the underlying WakeupId was actually
+# cancelled rather than leaked - that needs either a `pebble logs`
+# side-by-side human review during the run, or a future LOGCHECK-style
+# addition to the framework. Treat this sequence as coverage, not full
+# proof.
+#
+# NOTE: unverified against a live emulator at authoring time - see the
+# same caveat in wakeup_conflict_basic_resolutions.seq.
+IMPORT ../common/wipe_and_prep_test_hooks.seq
+
+# Only Timer A's own exact minute (offset 0) is blocked - plenty of other
+# free minutes remain in the 15-candidate search window, so
+# try_auto_early_wake() silently finds and adopts an early-wake slot: A
+# now holds a real, separately-tracked accepted early-wake WakeupId
+# (early_wake_timer_id/_wakeup_id), with no window ever shown.
+APPMSG --string 10027="0"
+APPMSG --string 10000="$(printf 'Timer A\0371200\0371')"
+SLEEP 1
+APPMSG --int 10020=0 10021=1 10022=1200 10029=1
+SLEEP 1
+SCREENSHOT a_silently_resolved_running
+
+# Unfreeze before the real Pause/Resume button presses below - see
+# run_control_pause_resume_stop.seq's own comment for why leaving the
+# display frozen through a real tc_pause()/tc_start() transition would
+# make later screenshots show a stale, growing value instead of a clean
+# one.
+APPMSG --int 10029=0
+
+# The main list's own selection sits on its fresh-list default of
+# "+ New timer" (row 0) - nothing above touched it. One DOWN first, or the
+# next SELECT opens a brand new timer's duration dial instead of Timer
+# A's run-control menu.
+TAP down
+
+# Pause it via the run-control menu (short SELECT -> row 0 = Stop, row
+# 1 = Pause for a TS_RUNNING timer - see tc_detail_actions).
+TAP select
+SCREENSHOT run_control_menu
+TAP down
+TAP select
+SLEEP 1
+SCREENSHOT timer_now_paused
+# Expect: PAUSED state shown, no crash, no conflict window - pausing
+# should have silently retired A's accepted early-wake plan
+# (abandon_early_wake_if_for(), wired into DACT_PAUSE).
+
+# Resume it and confirm it runs normally (no crash, no immediate stray
+# alarm/vibration from a leaked wakeup that happened to already be close
+# to firing).
+TAP select
+TAP down
+TAP select
+SLEEP 1
+SCREENSHOT resumed_running_normally
+
+# Resuming re-attempts rearm_wakeup() for A; since it's still the only
+# running timer and offset 0 is still the only blocked minute, this
+# should resolve silently again (a fresh early-wake slot found and
+# adopted, no window) - confirming the app reacts sanely to a fresh
+# rearm after the pause/resume roundtrip.
+SCREENSHOT final_state_no_conflict_window

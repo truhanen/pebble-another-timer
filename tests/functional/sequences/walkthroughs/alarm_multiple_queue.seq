@@ -1,0 +1,37 @@
+# Two very short timers expire together - confirms the alarm queue
+# (show_next_pending_alarm/pending_alarm_count) chains to the second one
+# after Stopping the first, rather than only ever showing one alarm ever.
+#
+# NOTE: unverified against a live emulator at authoring time. The alarm
+# screen's Stop button is DOWN (confirmed) - see main.c's alarm click config.
+IMPORT ../common/wipe_and_prep.seq
+
+# AutoReturnStop is irrelevant to alarm dismissal (alarm_dismiss_tail()
+# deliberately ignores it - confirmed by reading main.c and by
+# natural_expiry_alarm_stop.seq) - explicitly set to 0 anyway just to keep
+# this sequence self-contained/order-independent of that setting's default.
+APPMSG --int 10018=0
+APPMSG --string 10000="$(printf 'Timer A\0375\0371\036Timer B\0375\0372')"
+SLEEP 1
+APPMSG --int 10020=0 10021=1 10022=5
+# FreezeDisplay=1 on B's (the LAST) seed message re-captures the frozen
+# "now" here, giving B an exact 5s remaining below - A's own display is
+# still bounded-but-not-exact (it reflects whatever real gap existed
+# between these two separate AppMessage sends, a single command's worth of
+# jitter, not the whole test's) - an inherent limit of one single global
+# freeze instant with two timers seeded in two separate messages. Still a
+# large improvement over fully live.
+APPMSG --int 10020=1 10021=1 10022=5 10029=1
+SLEEP 1
+SCREENSHOT both_running_5s
+
+SLEEP 7
+SCREENSHOT first_alarm_showing
+
+TAP down
+SLEEP 1
+SCREENSHOT second_alarm_should_now_be_showing
+
+TAP down
+SLEEP 1
+SCREENSHOT both_dismissed_back_to_list

@@ -1,0 +1,26 @@
+# "+ New timer" wizard with RunOnCreate=1/AutoReturnStart=1 - unlike
+# create_and_start_timer.seq (which pins both to 0 and starts explicitly),
+# this confirms a freshly created timer auto-starts on its own and the app
+# pops back toward the watchface, without an explicit start press.
+# KeyboardOnNewTimer stays 0 - see new_timer_discard_draft.seq's own note
+# on why label entry isn't scripted here.
+#
+# NOTE: unverified against a live emulator at authoring time.
+IMPORT ../common/wipe_and_prep.seq
+# Unfreeze: this timer auto-starts for real via RunOnCreate, not the
+# SetTimerIndex backdoor - see create_and_start_timer.seq's own comment
+# for why leaving the default freeze on would corrupt the running-state
+# screenshot below.
+APPMSG --int 10029=0
+APPMSG --int 10016=0 10015=1 10003=1
+SCREENSHOT list_empty
+
+TAP select
+SCREENSHOT duration_dial_default
+TAP up
+TAP select
+TAP up
+TAP select
+SCREENSHOT timer_committed
+SLEEP 1
+SCREENSHOT should_already_be_running_and_near_watchface

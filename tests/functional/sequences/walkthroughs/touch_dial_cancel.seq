@@ -1,0 +1,40 @@
+# Exercises the actual touchscreen code path (touch_dial/touch.c's
+# handle_touch_event, via touch_service_subscribe) using a real touch
+# event - not a button press - which no other walkthrough in this suite
+# reaches at all. Container-only: run via
+#   tests/functional/docker/run_container.sh \
+#     tests/functional/sequences/walkthroughs/touch_dial_cancel.seq --touch
+# See functional_framework/README.md's TOUCH row and
+# tests/functional/docker/README.md's TOUCH section for why - TOUCH
+# refuses to run without a real windowed emulator (--no-vnc) and an X11
+# $DISPLAY (Xvfb), neither of which a plain (non---touch) container or a
+# native run provides.
+IMPORT ../common/wipe_and_prep.seq
+
+# SELECT on the (only) "+ New timer" row opens the duration dial, header
+# "Duration", defaulting to 00:01:00 - same starting point as
+# create_and_start_timer.seq.
+TAP select
+SCREENSHOT duration_dial_default
+
+# (100, 114) is this screen's dead center - touch_dial/touch.c's own hit
+# test (is_touch_in_outer_ring) puts a tap-and-hold there squarely in the
+# INNER "Cancel" zone, not the outer selection ring, so releasing there
+# hits the TouchEvent_Liftoff / TOUCH_AREA_INNER branch ("Cancelled touch
+# selection" -> finish()) rather than committing an hour/minute/second
+# selection - the simplest touch gesture to assert on without also driving
+# a multi-point angular drag. hold_s=0.6 is well past both
+# touchLiftMinDurationMs (100ms) and touchMinDurationMs's own defaults,
+# and is the same value confirmed (via a temporary debug APP_LOG in
+# handle_touch_event, both natively via cliclick/CGEventPost and in this
+# container via xdotool) to reliably open the round touch dial before
+# release.
+TOUCH 100 114 0.6
+
+# The touch dial should have opened and then closed again on release
+# (cancel) with no change to the duration underneath it - matches
+# duration_dial_default above but proves the touch event was actually
+# processed (a stuck/hung dial, a crash, or a wrongly-committed duration
+# would all show up here as a mismatch) rather than silently ignored the
+# way a raw --vnc pointer click is (see the container-only note above).
+SCREENSHOT duration_dial_after_touch_cancel

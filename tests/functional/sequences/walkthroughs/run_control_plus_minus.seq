@@ -1,0 +1,52 @@
+# +1 min / -1 min from the run-control menu on a running timer
+# (tc_detail_actions: Stop=0, Pause=1, +1 min=2, -1 min=3, Restart=4).
+# Confirms each press shifts the displayed remaining time by exactly 60s,
+# and that repeated -1 min presses floor out instead of going negative.
+#
+# Frozen for the whole sequence (10029=1 below) - safe to leave frozen
+# through every +1/-1 min press here, unlike a real Pause/Resume
+# (run_control_pause_resume_stop.seq): tc_add() only shifts the EXISTING
+# end_time by a fixed 60s delta, it doesn't recompute from a fresh real
+# "now" the way tc_pause()/tc_start() do, so the frozen display stays
+# exact (not just stable) after every press - "about 6:00" below is
+# actually exactly 6:00.
+#
+# NOTE: unverified against a live emulator at authoring time.
+IMPORT ../common/wipe_and_prep.seq
+
+APPMSG --string 10000="$(printf 'Timer A\037300\0371')"
+SLEEP 1
+APPMSG --int 10020=0 10021=1 10022=300 10029=1
+SLEEP 1
+
+# "+ New timer" sits at row 0 and is where a fresh list's selection
+# defaults to - a short SELECT there opens a NEW blank timer's duration
+# dial, not this timer's run-control menu. One DOWN first.
+TAP down
+TAP select
+TAP down
+TAP down
+SCREENSHOT plus_one_selected
+TAP select
+SLEEP 1
+SCREENSHOT should_read_about_6_00
+
+# Re-enter (dl_select doesn't close the detail window on +/-1min, so the
+# menu should still be open here - this second TAP select is defensive in
+# case that assumption is wrong).
+TAP down
+SCREENSHOT minus_one_selected
+TAP select
+SLEEP 1
+SCREENSHOT should_read_about_5_00
+
+# Force it down toward the floor with several more -1 min presses (this
+# timer started at 5:00, so 5 presses should approach 0 without going
+# negative or crashing).
+TAP select
+TAP select
+TAP select
+TAP select
+TAP select
+SLEEP 1
+SCREENSHOT after_many_minus_presses_should_not_be_negative

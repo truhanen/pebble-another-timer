@@ -1,0 +1,75 @@
+# Types a new timer's label using the on-screen touch keyboard
+# (multitap_keyboard/multitap_keyboard.c), not the physical-button
+# multitap flow. Sets a duration via TOUCH first (touch_dial_set_via_
+# position.seq's own mechanism - only incidental here), which by default
+# opens the label keyboard automatically once committed: main.c's
+# s_keyboard_on_new_timer defaults to TRUE (new_flow_open_label_cb), unlike
+# the OTHER touch_dial_*.seq sequences, which deliberately push
+# KeyboardOnNewTimer=0 to SKIP this screen - this sequence is the one that
+# actually exercises it, so it must NOT set that key.
+#
+# The keyboard is a 3x4 touch grid (multitap_keyboard.c's prv_grid_metrics,
+# for this app's 200x228 screen: origin (1, 46), cell size 66x45 - derived
+# from TEXT_AREA_H=44 + GRID_VPAD=2 above the grid, GRID_VPAD=2 below, and
+# the 200-wide screen split into 3 equal columns). Keys 0-8 are letter keys
+# (PAGE_KEY's ".,?!"/"abc"/"def"/"ghi"/"jkl"/"mno"/"pqrs"/"tuv"/"wxyz", row-
+# major); each repeated TAP on the SAME key cycles its letters (m -> n ->
+# o), while a tap on a DIFFERENT key commits whatever was pending first
+# (multitap_keyboard.c's prv_press_char_key) - no waiting between key
+# presses is needed for that. Only the FINAL pending letter needs an
+# explicit commit, which the physical SELECT button's submit
+# (multitap_keyboard_window.c's prv_select_click -> multitap_keyboard_
+# submit) does on its own - there is no on-screen touch "OK"/submit key by
+# design (see multitap_keyboard.h's own header comment).
+#
+# Each TOUCH here uses a SHORT hold (0.1s), not the ~0.6s used against the
+# touch DIAL elsewhere in this suite - this widget's own tap-vs-hold
+# threshold (multitap_keyboard_window.c's HOLD_MS=350) is the opposite
+# requirement: a hold here inserts that key's keypad DIGIT
+# (multitap_keyboard_handle_hold) instead of cycling its letter, which
+# would silently corrupt the typed label. 0.1s is comfortably under 350ms.
+#
+# Container-only: run via
+#   tests/functional/docker/run_container.sh \
+#     tests/functional/sequences/walkthroughs/touch_keyboard_label.seq --touch
+# See functional_framework/README.md's TOUCH row and
+# tests/functional/docker/README.md's TOUCH section for why.
+IMPORT ../common/wipe_and_prep.seq
+
+# Stop RunOnCreate/AutoReturnStart from racing this sequence's own
+# screenshots (same as create_and_start_timer.seq) - deliberately NOT
+# KeyboardOnNewTimer=0, see the header comment above.
+APPMSG --int 10015=0 10003=0
+SCREENSHOT list_empty
+
+TAP select
+SCREENSHOT duration_dial_default
+
+# Same "15 minutes" dial point as touch_dial_set_via_position.seq (see its
+# own comment for the derivation) - the duration value itself is
+# incidental here; this test's real subject is the keyboard that opens
+# next.
+TOUCH 170 135 0.6
+SLEEP 0.5
+SCREENSHOT keyboard_open
+
+# "O" is the 3rd letter of key5 ("mno", cell centre (166, 113): row 1,
+# col 2 -> x = 1 + 2*66 + 33 = 166, y = 46 + 1*45 + 22 = 113) - 3 quick
+# taps cycle m -> n -> o.
+TOUCH 166 113 0.1
+TOUCH 166 113 0.1
+TOUCH 166 113 0.1
+
+# "K" is the 2nd letter of key4 ("jkl", cell centre (100, 113): row 1,
+# col 1 -> x = 1 + 1*66 + 33 = 100, same y). Switching keys here commits
+# the pending "o" first (prv_press_char_key), then 2 quick taps cycle
+# j -> k.
+TOUCH 100 113 0.1
+TOUCH 100 113 0.1
+SCREENSHOT keyboard_typed
+
+# SELECT commits the pending "k" and submits the whole label - see
+# multitap_keyboard_window.c's prv_select_click / multitap_keyboard_submit.
+TAP select
+SLEEP 0.5
+SCREENSHOT timer_created

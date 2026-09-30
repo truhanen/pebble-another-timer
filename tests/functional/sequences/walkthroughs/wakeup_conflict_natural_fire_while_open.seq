@@ -1,0 +1,35 @@
+# Confirms wc_dismiss_for_natural_fire(): if the conflict window's own
+# timer reaches its REAL end time while the window is still open and
+# undecided (only possible because the app stayed in the foreground the
+# whole time), the conflict window should get out of the way and the real
+# alarm/ring screen should take over cleanly - not stack on top of it, and
+# not leave the conflict window stuck on screen past the real fire time.
+#
+# Uses a very short remaining time (a few seconds) on purpose: too short
+# for wakeup_find_early_slot() to find any free minute before it (every
+# backward candidate is already in the past, regardless of the simulated
+# block below) - so try_auto_early_wake() also can't resolve it silently,
+# and the single-row "Ok" informational window appears instead, with the
+# red "Timer conflicts with / another app's wakeup. / MUST STAY OPEN."
+# message.
+#
+# NOTE: unverified against a live emulator at authoring time - see the same
+# caveat in wakeup_conflict_basic_resolutions.seq. The Stop button on the alarm screen is DOWN (confirmed).
+IMPORT ../common/wipe_and_prep_test_hooks.seq
+APPMSG --string 10027="0"
+
+APPMSG --string 10000="$(printf 'Quick Timer\0378\0371')"
+SLEEP 1
+APPMSG --int 10020=0 10021=1 10022=8 10029=1
+SLEEP 1
+SCREENSHOT conflict_menu_ok_no_early_slot
+
+# Let real wall-clock time cross the timer's actual 8s end while the
+# conflict window (still undecided) sits on screen and the app stays
+# foregrounded the entire time.
+SLEEP 10
+SCREENSHOT should_now_show_real_alarm_not_conflict_menu
+
+TAP down
+SLEEP 1
+SCREENSHOT final_state

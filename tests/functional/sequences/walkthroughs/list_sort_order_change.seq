@@ -1,0 +1,27 @@
+# Seeds three timers directly via a TimerConfig AppMessage string (same
+# trick as `make send_emulator_timers`), then flips SortOrder from the
+# default (0=MRU) through 1=shortest-first to 2=longest-first, taking a
+# screenshot at each step. Exercises AppMessage-driven config pushes
+# without needing a phone/Clay config page attached to the emulator.
+IMPORT ../common/wipe_and_prep.seq
+
+# TimerConfig (key 10000) format: RS(\036)-separated timers, each
+# "name US(\037) seconds" - see timer_calc.c/timer_config.ts for the
+# shared format this mirrors.
+#
+# Seeded deliberately NOT in duration order (9min, 10s, 12min) - an
+# earlier version seeded them already-ascending (10s, 9min, 12min), which
+# made the "shortest first" screenshot indistinguishable from the
+# creation-order default and didn't actually prove sorting took effect
+# (live-verified: that version's 01/02 screenshots were pixel-identical).
+APPMSG --string 10000="$(printf 'Egg 9 min\037540\03610 s\03710\036Egg 12 min\037720')"
+SLEEP 1
+SCREENSHOT sorted_mru_default
+
+APPMSG --int 10001=1
+SLEEP 1
+SCREENSHOT sorted_shortest_first
+
+APPMSG --int 10001=2
+SLEEP 1
+SCREENSHOT sorted_longest_first

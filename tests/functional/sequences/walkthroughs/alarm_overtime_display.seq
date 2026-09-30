@@ -1,0 +1,66 @@
+# A timer left un-dismissed on the alarm screen for a while - confirms the
+# live elapsed-overtime counter actually counts up rather than freezing or
+# showing something broken. (Forcing TS_RUNNING into overtime directly via
+# SetTimerRemaining was considered instead, but sweep_expiries() - called
+# right after every SetTimerIndex mutation specifically to "catch an
+# immediate overtime" - would immediately flag it and show the alarm
+# screen anyway, so there's no reachable "quiet overtime row sitting in
+# the list" state to test separately from this one.)
+#
+# Explicitly UNFREEZES the display right after import: wipe_and_prep.seq
+# now freezes it by default for every sequence (see that file's own
+# comment) - this is the one deliberate exception, since freezing would
+# defeat the entire point here (watching the counter actually tick in
+# real time is what's being tested, not a static value).
+#
+# NOTE: live-verified (2026-09-27). This file previously (briefly) showed
+# the live overtime counter jumping BACKWARD between its two screenshots
+# (e.g. "+0:04" -> "+0:01") in the containerized harness, while the exact
+# same button/AppMessage sequence run natively always ticked correctly and
+# monotonically. Root-caused to the container harness's OLD FAKETIME
+# setup, NOT anything in this app: every separate `pebble` CLI invocation
+# (screenshot/send-app-message/emu-button/...) is a fresh OS process, and
+# pebble-tool's own PebbleTransportEmulator.post_connect() unconditionally
+# resyncs the emulator's clock (a SetUTC packet stamped with that
+# process's own time.time()) on every single connect. The container's old
+# FAKETIME="@2020-01-01 12:00:00" (an absolute "start-at" value) anchors
+# its "keep advancing" reference to WHEN THE AFFECTED PROCESS ITSELF
+# STARTED (confirmed against libfaketime's own README), so each new,
+# short-lived `pebble` CLI process reported a time near the pinned instant
+# plus its own (tiny) uptime - repeatedly discarding real elapsed time
+# between separate commands, not just occasionally drifting.
+#
+# Fixed at the source (tests/functional/docker/run-sequence-in-container.sh):
+# FAKETIME is now a plain RELATIVE OFFSET (no "@"), which libfaketime
+# evaluates fresh against the real system clock on every query by every
+# process, with no per-process anchor - see that script's own comment for
+# the full mechanism and the fix's live verification (this file's counter
+# now correctly and monotonically increases, e.g. "+0:04" -> "+0:10").
+#
+# Residual, much milder caveat: the two live "+MM:SS" screenshots below
+# still aren't guaranteed byte-for-byte reproducible run to run, since the
+# exact real wall-clock overhead of the intervening `pebble` CLI calls
+# (process spawn/connect time) still varies - but the counter should
+# always be monotonically increasing and roughly track the scripted SLEEP
+# durations now. A future golden diff confined to the "+MM:SS" text region
+# with a plausible (close to the scripted SLEEP total), forward-only value
+# is expected drift, not evidence of a regression - but a value that goes
+# DOWN, or is wildly off, is a real regression signal again (unlike
+# before this fix, when a backward jump on its own proved nothing).
+# Everything else this file checks (the alarm screen appearing at all,
+# its layout, the Stop button dismissing it) was never affected either
+# way and remains fully meaningful to compare.
+IMPORT ../common/wipe_and_prep.seq
+APPMSG --int 10029=0
+
+APPMSG --string 10000="$(printf 'Quick Timer\0375\0371')"
+SLEEP 1
+APPMSG --int 10020=0 10021=1 10022=5
+SLEEP 1
+SLEEP 7
+SCREENSHOT alarm_just_fired_elapsed_near_0
+SLEEP 5
+SCREENSHOT alarm_elapsed_should_now_read_about_5s
+TAP down
+SLEEP 1
+SCREENSHOT dismissed

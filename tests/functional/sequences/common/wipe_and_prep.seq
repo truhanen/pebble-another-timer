@@ -1,0 +1,43 @@
+# Bash-sequence equivalent of `make wipe_and_prep_emulator`: wipe the
+# emulator, reinstall, and disable idle auto-exit - see CLAUDE.md's
+# "Always use `make wipe_and_prep_emulator` instead of bare `pebble wipe`"
+# note for why the idle-exit push matters for a scripted walkthrough.
+# `pebble install` auto-launches the app, so no button press is needed
+# here.
+KILL
+WIPE
+INSTALL
+SLEEP 3
+
+# Deliberately does NOT pin the EMULATOR's own clock via `emu-set-time`.
+# An earlier version of this file (and a since-retired
+# wipe_and_prep_golden.seq variant) tried that: repinning the DISPLAYED
+# clock backward to a fixed reference after pebble-tool's own connection-
+# triggered resync had already moved it forward to the real host time
+# (confirmed: TAP/APPMSG trigger that resync, SCREENSHOT/emu-set-time
+# itself do not - see lib/steps.sh) creates a backward-then-forward clock
+# discontinuity that Pebble OS's real wakeup subsystem interprets as the
+# watch having been off, producing the genuine system "While your Pebble
+# was off..." screen instead of this app's own alarm screen - corrupting
+# any sequence that also waits for a REAL timer to fire. FreezeDisplay
+# below sidesteps that failure mode entirely, by design - it's an
+# APP-SIDE rendering override (see display_now() in main.c), never
+# touches the real emulator/system clock, so it can't trigger that
+# discontinuity and works identically for every sequence, including
+# alarm_*.seq/wakeup_conflict_natural_fire_while_open.seq - expiry/wakeup
+# logic always uses the real clock regardless of this.
+#
+# FreezeDisplay=1 pins every live time/remaining/elapsed display app-wide
+# to a stable, reproducible state from the very start of every sequence
+# (see main.c's own comment on display_now() for the full list of what
+# this covers) - FreezeElapsedSeconds=0 is the bottom bar's own
+# elapsed-since-launch value while frozen. A sequence that specifically
+# wants to observe something tick in real time (alarm_overtime_display.seq)
+# explicitly unfreezes with its own `APPMSG --int 10029=0` instead of
+# relying on this default.
+#
+# IdleExitSec=0 (key 10011) disables idle auto-exit. See
+# emulator_configuration.mk for the full settings key numbering; only the
+# ones this sequence actually needs are repeated here to avoid coupling
+# this framework to that Makefile-specific file.
+APPMSG --int 10011=0 10029=1 10030=0

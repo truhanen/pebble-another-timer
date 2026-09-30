@@ -1,0 +1,25 @@
+# Long-press edit menu, Label row (DSTYLE_LONG_EXISTING row 1). Only
+# exercises opening the label keyboard and backing out unchanged - actual
+# character entry is TOUCH-ONLY (confirmed), so it can't be scripted with
+# button presses at all in this framework; SELECT submits whatever text is
+# currently entered and BACK cancels (both confirmed). This still covers
+# "does opening/cancelling the label editor leave the timer intact".
+#
+# NOTE: unverified against a live emulator at authoring time.
+IMPORT ../common/wipe_and_prep.seq
+
+APPMSG --string 10000="$(printf 'Original Name\037300\0371')"
+SLEEP 1
+SCREENSHOT initial_list
+
+# "+ New timer" sits at row 0 and is where a fresh list's selection
+# defaults to - ml_select_long() is a no-op there, so move down first.
+TAP down
+LONGPRESS select
+SCREENSHOT edit_menu
+TAP down
+TAP select
+SCREENSHOT label_keyboard_open
+TAP back
+SLEEP 1
+SCREENSHOT name_should_be_unchanged

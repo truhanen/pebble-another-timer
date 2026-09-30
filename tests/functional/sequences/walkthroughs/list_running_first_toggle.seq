@@ -1,0 +1,36 @@
+# RunningFirst (key 10004) toggled with a mix of running/idle timers
+# seeded - confirms list ordering actually changes, same style as the
+# existing sort_order_change.seq walkthrough but for this separate
+# setting rather than SortOrder.
+#
+# The default SortOrder (0=MRU, order_key() in timer_calc.c) sorts purely
+# by last_used, and running_first's tiering (order_key()'s `if
+# (running_first)` block) is ADDITIVE on top of that base key, not a
+# replacement for it. Starting Running One via SetTimerIndex touches its
+# last_used, so if it's the most-recently-touched timer, MRU alone already
+# puts it first regardless of RunningFirst - live-verified: an earlier
+# version of this file started Running One last and never touched the
+# idle timers again, so both the "off" and "on" screenshots showed the
+# identical order and never actually exercised the setting. Fixed by
+# touching the two idle timers again *after* starting Running One (each
+# with its own SLEEP 1 so their last_used values are strictly ordered,
+# since now_s() has 1s resolution), so Running One is the LEAST recently
+# touched of the three by the time the screenshots are taken - only
+# RunningFirst=1's tiering can bring it back to the front.
+IMPORT ../common/wipe_and_prep.seq
+
+APPMSG --string 10000="$(printf 'Idle One\037300\0371\036Idle Two\037300\0372\036Running One\037300\0373')"
+SLEEP 1
+APPMSG --int 10020=2 10021=1 10022=200 10029=1
+SLEEP 1
+APPMSG --int 10020=0 10021=0 10022=300
+SLEEP 1
+APPMSG --int 10020=1 10021=0 10022=300
+SLEEP 1
+
+APPMSG --int 10004=0
+SLEEP 1
+SCREENSHOT running_first_off_running_one_should_trail
+APPMSG --int 10004=1
+SLEEP 1
+SCREENSHOT running_first_on_running_one_should_lead

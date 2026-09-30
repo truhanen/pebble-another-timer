@@ -1,0 +1,39 @@
+# Restart a running timer with time already elapsed off it - confirms it
+# snaps back to the FULL configured duration, not just a re-armed wakeup
+# from wherever it currently was (tc_detail_actions row 4 = Restart).
+#
+# NOTE: unverified against a live emulator at authoring time.
+IMPORT ../common/wipe_and_prep.seq
+
+APPMSG --string 10000="$(printf 'Timer A\037300\0371')"
+SLEEP 1
+# Force it running with only 60s left (as if 4 of its 5 minutes had
+# already elapsed), so Restart's effect (back to 5:00) is unambiguous from
+# a simple "did it go up" screenshot.
+APPMSG --int 10020=0 10021=1 10022=60 10029=1
+SLEEP 1
+SCREENSHOT running_60s_left
+
+# Unfreeze before the real Restart button press below - like tc_pause()/
+# tc_start() (see run_control_pause_resume_stop.seq's own comment),
+# start_with_secs()/finish_start_tail() (DACT_RESTART) compute a brand new
+# end_time from a FRESH real "now" at the moment of the press, not a
+# delta - leaving the display frozen to running_60s_left's stale
+# seed-moment would make the post-restart screenshot show a slowly
+# growing, not-quite-5:00 value instead of a clean one.
+APPMSG --int 10029=0
+
+# "+ New timer" sits at row 0 and is where a fresh list's selection
+# defaults to - a short SELECT there opens a NEW blank timer's duration
+# dial, not this timer's run-control menu. One DOWN first.
+TAP down
+TAP select
+SCREENSHOT run_control_menu
+TAP down
+TAP down
+TAP down
+TAP down
+SCREENSHOT restart_selected
+TAP select
+SLEEP 1
+SCREENSHOT should_read_5_00_again_not_1_00

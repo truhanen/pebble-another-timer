@@ -1,0 +1,36 @@
+# Per-timer Vibration/Sound toggles (DSTYLE_LONG_EXISTING rows 3/4). Can't
+# assert the actual haptic/audio output from a screenshot, so this only
+# confirms toggling both off doesn't break the edit menu or the alarm
+# screen that follows.
+#
+# NOTE: unverified against a live emulator at authoring time except the
+# alarm screen's Stop button, which is DOWN (confirmed).
+IMPORT ../common/wipe_and_prep.seq
+
+APPMSG --string 10000="$(printf 'Quick Timer\0375\0371')"
+SLEEP 1
+
+# "+ New timer" sits at row 0 and is where a fresh list's selection
+# defaults to - ml_select_long() is a no-op there, so move down first.
+TAP down
+LONGPRESS select
+SCREENSHOT edit_menu
+TAP down
+TAP down
+TAP down
+SCREENSHOT vibration_row_selected
+TAP select
+SCREENSHOT vibration_toggled_off
+TAP down
+SCREENSHOT sound_row_selected
+TAP select
+SCREENSHOT sound_toggled_off
+TAP back
+
+APPMSG --int 10020=0 10021=1 10022=5 10029=1
+SLEEP 1
+SLEEP 7
+SCREENSHOT alarm_still_shows_with_both_disabled
+TAP down
+SLEEP 1
+SCREENSHOT dismissed_cleanly
