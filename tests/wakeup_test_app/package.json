@@ -1,0 +1,27 @@
+{
+  "name": "wakeup_test_app",
+  "author": "MakeAwesomeHappen",
+  "version": "1.0.0",
+  "keywords": ["pebble-app"],
+  "private": true,
+  "dependencies": {},
+  "pebble": {
+    "displayName": "Wakeup Test",
+    "uuid": "89a89b3c-f84e-4233-bb93-82a9a247aab8",
+    "sdkVersion": "3",
+    "enableMultiJS": true,
+    "targetPlatforms": [
+      "emery"
+    ],
+    "watchapp": {
+      "watchface": false
+    },
+    "messageKeys": [
+      "ScheduleWakeup",
+      "CancelWakeup"
+    ],
+    "resources": {
+      "media": []
+    }
+  }
+}

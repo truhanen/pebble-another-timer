@@ -1,0 +1,5 @@
+# The root .gitignore's bare "wscript" pattern exists to ignore the main
+# project's SDK-managed file of the same name - it incidentally also
+# matches this subproject's own wscript, which IS a real, needed project
+# file (from `pebble new-project`, not generated). Un-ignore it.
+!wscript
