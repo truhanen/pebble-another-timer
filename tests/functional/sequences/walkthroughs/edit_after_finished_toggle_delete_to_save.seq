@@ -16,20 +16,30 @@ IMPORT ../common/wipe_and_prep.seq
 
 APPMSG --string 10000="$(printf 'Quick Timer\037300\0371')"
 SLEEP 1
-APPMSG --int 10020=0 10021=1 10022=300 10029=1
+APPMSG --int 10020=0 10021=1 10022=300
 SLEEP 1
+# The timer's end_time is never touched by anything below (only the
+# after-finished flag toggles) - only this main-list screenshot needs a
+# TestSetTimerRemainingDisplay override, since every other screenshot here
+# is the LONG_EXISTING edit menu, which shows s_detail_edit_secs directly
+# rather than reading through effective_now_for(). Value measured from a
+# live run (backdoor-set 300 at T0, minus real elapsed seconds observed).
+APPMSG --int 10020=0 10029=297 10030=8 10033=0 --string 10031="12:00"
 SCREENSHOT running_300s
 
 # "+ New timer" sits at row 0 and is where a fresh list's selection
 # defaults to - ml_select_long() is a no-op there, so move down first.
 TAP down
 LONGPRESS select
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT edit_menu
 TAP down
 TAP down
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT after_finished_row_selected
 TAP select
 SLEEP 1
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT delete_confirm_shown
 
 # Confirm "Delete" - for a RUNNING timer this only sets the flag and
@@ -41,8 +51,10 @@ SCREENSHOT delete_confirm_shown
 # twice more here, overshooting onto "Sound" instead).
 TAP select
 SLEEP 1
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT now_set_to_delete_still_running
 
 TAP select
 SLEEP 1
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT should_go_straight_to_save_no_confirm_menu_still_running

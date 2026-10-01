@@ -78,7 +78,7 @@ Blank lines and lines starting with `#` are ignored.
 | `SLEEP` | `seconds` | `sleep seconds` |
 | `SCREENSHOT` | `label` | `pebble screenshot --no-open ...`, saved as `<NN>_<label>.png` in the run's output dir (auto-numbered) |
 | `APPMSG` | raw `send-app-message` args | `pebble send-app-message --emulator ... --app-uuid <conf uuid> <args>`, e.g. `APPMSG --int 10011=0` |
-| `TOUCH` | `x y [hold_s]` | A real touchscreen tap-and-hold at content-relative coordinates, via `xdotool` against the emulator's own real window. Requires `--no-vnc` and an X11 `$DISPLAY` (Xvfb) - **container-only**, not supported natively; see `tests/functional/docker/README.md`'s TOUCH section. `hold_s` (default `0.6`) must be a genuine hold, not a tap - see `run_touch` in `lib/steps.sh` for why. Atomic (releases before returning) - can't itself produce a screenshot of a mid-gesture UI state; use `TOUCHDOWN`/`TOUCHUP` for that. |
+| `TOUCH` | `x y [hold_s]` | A real touchscreen tap-and-hold at content-relative coordinates, via `xdotool` against the emulator's own real window. Requires `--no-vnc` and an X11 `$DISPLAY` (Xvfb) - **container-only**, not supported natively; see `tests/functional/container/README.md`'s TOUCH section. `hold_s` (default `0.6`) must be a genuine hold, not a tap - see `run_touch` in `lib/steps.sh` for why. Atomic (releases before returning) - can't itself produce a screenshot of a mid-gesture UI state; use `TOUCHDOWN`/`TOUCHUP` for that. |
 | `TOUCHDOWN` | `x y` | Same mechanism as `TOUCH`, but presses and HOLDS - use with a `SCREENSHOT` step before the matching `TOUCHUP` to capture UI that's only shown while a touch is actively held (e.g. this app's round touch dial). Same container-only requirements as `TOUCH`. |
 | `TOUCHUP` | - | Releases a touch started by `TOUCHDOWN`, at its same position. |
 | `TOUCHMOVE` | `x y` | Moves an already-down touch (from `TOUCHDOWN`) to new coordinates, generating one `TouchEvent_PositionUpdate` - a building block for a custom drag path; most sequences want `TOUCHDRAG` instead. |
@@ -144,7 +144,7 @@ directory being promoted from, which `run_sequence.sh` only writes when
 the environment variable `PEBBLE_TEST_CONTAINERIZED=1` was set for that
 run. This framework doesn't itself know how to launch a container - a
 project wiring this up sets that env var from its own container
-entrypoint (see this app's `tests/functional/docker/
+entrypoint (see this app's `tests/functional/container/
 run-sequence-in-container.sh` for a worked example, alongside its
 libfaketime setup). `PEBBLE_TEST_ALLOW_NATIVE_GOLDEN=1` is a deliberately
 loud, env-var-only (not a flag) escape hatch for a genuine one-off
@@ -179,23 +179,27 @@ Mechanics (`lib/golden.sh`):
   equal between two golden runs made at different real times, regardless
   of whether anything actually regressed. Three approaches exist, ranked
   by preference:
-  1. **An app-side test hook that freezes what gets DRAWN, decoupled from
-     the real clock** (this app's `FreezeDisplay`/`FreezeElapsedSeconds`
-     AppMessage fields - see `main.c`'s `display_now()` and CLAUDE.md).
-     The clearly best option where available: it never touches the real
+  1. **An app-side test hook that overrides what gets DRAWN, decoupled
+     from the real clock** (this app's `TestSetTimerRemainingDisplay`/
+     `TestSetClockDisplay`/`TestSetLaunchElapsedDisplaySec` AppMessage
+     families - see `main.c`'s `effective_now_for()` and CLAUDE.md). The
+     clearly best option where available: it never touches the real
      emulator/system clock at all, so it can't create the discontinuity
      the two approaches below are vulnerable to, and it keeps working
      identically for a sequence that ALSO waits for a real timer to fire
      (expiry/wakeup logic always reads the real clock regardless of this -
-     only rendering is affected). This app's own
-     `sequences/common/wipe_and_prep.seq` sends it by default for every
-     sequence; a sequence that specifically wants to watch something tick
-     in real time (`alarm_overtime_display.seq`) just explicitly
-     unfreezes. Worth building the equivalent for any project maintaining
-     its own app - a small, narrowly-scoped rendering override is far
-     less fragile than either clock-pinning approach below.
+     only rendering is affected). Each override is independently checked
+     against the app's own real ground truth at the moment it's set, with
+     a tolerance the sequence controls, so a screenshot taken too long
+     after setting it gets a visible failure marker instead of a silently
+     stale value - a sequence's own `.seq` file sends the override (plus
+     tolerance) it needs immediately before each `SCREENSHOT`, rather than
+     one blanket freeze for the whole run. Worth building the equivalent
+     for any project maintaining its own app - a small, narrowly-scoped,
+     ground-truth-checked rendering override is far less fragile than
+     either clock-pinning approach below.
   2. **Containerized, via `libfaketime`** (this app's `tests/functional/
-     docker/`) - pins the clock for every process in the container to a
+     container/`) - pins the clock for every process in the container to a
      fixed absolute instant, then lets it tick forward normally. Doesn't
      break sequences that wait for a real timer to fire (unlike approach 3
      below), and is the only path `--update-golden`/`promote_golden.sh`
@@ -230,5 +234,5 @@ Mechanics (`lib/golden.sh`):
 ## What this v1 does not do
 
 - Touch/dial input (`TOUCH`) is supported, but container-only (see the
-  instruction table above and `tests/functional/docker/README.md`) - there
+  instruction table above and `tests/functional/container/README.md`) - there
   is no native equivalent.

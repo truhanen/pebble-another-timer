@@ -190,79 +190,136 @@ static uint32_t   s_foreground_hold_timer_id = 0;
 
 static int64_t now_s(void) { return (int64_t)time(NULL); }
 
-// Test-only: freezes every live time/remaining/elapsed display app-wide -
-// main list rows and the wakeup-conflict banner (ml_draw_detail_line(),
-// including the running/overtime color tint - see ml_draw_row()/
-// wc_ident_update_proc()), the bottom bar's clock and elapsed-since-launch
-// (draw_bottom_bar()), the alarm screen's live overtime counter
-// (format_alarm_elapsed()) AND its own bottom-left clock
-// (refresh_alarm_clock_text()), the detail window's legacy header
-// (dl_draw_header()/open_detail_window()), the delete-confirm and
-// start-confirmation screens - without touching any timer's real
-// end_time/state or anything else that reads now_s() for LOGIC
-// (sweep_expiries(), rearm_wakeup(), sort order, ...) - so a frozen
-// screenshot can never mask a real expiry/wakeup bug, only pins what gets
-// painted. Set via the FreezeDisplay/FreezeElapsedSeconds fields on the
-// SetTimerIndex AppMessage (see inbox_received()) - sending FreezeDisplay
-// alongside SetTimerState/SetTimerRemaining in the SAME message captures
-// the EXACT same `now` just used to compute a timer's end_time, making
-// its shown remaining value exact and reproducible (e.g. "always exactly
-// 5:00") rather than "whatever was left when the freeze happened to
-// arrive". Always compiled, like SetTimerIndex/SetTimerState/
-// SetTimerRemaining themselves (below) - not APP_TEST_HOOKS-gated like
-// the wakeup-blocking hooks, since this can only ever affect what's
-// painted, never real behavior, so there's no production-safety reason to
-// require a special build for it.
-static bool    s_test_freeze_display = false;
-static int64_t s_test_freeze_now = 0;
-// The bottom bar's elapsed-since-launch while frozen - a DIRECT
-// test-supplied value, not derived from s_app_launch_s/now_s() at all
-// (unlike s_test_freeze_now above), since real app-launch timing itself
-// still varies run to run and there is nothing to compute an exact value
-// FROM. See FreezeElapsedSeconds in inbox_received().
-static int32_t s_test_freeze_elapsed = 0;
+#ifdef APP_TEST_HOOKS
+// Test-only: explicit, per-value display overrides (main list rows/detail
+// header/alarm overtime counter, the bottom bar + alarm screen clock, and
+// the bottom bar's elapsed-since-launch). Each independently records
+// whether the requested value was within tolerance of the app's own real
+// ground truth at the moment it was set (see inbox_received()) - a
+// screenshot taken while an override is "invalid" gets that one reading
+// visibly marked wrong instead of silently showing a stale/wrong number.
+// None of this ever touches any timer's real end_time/state or anything
+// else that reads now_s() for LOGIC (sweep_expiries(), rearm_wakeup(),
+// sort order, persistence, ...) - only what gets painted.
+static bool    s_test_remaining_override_set[MAX_TIMERS];
+static int32_t s_test_remaining_override_secs[MAX_TIMERS];
+static bool    s_test_remaining_override_invalid[MAX_TIMERS];
 
-// What ml_draw_detail_line()/wc_ident_update_proc()/the other display
-// sites listed above use as "now" - the real clock, unless frozen (see
-// above). Every LOGIC now_s() call site (expiry, wakeup, persistence,
+static bool s_test_clock_override_set = false;
+static char s_test_clock_override_str[6];  // "HH:MM\0"
+static bool s_test_clock_override_invalid = false;
+
+static bool    s_test_launch_elapsed_override_set = false;
+static int32_t s_test_launch_elapsed_override_secs = 0;
+static bool    s_test_launch_elapsed_override_invalid = false;
+#endif
+
+// What ml_draw_detail_line()/ml_draw_row()/wc_ident_update_proc()/the
+// other timer-specific display sites use as "now" for a given timer's
+// remaining/overtime computation - the real clock, unless that timer has
+// an active TestSetTimerRemainingDisplay override (see inbox_received()),
+// in which case "now" is derived backwards from the override
+// (end_time - override) so every existing tc_remaining_now()/
+// ml_row_colors() formula stays untouched; only the "now" fed into it
+// changes. Every LOGIC now_s() call site (expiry, wakeup, persistence,
 // sort order, ...) is untouched by this.
-static int64_t display_now(void) {
-  return s_test_freeze_display ? s_test_freeze_now : now_s();
+static int64_t effective_now_for(int idx, const Timer *t) {
+#ifdef APP_TEST_HOOKS
+  if (idx >= 0 && idx < MAX_TIMERS && s_test_remaining_override_set[idx]) {
+    return t->end_time - s_test_remaining_override_secs[idx];
+  }
+#endif
+  return now_s();
 }
 
-// A deliberately simple always-24h "HH:MM" rendering of display_now(),
-// used by draw_bottom_bar() and refresh_alarm_clock_text() (the alarm
-// screen's own bottom-left clock) in place of the real
-// clock_copy_time_string()/localtime(time(NULL)) while frozen - both of
-// those read the system time-of-day directly, not through now_s()/
-// display_now(), so neither can be pinned by overriding our own clock;
-// substituting our own minimal render is the only way to make either
-// test-deterministic too. Plain UTC seconds-of-day arithmetic on the
-// frozen epoch value, not localtime()/strftime() - avoids any timezone/
-// locale uncertainty, and test screenshots don't need to replicate the
-// real clock's exact 12h/AM-PM typography, just be stable.
-static void copy_frozen_clock_string(char *buf, size_t n) {
-  // A fixed, hardcoded placeholder - NOT derived from s_test_freeze_now.
-  // Unlike a timer's remaining time (which must correlate with whatever
-  // real end_time was just seeded, so it deliberately DOES use
-  // s_test_freeze_now), there is no "correct" clock value to preserve
-  // here - any stable string is equally fine. Deriving it from
-  // s_test_freeze_now would make it depend on exactly which real second
-  // FreezeDisplay happened to be sent on, which is NOT reproducible
-  // across separate runs (real container startup/setup timing varies) -
-  // a hardcoded constant sidesteps that entirely. "12:00" deliberately
-  // matches the containerized test harness's own FAKETIME start instant
-  // (see run-sequence-in-container.sh) - purely cosmetic (a sequence that
-  // deliberately runs unfrozen, like alarm_overtime_display.seq, reads
-  // real time near "12:00" too instead of near "00:00"), never load-
-  // bearing.
-  snprintf(buf, n, "12:00");
+// True if `idx`'s display override was set with a tolerance and the
+// requested value didn't actually match real ground truth at set-time -
+// callers swap in a visible marker instead of the (still frozen) value.
+static bool remaining_override_invalid(int idx) {
+#ifdef APP_TEST_HOOKS
+  return idx >= 0 && idx < MAX_TIMERS
+      && s_test_remaining_override_set[idx] && s_test_remaining_override_invalid[idx];
+#else
+  return false;
+#endif
+}
+
+// Direct override-value substitution for TEXT formatting call sites that
+// show a timer's remaining/duration - unlike effective_now_for() (which
+// only affects RUNNING timers, since tc_remaining_now() ignores its `now`
+// argument entirely for TS_PAUSED/TS_IDLE, returning t->remaining/
+// t->duration verbatim), this lets an override reach a paused/idle
+// timer's shown value too, by bypassing tc_remaining_now() rather than
+// trying to influence its input. Mathematically identical to the
+// effective_now_for() result for a RUNNING timer (tc_remaining_now(t,
+// t->end_time - override) == override), so callers can use this
+// unconditionally instead of re-deriving via effective_now_for() purely
+// for text - effective_now_for() itself remains the right tool wherever
+// a caller specifically needs a "now" value (color/overtime-state
+// determination via ml_row_colors()/tc_is_overtime(), which - unlike the
+// text - IS state-dependent even for the "now" it's given).
+static bool remaining_override_get(int idx, int32_t *out) {
+#ifdef APP_TEST_HOOKS
+  if (idx >= 0 && idx < MAX_TIMERS && s_test_remaining_override_set[idx]) {
+    *out = s_test_remaining_override_secs[idx];
+    return true;
+  }
+  return false;
+#else
+  (void)out;
+  return false;
+#endif
+}
+
+// Clock display override: draw_bottom_bar()/refresh_alarm_clock_text()
+// fall through to the real clock when this returns false.
+static bool test_clock_override_get(char *buf, size_t n) {
+#ifdef APP_TEST_HOOKS
+  if (s_test_clock_override_set) {
+    snprintf(buf, n, "%s", s_test_clock_override_str);
+    return true;
+  }
+  return false;
+#else
+  (void)buf; (void)n;
+  return false;
+#endif
+}
+
+static bool test_clock_override_invalid(void) {
+#ifdef APP_TEST_HOOKS
+  return s_test_clock_override_set && s_test_clock_override_invalid;
+#else
+  return false;
+#endif
+}
+
+// Launch-elapsed display override: draw_bottom_bar() falls through to the
+// real raw_launch_elapsed_s() when this returns false.
+static bool test_launch_elapsed_override_get(int32_t *out) {
+#ifdef APP_TEST_HOOKS
+  if (s_test_launch_elapsed_override_set) { *out = s_test_launch_elapsed_override_secs; return true; }
+  return false;
+#else
+  (void)out;
+  return false;
+#endif
+}
+
+static bool test_launch_elapsed_override_invalid(void) {
+#ifdef APP_TEST_HOOKS
+  return s_test_launch_elapsed_override_set && s_test_launch_elapsed_override_invalid;
+#else
+  return false;
+#endif
 }
 
 // Seconds since app launch, regardless of the launch-sync config toggle — used
-// for the bottom bar's always-on elapsed display.
+// for the bottom bar's always-on elapsed display and (via launch_elapsed_s()) for
+// real launch-sync start-time adjustment - the display override above deliberately
+// wraps this rather than living inside it, so a display-only override can never
+// leak into that real logic.
 static int32_t raw_launch_elapsed_s(void) {
-  if (s_test_freeze_display) { return s_test_freeze_elapsed; }
   if (s_app_launch_s <= 0) { return 0; }
   int64_t d = now_s() - s_app_launch_s;
   if (d < 0) { d = 0; }
@@ -336,10 +393,13 @@ static void draw_bottom_bar(GContext *gctx, GRect bounds) {
     0, GCornerNone);
 
   char left[16];
-  if (s_test_freeze_display) { copy_frozen_clock_string(left, sizeof(left)); }
-  else { clock_copy_time_string(left, sizeof(left)); }
+  if (!test_clock_override_get(left, sizeof(left))) { clock_copy_time_string(left, sizeof(left)); }
+  else if (test_clock_override_invalid()) { snprintf(left, sizeof(left), "BAD"); }
   char elapsed[16];
-  tc_format_remaining(elapsed, sizeof(elapsed), raw_launch_elapsed_s());
+  int32_t elapsed_secs;
+  if (!test_launch_elapsed_override_get(&elapsed_secs)) { elapsed_secs = raw_launch_elapsed_s(); }
+  if (test_launch_elapsed_override_invalid()) { snprintf(elapsed, sizeof(elapsed), "BAD"); }
+  else { tc_format_remaining(elapsed, sizeof(elapsed), elapsed_secs); }
   char right[24];
   snprintf(right, sizeof(right), "%s", elapsed);
 
@@ -591,6 +651,21 @@ static void test_parse_offsets(const char *s, int *out, int *out_count, int max)
     while (*p && *p != ',') { p++; }
     if (*p == ',') { p++; }
   }
+}
+
+// Parses "HH:MM" into out_h/out_m (defaulting either to 0 on malformed
+// input) - avoids sscanf(), which pulls in newlib's locale-aware scanf
+// machinery and collides with Pebble SDK's own libpebble setlocale stub
+// (duplicate-symbol link failure) besides bloating the binary well past
+// its RAM budget.
+static void test_parse_hhmm(const char *s, int *out_h, int *out_m) {
+  int h = 0, m = 0;
+  const char *p = s ? s : "";
+  while (*p >= '0' && *p <= '9') { h = h * 10 + (*p - '0'); p++; }
+  if (*p == ':') { p++; }
+  while (*p >= '0' && *p <= '9') { m = m * 10 + (*p - '0'); p++; }
+  *out_h = h;
+  *out_m = m;
 }
 
 // Test-only stand-in for wakeup_schedule(): refuses `at` exactly like the
@@ -1286,8 +1361,8 @@ static GFont alarm_title_font(const char *text, int box_w, int max_h, GSize *out
 // no need for a separate once-a-minute tick service (this app has none).
 static void refresh_alarm_clock_text(void) {
   if (!s_alarm_time) { return; }
-  if (s_test_freeze_display) {
-    copy_frozen_clock_string(s_alarm_clock_buf, sizeof(s_alarm_clock_buf));
+  if (test_clock_override_get(s_alarm_clock_buf, sizeof(s_alarm_clock_buf))) {
+    if (test_clock_override_invalid()) { snprintf(s_alarm_clock_buf, sizeof(s_alarm_clock_buf), "BAD"); }
     text_layer_set_text(s_alarm_time, s_alarm_clock_buf);
     return;
   }
@@ -1554,7 +1629,11 @@ static void format_alarm_sub(int count) {
 // window is on top).
 static void format_alarm_elapsed(int idx) {
   if (idx < 0 || idx >= s_count) { s_alarm_elapsed_buf[0] = '\0'; return; }
-  int32_t elapsed = (int32_t)(display_now() - s_timers[idx].end_time);
+  if (remaining_override_invalid(idx)) {
+    snprintf(s_alarm_elapsed_buf, sizeof(s_alarm_elapsed_buf), "+BAD");
+    return;
+  }
+  int32_t elapsed = (int32_t)(effective_now_for(idx, &s_timers[idx]) - s_timers[idx].end_time);
   if (elapsed < 0) { elapsed = 0; }
   char buf[16];
   tc_format_remaining(buf, sizeof(buf), elapsed);
@@ -2057,9 +2136,18 @@ static void dl_draw_header(GContext *gctx, const Layer *cell, uint16_t section, 
   if (s_detail_style == DSTYLE_LONG_EXISTING) { return; }
   if (s_detail_idx < 0 || s_detail_idx >= s_count) { return; }
   Timer *t = &s_timers[s_detail_idx];
-  int32_t shown = (s_detail_style == DSTYLE_LEGACY) ? tc_remaining_now(t, display_now()) : s_detail_edit_secs;
+  int32_t shown;
+  if (s_detail_style != DSTYLE_LEGACY) {
+    shown = s_detail_edit_secs;
+  } else if (!remaining_override_get(s_detail_idx, &shown)) {
+    shown = tc_remaining_now(t, now_s());
+  }
   char rem_head[36];
-  tc_format_remaining(rem_head, sizeof(rem_head), shown);
+  if (s_detail_style == DSTYLE_LEGACY && remaining_override_invalid(s_detail_idx)) {
+    snprintf(rem_head, sizeof(rem_head), "BAD");
+  } else {
+    tc_format_remaining(rem_head, sizeof(rem_head), shown);
+  }
   const char *title = t->name[0] ? t->name : "<No label>";
   GRect b = layer_get_bounds(cell);
   GFont f = fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD);
@@ -2797,7 +2885,10 @@ static void wc_ident_update_proc(Layer *layer, GContext *gctx) {
   GRect b = layer_get_bounds(layer);
   Timer *wct = find_timer_by_id(s_wakeup_conflict_timer_id);
   GColor bg = GColorBlack, fg = GColorWhite;
-  if (wct) { ml_row_colors(wct, /*selected=*/true, display_now(), &bg, &fg); }
+  if (wct) {
+    int idx = (int)(wct - s_timers);
+    ml_row_colors(wct, /*selected=*/true, effective_now_for(idx, wct), &bg, &fg);
+  }
   graphics_context_set_fill_color(gctx, bg);
   graphics_fill_rect(gctx, b, 0, GCornerNone);
   if (!wct) { return; }
@@ -3179,7 +3270,7 @@ static void open_detail_window(int timer_idx, DetailStyle style) {
   if (timer_idx >= 0 && timer_idx < s_count) {
     Timer *t = &s_timers[timer_idx];
     if (style == DSTYLE_LEGACY) {
-      int32_t rem = tc_remaining_now(t, display_now());
+      int32_t rem = tc_remaining_now(t, effective_now_for(timer_idx, t));
       s_detail_edit_secs = rem >= 1 ? rem : t->duration;
     } else if (style == DSTYLE_LONG_EXISTING) {
       s_detail_edit_secs = t->duration;
@@ -3546,9 +3637,17 @@ static void ml_draw_detail_line(GContext *gctx, GRect b, const Timer *t, GColor 
   GFont f_suffix = fonts_get_system_font(small ? FONT_KEY_GOTHIC_18 : FONT_KEY_GOTHIC_24);
   int th = small ? 22 : 28;
   int ty = (b.size.h - th) / 2 - 5;
+  int idx = (int)(t - s_timers);
   char rem[24];
-  int32_t detail_secs = stopped ? t->duration : tc_remaining_now(t, display_now());
-  tc_format_fixed(rem, sizeof(rem), detail_secs);
+  int32_t detail_secs;
+  if (!remaining_override_get(idx, &detail_secs)) {
+    detail_secs = stopped ? t->duration : tc_remaining_now(t, now_s());
+  }
+  if (remaining_override_invalid(idx)) {
+    snprintf(rem, sizeof(rem), "BAD");
+  } else {
+    tc_format_fixed(rem, sizeof(rem), detail_secs);
+  }
   char value_display[40];
   snprintf(value_display, sizeof(value_display), "%s", rem);
   if (!running && launch_sync_applies_for_timer(t)) {
@@ -3665,12 +3764,11 @@ static void ml_draw_row(GContext *gctx, const Layer *cell, MenuIndex *ci, void *
   // row uses a DARK shade of the same hue + white text so it still reads as the
   // cursor AND keeps its state colour; idle selected stays the plain black highlight.
   bool selected = (s_menu_selected_timer_idx == info.timer_idx);
-  // display_now(), not now_s() - the overtime/running color tint must use
-  // the SAME time base as the printed remaining/elapsed text below
-  // (ml_draw_detail_line, also display_now()), or a frozen-for-testing row
-  // could show inconsistent text/color if real time crosses end_time
-  // before the screenshot is actually taken.
-  int64_t now = display_now();
+  // effective_now_for(), not now_s() - the overtime/running color tint must
+  // use the SAME time base as the printed remaining/elapsed text below
+  // (ml_draw_detail_line, also effective_now_for()), or a display-override
+  // row could show inconsistent text/color.
+  int64_t now = effective_now_for(info.timer_idx, t);
   GColor bg, fg, sel_bg, unused_fg;
   ml_row_colors(t, false, now, &bg, &unused_fg);
   ml_row_colors(t, true, now, &sel_bg, &unused_fg);
@@ -3758,7 +3856,11 @@ static void confirm_window_unload(Window *w) {
 // Only called on a start action when AutoReturnStart is on.
 static void show_start_confirmation(int idx) {
   Timer *t = &s_timers[idx];
-  tc_format_remaining(s_confirm_time, sizeof(s_confirm_time), tc_remaining_now(t, display_now()));
+  if (remaining_override_invalid(idx)) {
+    snprintf(s_confirm_time, sizeof(s_confirm_time), "BAD");
+  } else {
+    tc_format_remaining(s_confirm_time, sizeof(s_confirm_time), tc_remaining_now(t, effective_now_for(idx, t)));
+  }
   s_confirm_named = (t->name[0] != 0);
   if (s_confirm_named) {
     strncpy(s_confirm_name, t->name, sizeof(s_confirm_name));
@@ -4067,86 +4169,139 @@ static void inbox_received(DictionaryIterator *iter, void *ctx) {
       menu_layer_reload_data(s_detail_menu);
     }
   }
-  // Shared by both testing/screenshot helpers below, so a timer seeded via
-  // SetTimerIndex and frozen via FreezeDisplay in the same message use the
-  // literal same `now` for both - see FreezeDisplay's own comment.
-  int64_t now = now_s();
-  // Testing/screenshot helper: freezes every live time/remaining/elapsed
-  // display app-wide (main list rows, wakeup-conflict banner, bottom bar
-  // clock+elapsed, alarm overtime counter, detail header, delete-confirm,
-  // start-confirmation flash - see display_now()'s own comment for the
-  // full list and why real expiry/wakeup/persistence logic is deliberately
-  // untouched by this). Independent of SetTimerIndex below (works even
-  // with zero timers, e.g. to freeze the bottom bar alone).
-  // FreezeDisplay: absent = leave frozen state as it was; 1 = freeze to
-  // now; 0 = unfreeze (resume the real clock). FreezeElapsedSeconds: the
-  // exact value the bottom bar's elapsed-since-launch shows while frozen -
-  // deliberately NOT derived from real app-launch timing (which would
-  // still vary run to run), just whatever number the test wants shown;
-  // defaults to 0 if never sent.
-  Tuple *freeze_t = dict_find(iter, MESSAGE_KEY_FreezeDisplay);
-  if (freeze_t) {
-    s_test_freeze_display = (freeze_t->value->int32 != 0);
-    s_test_freeze_now = now;
-  }
-  Tuple *freeze_elapsed_t = dict_find(iter, MESSAGE_KEY_FreezeElapsedSeconds);
-  if (freeze_elapsed_t) {
-    s_test_freeze_elapsed = freeze_elapsed_t->value->int32;
-  }
+#ifdef APP_TEST_HOOKS
   // Testing/screenshot helper: force a timer's state and/or remaining time
   // directly by index, bypassing the normal start/pause/reset UI flow, so a
   // screenshot/test script can reach an exact state (e.g. "paused with 0:45
   // left") without simulating button presses. Not used by the phone app.
-  Tuple *sti = dict_find(iter, MESSAGE_KEY_SetTimerIndex);
+  int64_t now = now_s();
+  Tuple *sti = dict_find(iter, MESSAGE_KEY_TestSetTimerIndex);
   if (sti) {
     int idx = (int)sti->value->int32;
     if (idx >= 0 && idx < s_count) {
       Timer *t = &s_timers[idx];
-      Tuple *state_t = dict_find(iter, MESSAGE_KEY_SetTimerState);
-      Tuple *rem_t = dict_find(iter, MESSAGE_KEY_SetTimerRemaining);
-      // TimerState values: 0=idle/stopped, 1=running, 2=paused (see timer_calc.h).
-      TimerState want = state_t ? (TimerState)state_t->value->int32 : t->state;
-      int32_t secs = rem_t ? rem_t->value->int32
-        : (t->state == TS_RUNNING ? (int32_t)(t->end_time - now) : t->remaining);
-      t->last_used = now;
-      if (want != TS_RUNNING) {
-        // Forced out of TS_RUNNING - retire any accepted early-wake plan on
-        // file for it, same reasoning as the real pause/stop/delete paths
-        // (DACT_PAUSE/DACT_STOP/remove_timer_at), so this test-only backdoor
-        // can't leak one either.
-        abandon_early_wake_if_for(t->id);
+      Tuple *state_t = dict_find(iter, MESSAGE_KEY_TestSetTimerState);
+      Tuple *rem_t = dict_find(iter, MESSAGE_KEY_TestSetTimerRemaining);
+      // TestSetTimerIndex doubles as the target-index field for the
+      // TestSetTimerRemainingDisplay family below (sent in the SAME
+      // message) - only run the actual state/remaining backdoor mutation
+      // (and its handle_wakeup_result()/rearm_wakeup() side effects) when
+      // this message really intends one, i.e. TestSetTimerState or
+      // TestSetTimerRemaining is also present. Without this guard, a
+      // display-override-only message (TestSetTimerIndex +
+      // TestSetTimerRemainingDisplay, no state/remaining fields) would
+      // re-trigger a fresh rearm_wakeup() on every single display update -
+      // observed live to keep reopening an already-dismissed
+      // wakeup-conflict window, since re-arming a still-blocked timer's
+      // wakeup fails again every time.
+      if (state_t || rem_t) {
+        // TimerState values: 0=idle/stopped, 1=running, 2=paused (see timer_calc.h).
+        TimerState want = state_t ? (TimerState)state_t->value->int32 : t->state;
+        int32_t secs = rem_t ? rem_t->value->int32
+          : (t->state == TS_RUNNING ? (int32_t)(t->end_time - now) : t->remaining);
+        t->last_used = now;
+        if (want != TS_RUNNING) {
+          // Forced out of TS_RUNNING - retire any accepted early-wake plan on
+          // file for it, same reasoning as the real pause/stop/delete paths
+          // (DACT_PAUSE/DACT_STOP/remove_timer_at), so this test-only backdoor
+          // can't leak one either.
+          abandon_early_wake_if_for(t->id);
+        }
+        if (want == TS_RUNNING) {
+          t->state = TS_RUNNING;
+          t->end_time = now + secs;   // secs may be negative: starts already in overtime
+          t->alarm_pending = false;
+          t->alarm_notified = false;
+        } else if (want == TS_PAUSED) {
+          t->state = TS_PAUSED;
+          t->remaining = secs;
+        } else {
+          t->state = TS_IDLE;
+          t->remaining = secs < 0 ? 0 : secs;
+          t->end_time = 0;
+          t->alarm_pending = false;
+          t->alarm_notified = false;
+        }
+        sweep_expiries();   // catch an immediate overtime (e.g. remaining set to 0 while running)
+        persist_all();
+        // Route through handle_wakeup_result(), not a bare rearm_wakeup(), so a
+        // WAKEUP_ARM_FAILED here (e.g. a test-simulated conflict via
+        // TestBlockedSystemWakeupMinuteOffsetsPos/Neg) actually opens the
+        // wakeup-conflict window, matching what a real Start/Restart via
+        // finish_start_tail() would do - this backdoor is meant to reach the
+        // same states a real start/pause/resume/stop can, and silently
+        // discarding the result here left every wakeup_conflict_*.seq test
+        // that seeds a running timer via TestSetTimerIndex unable to ever
+        // actually reach the conflict window.
+        handle_wakeup_result(rearm_wakeup());
+        ensure_ticking();
       }
-      if (want == TS_RUNNING) {
-        t->state = TS_RUNNING;
-        t->end_time = now + secs;   // secs may be negative: starts already in overtime
-        t->alarm_pending = false;
-        t->alarm_notified = false;
-      } else if (want == TS_PAUSED) {
-        t->state = TS_PAUSED;
-        t->remaining = secs;
-      } else {
-        t->state = TS_IDLE;
-        t->remaining = secs < 0 ? 0 : secs;
-        t->end_time = 0;
-        t->alarm_pending = false;
-        t->alarm_notified = false;
-      }
-      sweep_expiries();   // catch an immediate overtime (e.g. remaining set to 0 while running)
-      persist_all();
-      // Route through handle_wakeup_result(), not a bare rearm_wakeup(), so a
-      // WAKEUP_ARM_FAILED here (e.g. a test-simulated conflict via
-      // TestBlockedSystemWakeupMinuteOffsetsPos/Neg) actually opens the
-      // wakeup-conflict window, matching what a real Start/Restart via
-      // finish_start_tail() would do - this backdoor is meant to reach the
-      // same states a real start/pause/resume/stop can, and silently
-      // discarding the result here left every wakeup_conflict_*.seq test
-      // that seeds a running timer via SetTimerIndex unable to ever
-      // actually reach the conflict window.
-      handle_wakeup_result(rearm_wakeup());
-      ensure_ticking();
     }
   }
-#ifdef APP_TEST_HOOKS
+  // Testing/screenshot helper: an explicit, per-timer remaining/overtime
+  // display override, targeted via the same TestSetTimerIndex field as
+  // above (sent in the SAME message). Checked against the real
+  // tc_remaining_now() at set-time when a tolerance is given - see
+  // effective_now_for()/remaining_override_invalid() and the design
+  // comment above s_test_remaining_override_set.
+  Tuple *disp_t = dict_find(iter, MESSAGE_KEY_TestSetTimerRemainingDisplay);
+  if (sti && disp_t) {
+    int idx = (int)sti->value->int32;
+    if (idx >= 0 && idx < s_count) {
+      int32_t requested = disp_t->value->int32;
+      s_test_remaining_override_set[idx] = true;
+      s_test_remaining_override_secs[idx] = requested;
+      Tuple *tol_t = dict_find(iter, MESSAGE_KEY_TestSetTimerRemainingDisplayToleranceSec);
+      if (tol_t) {
+        int64_t truth = tc_remaining_now(&s_timers[idx], now_s());
+        int64_t diff = requested - truth;
+        if (diff < 0) { diff = -diff; }
+        s_test_remaining_override_invalid[idx] = diff > tol_t->value->int32;
+      } else {
+        s_test_remaining_override_invalid[idx] = false;  // no tolerance given = no check
+      }
+    }
+  }
+  // Testing/screenshot helper: an explicit clock-of-day display override
+  // ("HH:MM"), checked against the real system clock at set-time when a
+  // tolerance (in minutes) is given.
+  Tuple *clock_disp_t = dict_find(iter, MESSAGE_KEY_TestSetClockDisplay);
+  if (clock_disp_t) {
+    snprintf(s_test_clock_override_str, sizeof(s_test_clock_override_str), "%s", clock_disp_t->value->cstring);
+    s_test_clock_override_set = true;
+    Tuple *tol_t = dict_find(iter, MESSAGE_KEY_TestSetClockDisplayToleranceMinutes);
+    if (tol_t) {
+      int req_h = 0, req_m = 0;
+      test_parse_hhmm(clock_disp_t->value->cstring, &req_h, &req_m);
+      int req_total = req_h * 60 + req_m;
+      time_t rt = time(NULL);
+      struct tm *lt = localtime(&rt);
+      int real_total = lt->tm_hour * 60 + lt->tm_min;
+      int diff = req_total - real_total;
+      if (diff < 0) { diff = -diff; }
+      if (diff > 720) { diff = 1440 - diff; }  // wrap at midnight
+      s_test_clock_override_invalid = diff > tol_t->value->int32;
+    } else {
+      s_test_clock_override_invalid = false;
+    }
+  }
+  // Testing/screenshot helper: an explicit elapsed-since-launch display
+  // override, checked against the real raw_launch_elapsed_s() at set-time
+  // when a tolerance is given.
+  Tuple *elapsed_disp_t = dict_find(iter, MESSAGE_KEY_TestSetLaunchElapsedDisplaySec);
+  if (elapsed_disp_t) {
+    s_test_launch_elapsed_override_set = true;
+    s_test_launch_elapsed_override_secs = elapsed_disp_t->value->int32;
+    Tuple *tol_t = dict_find(iter, MESSAGE_KEY_TestSetLaunchElapsedDisplayToleranceSec);
+    if (tol_t) {
+      int64_t truth = raw_launch_elapsed_s();
+      int64_t diff = s_test_launch_elapsed_override_secs - truth;
+      if (diff < 0) { diff = -diff; }
+      s_test_launch_elapsed_override_invalid = diff > tol_t->value->int32;
+    } else {
+      s_test_launch_elapsed_override_invalid = false;
+    }
+  }
   // Testing helper: simulates other apps' wakeups occupying specific
   // minutes relative to whichever timer's end_time is actually being
   // evaluated at the moment, without needing a real colliding wakeup from
@@ -4154,8 +4309,7 @@ static void inbox_received(DictionaryIterator *iter, void *ctx) {
   // test_wakeup_schedule(). Either field alone is fine; an absent field
   // leaves that side's list unchanged, not cleared - send an empty string
   // to explicitly clear one side. Triggers an immediate re-check so a test
-  // script sees the conflict window (or its absence) right away. Compiled
-  // in only with APP_TEST_HOOKS=1 - see wscript/CLAUDE.md.
+  // script sees the conflict window (or its absence) right away.
   Tuple *tba = dict_find(iter, MESSAGE_KEY_TestBlockedSystemWakeupMinuteOffsetsPos);
   Tuple *tbb = dict_find(iter, MESSAGE_KEY_TestBlockedSystemWakeupMinuteOffsetsNeg);
   if (tba || tbb) {

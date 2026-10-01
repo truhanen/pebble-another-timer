@@ -5,31 +5,79 @@
 # alarm/ring screen should take over cleanly - not stack on top of it, and
 # not leave the conflict window stuck on screen past the real fire time.
 #
-# Uses a very short remaining time (a few seconds) on purpose: too short
-# for wakeup_find_early_slot() to find any free minute before it (every
-# backward candidate is already in the past, regardless of the simulated
-# block below) - so try_auto_early_wake() also can't resolve it silently,
-# and the single-row "Ok" informational window appears instead, with the
-# red "Timer conflicts with / another app's wakeup. / MUST STAY OPEN."
-# message.
+# Uses a short remaining time (well under a minute) on purpose: too short
+# for wakeup_find_early_slot() to find any free minute before it, so
+# try_auto_early_wake() also can't resolve it silently, and the
+# single-row "Ok" informational window appears instead, with the red
+# "Timer conflicts with / another app's wakeup. / MUST STAY OPEN." message.
 #
-# NOTE: unverified against a live emulator at authoring time - see the same
-# caveat in wakeup_conflict_basic_resolutions.seq. The Stop button on the alarm screen is DOWN (confirmed).
-IMPORT ../common/wipe_and_prep_test_hooks.seq
+# This isn't alignment-dependent luck - wakeup_find_early_slot()'s first
+# search candidate is `(end_time/60)*60 - 60` (deliberately a full extra
+# minute before the minute-boundary nearest end_time, not just the
+# nearest one), and the search immediately gives up once that candidate
+# is <= the real "now". Working through the arithmetic for a duration D
+# (< 60s) against every possible wall-clock alignment, the worst-case
+# margin between that first candidate and "now" is exactly `60 - D`
+# seconds - always positive for any D < 60, so the search is
+# *guaranteed* to find zero backward candidates regardless of timing,
+# not just "usually" - no TestBlockedSystemWakeupMinuteOffsetsNeg
+# simulation needed to force it. (At D=15 here, that's a comfortable
+# 45s guaranteed margin.)
+#
+# NOTE: live-verified (2026-10-01) - both TestSetTimerRemainingDisplay
+# values below are measured from live runs, not guessed. The Stop button
+# on the alarm screen is DOWN (confirmed).
+#
+# IMPORTANT: a TestSetTimerRemainingDisplay override is PER-TIMER and
+# PERSISTS until explicitly resent for that same index - there is no
+# "clear" message. This file's checkpoint 2 used to send no override at
+# all, on the theory that the alarm screen's overtime counter would then
+# reflect real, live elapsed time (matching alarm_overtime_display.seq's
+# convention) - but checkpoint 1 already set an override for this same
+# timer (idx 0), and because it's never cleared, checkpoint 2 was
+# silently still governed by checkpoint 1's STALE value the whole time.
+# Concretely: format_alarm_elapsed() computes `effective_now_for(idx,t) -
+# end_time`, and with checkpoint 1's override still active that's always
+# `-11`, clamped to 0 by the elapsed formula - so checkpoint 2 displayed a
+# constant "+0:00" no matter how long the SLEEP before it was (live-
+# verified repeatedly while tracking this down, including at 10s, 16s,
+# and 19s waits - all three produced identical "+0:00" until this was
+# understood). A diagnostic run with checkpoint 1's override removed
+# confirmed the real, live value at checkpoint 2 is "+0:14" (close to the
+# expected ~15s given this file's 15s duration and normal CLI round-trip
+# timing) - checkpoint 2 below now sends its own fresh override (negative
+# = overtime, per effective_now_for()'s sign convention) instead of
+# relying on "no override = live", since that assumption doesn't hold
+# once an earlier checkpoint in the same file has touched the same index.
+IMPORT ../common/wipe_and_prep.seq
 APPMSG --string 10027="0"
 
-APPMSG --string 10000="$(printf 'Quick Timer\0378\0371')"
+APPMSG --string 10000="$(printf 'Quick Timer\03715\0371')"
 SLEEP 1
-APPMSG --int 10020=0 10021=1 10022=8 10029=1
+APPMSG --int 10020=0 10021=1 10022=15
 SLEEP 1
+# Value measured from a live run (backdoor-set 15 at T0, minus real
+# elapsed seconds observed) - chosen specifically to keep the tolerance
+# a smaller fraction of the value than this file's earlier 8s duration
+# did, without needing the minute-long waits the much-longer-duration
+# files elsewhere in this suite use (see the derivation above for why
+# 15s is still safely under the 60s threshold that would require extra
+# blocked-minute simulation).
+APPMSG --int 10020=0 10029=11 10030=5 10033=0 --string 10031="12:00"
 SCREENSHOT conflict_menu_ok_no_early_slot
 
-# Let real wall-clock time cross the timer's actual 8s end while the
+# Let real wall-clock time cross the timer's actual 15s end while the
 # conflict window (still undecided) sits on screen and the app stays
-# foregrounded the entire time.
-SLEEP 10
+# foregrounded the entire time, then wc_dismiss_for_natural_fire() should
+# swap in the real alarm screen. Re-override the same index with a fresh,
+# measured overtime value (see the header comment above for why this is
+# required rather than just omitting the override) - generous tolerance
+# since this value depends on real CLI round-trip timing, not a backdoor.
+SLEEP 19
+APPMSG --int 10020=0 10029=-14 10030=5 10033=0 --string 10031="12:00"
 SCREENSHOT should_now_show_real_alarm_not_conflict_menu
 
 TAP down
 SLEEP 1
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT final_state

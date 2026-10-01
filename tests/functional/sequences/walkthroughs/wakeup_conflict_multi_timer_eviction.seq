@@ -14,14 +14,15 @@
 # tests/functional_framework/README.md's "What this v1 does not do") -
 # only prove A wasn't silently abandoned via the final re-prompt step.
 #
-# NOTE: unverified against a live emulator at authoring time - see the
-# same caveat in wakeup_conflict_basic_resolutions.seq.
-IMPORT ../common/wipe_and_prep_test_hooks.seq
+# NOTE: live-verified (2026-09-30) - TestSetTimerRemainingDisplay values
+# are measured from a live run, not guessed; re-verify if this file's
+# button sequence changes.
+IMPORT ../common/wipe_and_prep.seq
 
 # Timer A (id 1, 300s) - seeded and started first, becomes the initial
 # target (rearm_wakeup() always evaluates the GLOBALLY soonest running
 # timer via tc_soonest_end()/find_soonest_unarmed_running_idx() - it does
-# NOT matter which timer's SetTimerIndex was just touched). Only its own
+# NOT matter which timer's TestSetTimerIndex was just touched). Only its own
 # exact minute is blocked (offset 0 relative to whichever timer is
 # currently being evaluated - see wakeup_conflict_basic_resolutions.seq
 # for why Pos offset 0 alone doesn't actually constrain wakeup_find_
@@ -30,11 +31,18 @@ IMPORT ../common/wipe_and_prep_test_hooks.seq
 # Live-verified (2026-09-27, native emulator + APP_LOG instrumentation)
 # with 300s/150s durations - see below for why B must be strictly SHORTER
 # than A, not merely a different value.
+# Screenshots below each send a TestSetTimerRemainingDisplay(+tolerance)
+# per still-running timer (A=idx0, B=idx1) - values are measured from a
+# live run (each timer's own backdoor value minus real elapsed seconds
+# observed at that checkpoint), not the raw backdoor value, with a small
+# tolerance for run-to-run variance. Only one TestSetTimerIndex fits per
+# AppMessage, so A and B each get their own APPMSG line.
 APPMSG --string 10027="0"
 APPMSG --string 10000="$(printf 'Timer A\037300\0371')"
 SLEEP 1
-APPMSG --int 10020=0 10021=1 10022=300 10029=1
+APPMSG --int 10020=0 10021=1 10022=300
 SLEEP 1
+APPMSG --int 10020=0 10029=296 10030=8 10033=0 --string 10031="12:00"
 SCREENSHOT a_silently_resolved
 
 # Timer B (id 2, 150s) - seeded and started AFTER A, with a SHORTER
@@ -56,8 +64,10 @@ SCREENSHOT a_silently_resolved
 # window.
 APPMSG --string 10000="$(printf 'Timer A\037300\0371\036Timer B\037150\0372')"
 SLEEP 1
-APPMSG --int 10020=1 10021=1 10022=150 10029=1
+APPMSG --int 10020=1 10021=1 10022=150
 SLEEP 1
+APPMSG --int 10020=0 10029=284 10030=8 10033=0 --string 10031="12:00"
+APPMSG --int 10020=1 10029=144 10030=8 10033=0 --string 10031="12:00"
 SCREENSHOT b_silently_resolved_evicted_a
 
 # Widen the block to offsets 0-7 (using the full TEST_BLOCKED_MINUTES_MAX=8
@@ -67,10 +77,12 @@ SCREENSHOT b_silently_resolved_evicted_a
 # owner is still the target).
 APPMSG --string 10028="0,1,2,3,4,5,6,7"
 SLEEP 1
+APPMSG --int 10020=0 10029=273 10030=10 10033=0 --string 10031="12:00"
+APPMSG --int 10020=1 10029=133 10030=8 10033=0 --string 10031="12:00"
 SCREENSHOT b_still_fine_after_widened_block
 
 # Take B out of the running pool - A becomes the global-soonest target
-# again (the only running timer left). SetTimerIndex's own handler calls
+# again (the only running timer left). TestSetTimerIndex's own handler calls
 # abandon_early_wake_if_for() on the timer it's stopping BEFORE its
 # rearm_wakeup() call, so B's accepted plan (and the early_wake_timer_id
 # bookkeeping pointing at it) is explicitly retired here, not left
@@ -84,10 +96,16 @@ SCREENSHOT b_still_fine_after_widened_block
 # for A, proving it wasn't silently abandoned when its plan was evicted.
 APPMSG --int 10020=1 10021=0
 SLEEP 1
+# B is now idle (its shown value, if any, is always its real
+# time-independent t->remaining regardless of override - see
+# run_control_pause_resume_stop.seq's comment on this), so only A gets an
+# override here.
+APPMSG --int 10020=0 10029=262 10030=10 10033=0 --string 10031="12:00"
 SCREENSHOT a_gets_fresh_reprompt
 # Expect: the single-row "Ok" informational window, naming Timer A.
 
 # Clean up: acknowledge it.
 TAP select
 SLEEP 1
+APPMSG --int 10020=0 10029=253 10030=10 10033=0 --string 10031="12:00"
 SCREENSHOT final_state

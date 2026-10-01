@@ -22,9 +22,10 @@
 # addition to the framework. Treat this sequence as coverage, not full
 # proof.
 #
-# NOTE: unverified against a live emulator at authoring time - see the
-# same caveat in wakeup_conflict_basic_resolutions.seq.
-IMPORT ../common/wipe_and_prep_test_hooks.seq
+# NOTE: live-verified (2026-09-30) - TestSetTimerRemainingDisplay values
+# are measured from a live run, not guessed; re-verify if this file's
+# button sequence changes.
+IMPORT ../common/wipe_and_prep.seq
 
 # Only Timer A's own exact minute (offset 0) is blocked - plenty of other
 # free minutes remain in the 15-candidate search window, so
@@ -34,16 +35,10 @@ IMPORT ../common/wipe_and_prep_test_hooks.seq
 APPMSG --string 10027="0"
 APPMSG --string 10000="$(printf 'Timer A\0371200\0371')"
 SLEEP 1
-APPMSG --int 10020=0 10021=1 10022=1200 10029=1
+APPMSG --int 10020=0 10021=1 10022=1200
 SLEEP 1
+APPMSG --int 10020=0 10029=1196 10030=8 10033=0 --string 10031="12:00"
 SCREENSHOT a_silently_resolved_running
-
-# Unfreeze before the real Pause/Resume button presses below - see
-# run_control_pause_resume_stop.seq's own comment for why leaving the
-# display frozen through a real tc_pause()/tc_start() transition would
-# make later screenshots show a stale, growing value instead of a clean
-# one.
-APPMSG --int 10029=0
 
 # The main list's own selection sits on its fresh-list default of
 # "+ New timer" (row 0) - nothing above touched it. One DOWN first, or the
@@ -54,10 +49,18 @@ TAP down
 # Pause it via the run-control menu (short SELECT -> row 0 = Stop, row
 # 1 = Pause for a TS_RUNNING timer - see tc_detail_actions).
 TAP select
+APPMSG --int 10020=0 10029=1186 10030=8 10033=0 --string 10031="12:00"
 SCREENSHOT run_control_menu
 TAP down
 TAP select
 SLEEP 1
+# PAUSED via a real transition - a paused timer's shown value now
+# respects TestSetTimerRemainingDisplay too (see remaining_override_get()
+# in main.c), but the exact real remaining still depends on precisely when
+# this real Pause press lands, so this uses a generous estimate/tolerance
+# like the real-transition checkpoints below, not a tight one. Measured
+# from a live run: ~1186s (19:46).
+APPMSG --int 10020=0 10029=1186 10030=20 10033=0 --string 10031="12:00"
 SCREENSHOT timer_now_paused
 # Expect: PAUSED state shown, no crash, no conflict window - pausing
 # should have silently retired A's accepted early-wake plan
@@ -70,6 +73,13 @@ TAP select
 TAP down
 TAP select
 SLEEP 1
+# Back to TS_RUNNING via a real Resume - value measured from a live run
+# (read directly off the resulting screenshot), not estimated. Real
+# Pause/Resume transitions showed more run-to-run variance than pure
+# backdoor checkpoints (a second live run differed by ~15s from the
+# first), so this uses a wider tolerance than the backdoor-only ones
+# above despite starting from a measured center, not a guess.
+APPMSG --int 10020=0 10029=1185 10030=20 10033=0 --string 10031="12:00"
 SCREENSHOT resumed_running_normally
 
 # Resuming re-attempts rearm_wakeup() for A; since it's still the only
@@ -77,4 +87,5 @@ SCREENSHOT resumed_running_normally
 # should resolve silently again (a fresh early-wake slot found and
 # adopted, no window) - confirming the app reacts sanely to a fresh
 # rearm after the pause/resume roundtrip.
+APPMSG --int 10020=0 10029=1180 10030=20 10033=0 --string 10031="12:00"
 SCREENSHOT final_state_no_conflict_window

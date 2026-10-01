@@ -2,7 +2,9 @@
 # snaps back to the FULL configured duration, not just a re-armed wakeup
 # from wherever it currently was (tc_detail_actions row 4 = Restart).
 #
-# NOTE: unverified against a live emulator at authoring time.
+# NOTE: live-verified (2026-09-30) - TestSetTimerRemainingDisplay values
+# are measured from a live run, not guessed; re-verify if this file's
+# button sequence changes.
 IMPORT ../common/wipe_and_prep.seq
 
 APPMSG --string 10000="$(printf 'Timer A\037300\0371')"
@@ -10,30 +12,40 @@ SLEEP 1
 # Force it running with only 60s left (as if 4 of its 5 minutes had
 # already elapsed), so Restart's effect (back to 5:00) is unambiguous from
 # a simple "did it go up" screenshot.
-APPMSG --int 10020=0 10021=1 10022=60 10029=1
+APPMSG --int 10020=0 10021=1 10022=60
 SLEEP 1
+APPMSG --int 10020=0 10029=57 10030=8 10033=0 --string 10031="12:00"
 SCREENSHOT running_60s_left
 
-# Unfreeze before the real Restart button press below - like tc_pause()/
-# tc_start() (see run_control_pause_resume_stop.seq's own comment),
-# start_with_secs()/finish_start_tail() (DACT_RESTART) compute a brand new
-# end_time from a FRESH real "now" at the moment of the press, not a
-# delta - leaving the display frozen to running_60s_left's stale
-# seed-moment would make the post-restart screenshot show a slowly
-# growing, not-quite-5:00 value instead of a clean one.
-APPMSG --int 10029=0
+# start_with_secs()/finish_start_tail() (DACT_RESTART) computes a brand
+# new end_time from a FRESH real "now" at the moment of the real button
+# press below, not a delta from the backdoor-set 60s above (contrast
+# run_control_plus_minus.seq's +/-1min, which IS a fixed delta) - like
+# run_control_pause_resume_stop.seq's real Pause/Resume, the exact
+# post-restart remaining depends on real button-press timing, not
+# something knowable in advance ahead of a live run - "should_read_5_00_
+# again..." below uses a value measured from one, with a wider tolerance
+# than the backdoor-derived checkpoints before it.
 
 # "+ New timer" sits at row 0 and is where a fresh list's selection
 # defaults to - a short SELECT there opens a NEW blank timer's duration
 # dial, not this timer's run-control menu. One DOWN first.
 TAP down
 TAP select
+APPMSG --int 10020=0 10029=46 10030=8 10033=0 --string 10031="12:00"
 SCREENSHOT run_control_menu
 TAP down
 TAP down
 TAP down
 TAP down
+APPMSG --int 10020=0 10029=31 10030=8 10033=0 --string 10031="12:00"
 SCREENSHOT restart_selected
 TAP select
 SLEEP 1
+# Value measured from a live run (295s) - real Restart-press transitions
+# show more run-to-run variance than pure backdoor checkpoints even when
+# centered correctly (see wakeup_conflict_leak_on_state_change.seq's own
+# note), so this keeps a wider tolerance than the backdoor-only ones above
+# despite starting from a measured center, not a guess.
+APPMSG --int 10020=0 10029=295 10030=20 10033=0 --string 10031="12:00"
 SCREENSHOT should_read_5_00_again_not_1_00

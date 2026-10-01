@@ -15,6 +15,7 @@ IMPORT ../common/wipe_and_prep.seq
 # "Duration", defaulting to 00:01:00 - same starting point as
 # create_and_start_timer.seq.
 TAP select
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT duration_dial_default
 
 # (100, 114) is this screen's dead center - touch_dial/touch.c's own hit
@@ -37,4 +38,5 @@ TOUCH 100 114 0.6
 # processed (a stuck/hung dial, a crash, or a wrongly-committed duration
 # would all show up here as a mismatch) rather than silently ignored the
 # way a raw --vnc pointer click is (see the container-only note above).
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT duration_dial_after_touch_cancel

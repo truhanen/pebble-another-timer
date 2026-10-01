@@ -134,7 +134,11 @@ install_fresh() {
 
 if [ "$SKIP_BUILD" -eq 0 ]; then
   log "Building app"
-  pebble build
+  # APP_TEST_HOOKS=1 is required: set_timer() below relies on
+  # TestSetTimerIndex/State/Remaining, which (like every Test*-prefixed
+  # AppMessage key) is only compiled in with this build flag - a plain
+  # `pebble build` would silently no-op every set_timer() call.
+  APP_TEST_HOOKS=1 pebble build
 fi
 
 if [ ! -f "$PBW" ]; then
@@ -156,9 +160,9 @@ IDLE_EXIT_KEY="$(message_key IdleExitSec)"
 AUTO_RETURN_START_KEY="$(message_key AutoReturnStart)"
 AUTO_RETURN_STOP_KEY="$(message_key AutoReturnStop)"
 RUN_ON_CREATE_KEY="$(message_key RunOnCreate)"
-SET_TIMER_INDEX_KEY="$(message_key SetTimerIndex)"
-SET_TIMER_STATE_KEY="$(message_key SetTimerState)"
-SET_TIMER_REMAINING_KEY="$(message_key SetTimerRemaining)"
+SET_TIMER_INDEX_KEY="$(message_key TestSetTimerIndex)"
+SET_TIMER_STATE_KEY="$(message_key TestSetTimerState)"
+SET_TIMER_REMAINING_KEY="$(message_key TestSetTimerRemaining)"
 if [ -z "$TIMER_CONFIG_KEY" ] || [ -z "$IDLE_EXIT_KEY" ] || [ -z "$AUTO_RETURN_START_KEY" ] \
     || [ -z "$AUTO_RETURN_STOP_KEY" ] || [ -z "$RUN_ON_CREATE_KEY" ] || [ -z "$SET_TIMER_INDEX_KEY" ] \
     || [ -z "$SET_TIMER_STATE_KEY" ] || [ -z "$SET_TIMER_REMAINING_KEY" ]; then
@@ -169,8 +173,8 @@ fi
 # Force the timer at list index $1 into state $2 (0=idle/stopped, 1=running,
 # 2=paused - matches TimerState in src/c/timer_calc.h) with $3 seconds
 # remaining. Bypasses the start/pause/reset button flow entirely (see
-# SetTimerIndex/State/Remaining handling in src/c/main.c's inbox_received) -
-# a data-only change, so it doesn't open/close any window.
+# TestSetTimerIndex/State/Remaining handling in src/c/main.c's
+# inbox_received) - a data-only change, so it doesn't open/close any window.
 set_timer() {
   pebble send-app-message --emulator "$PLATFORM" \
     --int "${SET_TIMER_INDEX_KEY}=$1" "${SET_TIMER_STATE_KEY}=$2" "${SET_TIMER_REMAINING_KEY}=$3"
@@ -214,8 +218,8 @@ shoot "08_main_view_one_timer.png"
 # ---------------------------------------------------------------------------
 # Phase 2: main list (one running, one paused, two stopped, all labeled) and
 # the running timer's control menu - all state configured via send-app-message,
-# no touch/typing, and (thanks to SetTimerIndex/State/Remaining) no button
-# presses either for the start/pause transitions themselves.
+# no touch/typing, and (thanks to TestSetTimerIndex/State/Remaining) no
+# button presses either for the start/pause transitions themselves.
 # ---------------------------------------------------------------------------
 install_fresh
 

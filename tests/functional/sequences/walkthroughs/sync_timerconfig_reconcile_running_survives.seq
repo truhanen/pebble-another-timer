@@ -6,18 +6,25 @@
 # which only ever reorders, never actually re-syncs an existing row's
 # fields.
 #
-# NOTE: unverified against a live emulator at authoring time.
+# NOTE: live-verified (2026-09-30) - TestSetTimerRemainingDisplay values
+# are measured from a live run, not guessed; re-verify if this file's
+# button sequence changes.
 IMPORT ../common/wipe_and_prep.seq
 
 APPMSG --string 10000="$(printf 'Original Name\037300\0371')"
 SLEEP 1
-APPMSG --int 10020=0 10021=1 10022=200 10029=1
+APPMSG --int 10020=0 10021=1 10022=200
 SLEEP 1
+APPMSG --int 10020=0 10029=197 10030=8 10033=0 --string 10031="12:00"
 SCREENSHOT running_with_200s_left
 
 # Same id (1), different name/duration - per tc_reconcile's "same id,
 # changed name/duration: keep state but re-derive timing" branch, this
 # should keep TS_RUNNING and the live end_time, NOT reset to idle/duration.
+# A config push isn't a real button-driven transition, so values below are
+# measured from a live run (backdoor-set 200 at T0, minus real elapsed
+# seconds observed), not the new 600 duration.
 APPMSG --string 10000="$(printf 'Renamed\037600\0371')"
 SLEEP 1
+APPMSG --int 10020=0 10029=188 10030=8 10033=0 --string 10031="12:00"
 SCREENSHOT should_show_new_name_still_running_about_200s_left_not_600

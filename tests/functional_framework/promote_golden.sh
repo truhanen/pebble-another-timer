@@ -14,12 +14,13 @@
 # that directory's screenshots + scrubbed run.log into the golden dir,
 # exactly as --update-golden would have.
 #
-# REQUIRES a run produced via tests/functional/docker/ (run_container.sh /
-# run_all_parallel.sh), NOT a native run - update_golden() (lib/golden.sh)
-# checks for a `.containerized` marker file in --run-dir and refuses
-# otherwise, since only the containerized harness's pinned libfaketime
-# clock makes screenshots reproducible enough to serve as a baseline. See
-# tests/functional/docker/README.md.
+# REQUIRES a run produced via the containerized harness
+# (tests/functional/run_sequence.sh or tests/functional/run_all.sh - not
+# this framework's own run_sequence.sh run natively), NOT a native run -
+# update_golden() (lib/golden.sh) checks for a `.containerized` marker
+# file in --run-dir and refuses otherwise, since only the containerized
+# harness's pinned libfaketime clock makes screenshots reproducible
+# enough to serve as a baseline. See tests/functional/container/README.md.
 #
 # Usage:
 #   promote_golden.sh --run-dir DIR --golden-dir DIR [--seq-name NAME] [--force]

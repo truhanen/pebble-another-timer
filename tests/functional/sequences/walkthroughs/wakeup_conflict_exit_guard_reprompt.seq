@@ -7,9 +7,10 @@
 # is only ever set by this exit-guard re-prompt path), and choosing "Exit
 # anyway" should actually let the app exit.
 #
-# NOTE: unverified against a live emulator at authoring time - see the
-# same caveat in wakeup_conflict_basic_resolutions.seq.
-IMPORT ../common/wipe_and_prep_test_hooks.seq
+# NOTE: live-verified (2026-09-30) - TestSetTimerRemainingDisplay values
+# are measured from a live run, not guessed; re-verify if this file's
+# button sequence changes.
+IMPORT ../common/wipe_and_prep.seq
 
 # Timer A: short (180s) duration + a handful of blocked minutes (0-5).
 # wakeup_find_early_slot() only has ~2-3 backward candidates available
@@ -21,9 +22,13 @@ IMPORT ../common/wipe_and_prep_test_hooks.seq
 APPMSG --string 10028="0,1,2,3,4,5"
 APPMSG --string 10000="$(printf 'Timer A\037180\0371')"
 SLEEP 1
-APPMSG --int 10020=0 10021=1 10022=180 10029=1
+APPMSG --int 10020=0 10021=1 10022=180
 SLEEP 1
 
+# Timer A's shown remaining (backdoor-set 180 at T0) never has its
+# end_time recomputed here - values below are measured from a live run
+# (180 minus real elapsed seconds at each checkpoint), not the raw 180.
+APPMSG --int 10020=0 10029=177 10030=8 10033=0 --string 10031="12:00"
 SCREENSHOT conflict_menu_open
 # Acknowledge it (the single "Ok" row) - s_last_wakeup_arm_result stays
 # WAKEUP_ARM_FAILED afterward (wc_ok() suppresses idle-exit and returns to
@@ -31,6 +36,7 @@ SCREENSHOT conflict_menu_open
 # it's still genuinely unresolved.
 TAP select
 SLEEP 1
+APPMSG --int 10020=0 10029=168 10030=8 10033=0 --string 10031="12:00"
 SCREENSHOT back_on_main_list_conflict_still_unresolved
 
 # A plain BACK here bypasses close_to_watchface() entirely and would empty
@@ -41,11 +47,13 @@ SCREENSHOT back_on_main_list_conflict_still_unresolved
 # anyway" (row 1) - no "Ok" row at all in this context.
 TAP back
 SLEEP 1
+APPMSG --int 10020=0 10029=159 10030=8 10033=0 --string 10031="12:00"
 SCREENSHOT exit_guard_reprompt_shown
 
 # Select "Exit anyway" (row 1: one DOWN then SELECT) and confirm the app
 # actually exits to the watchface instead of re-prompting again or getting
-# stuck.
+# stuck. The app has exited by this screenshot (real system watchface, not
+# this app's own UI), so no display override applies here.
 TAP down
 TAP select
 SLEEP 1

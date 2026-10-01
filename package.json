@@ -43,17 +43,21 @@
       "KeyboardOnMainTouch",
       "AutoReturnStop",
       "AddTimerId",
-      "SetTimerIndex",
-      "SetTimerState",
-      "SetTimerRemaining",
+      "TestSetTimerIndex",
+      "TestSetTimerState",
+      "TestSetTimerRemaining",
       "VibePattern",
       "AudioVolume",
       "DefaultVibrationEnabled",
       "DefaultSoundEnabled",
       "TestBlockedSystemWakeupMinuteOffsetsPos",
       "TestBlockedSystemWakeupMinuteOffsetsNeg",
-      "FreezeDisplay",
-      "FreezeElapsedSeconds"
+      "TestSetTimerRemainingDisplay",
+      "TestSetTimerRemainingDisplayToleranceSec",
+      "TestSetClockDisplay",
+      "TestSetClockDisplayToleranceMinutes",
+      "TestSetLaunchElapsedDisplaySec",
+      "TestSetLaunchElapsedDisplayToleranceSec"
     ],
     "resources": {
       "media": [

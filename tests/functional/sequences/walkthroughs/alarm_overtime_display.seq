@@ -1,66 +1,72 @@
 # A timer left un-dismissed on the alarm screen for a while - confirms the
-# live elapsed-overtime counter actually counts up rather than freezing or
-# showing something broken. (Forcing TS_RUNNING into overtime directly via
-# SetTimerRemaining was considered instead, but sweep_expiries() - called
-# right after every SetTimerIndex mutation specifically to "catch an
-# immediate overtime" - would immediately flag it and show the alarm
-# screen anyway, so there's no reachable "quiet overtime row sitting in
-# the list" state to test separately from this one.)
+# overtime counter actually counts UP between two checkpoints rather than
+# freezing, going backward, or showing something broken. (Forcing
+# TS_RUNNING into overtime directly via TestSetTimerRemaining was
+# considered instead, but sweep_expiries() - called right after every
+# TestSetTimerIndex mutation specifically to "catch an immediate overtime"
+# - would immediately flag it and show the alarm screen anyway, so
+# there's no reachable "quiet overtime row sitting in the list" state to
+# test separately from this one.)
 #
-# Explicitly UNFREEZES the display right after import: wipe_and_prep.seq
-# now freezes it by default for every sequence (see that file's own
-# comment) - this is the one deliberate exception, since freezing would
-# defeat the entire point here (watching the counter actually tick in
-# real time is what's being tested, not a static value).
+# Uses FIXED TestSetTimerRemainingDisplay values at both checkpoints, like
+# every other migrated sequence - watching the counter tick doesn't
+# require leaving it live: format_alarm_elapsed() reads
+# effective_now_for()/TestSetTimerRemainingDisplay exactly like any other
+# checkpoint, so each screenshot's value is still checked against real
+# ground truth and pixel-reproducible run to run. What actually proves
+# "ticks up correctly" here is the tolerance WINDOWS deliberately NOT
+# overlapping - since both windows are individually verified against real
+# ground truth AND checkpoint 2's window is strictly above checkpoint 1's,
+# a passing run mathematically guarantees the real overtime increased
+# between them, without needing either checkpoint's screenshot to show a
+# live/unpinned value.
 #
-# NOTE: live-verified (2026-09-27). This file previously (briefly) showed
-# the live overtime counter jumping BACKWARD between its two screenshots
-# (e.g. "+0:04" -> "+0:01") in the containerized harness, while the exact
-# same button/AppMessage sequence run natively always ticked correctly and
-# monotonically. Root-caused to the container harness's OLD FAKETIME
-# setup, NOT anything in this app: every separate `pebble` CLI invocation
-# (screenshot/send-app-message/emu-button/...) is a fresh OS process, and
-# pebble-tool's own PebbleTransportEmulator.post_connect() unconditionally
-# resyncs the emulator's clock (a SetUTC packet stamped with that
-# process's own time.time()) on every single connect. The container's old
-# FAKETIME="@2020-01-01 12:00:00" (an absolute "start-at" value) anchors
-# its "keep advancing" reference to WHEN THE AFFECTED PROCESS ITSELF
-# STARTED (confirmed against libfaketime's own README), so each new,
-# short-lived `pebble` CLI process reported a time near the pinned instant
-# plus its own (tiny) uptime - repeatedly discarding real elapsed time
-# between separate commands, not just occasionally drifting.
+# The gap between the two SLEEPs below is 25s, not the original 5s - two
+# rounds of retuning were needed:
+# 1. An early attempt at a 5s gap (checkpoint values 4s/12s +/-3s)
+#    occasionally failed, since this environment's real CLI-to-device
+#    round-trip overhead turned out bigger than initial hand-measurement
+#    suggested (measuring `pebble` calls directly in a standalone script
+#    gave ~4-5s checkpoint-1 overtime; running the SAME steps through this
+#    actual framework consistently measured 8s instead - always measure
+#    through the real framework, not a hand-rolled approximation of it).
+#    A 15s gap fixed that natively (checkpoint 1 ~8s, checkpoint 2 ~28s,
+#    consistent across repeated native runs).
+# 2. Running CONTAINERIZED (tests/functional/docker/), checkpoint 1 stayed
+#    solid (5-8s across native and containerized, solo and under `-j4`
+#    parallel load), but checkpoint 2 turned out much less stable across
+#    environments/load than checkpoint 1: 28s (native), 22s (container,
+#    solo), and something outside a +/-5s-tolerance window in a full-suite
+#    `-j4` parallel container run - a 20+ minute full-suite run isn't
+#    practical to iterate against directly, so this was retuned using
+#    `tests/functional/docker/run_container.sh <this file>` for fast
+#    single-sequence containerized measurement instead. The 25s gap (up
+#    from 15s) and wider checkpoint-2 tolerance give real margin against
+#    that cross-environment/load spread while keeping the two windows
+#    ([-13,-3] and [-43,-27]) comfortably disjoint.
 #
-# Fixed at the source (tests/functional/docker/run-sequence-in-container.sh):
-# FAKETIME is now a plain RELATIVE OFFSET (no "@"), which libfaketime
-# evaluates fresh against the real system clock on every query by every
-# process, with no per-process anchor - see that script's own comment for
-# the full mechanism and the fix's live verification (this file's counter
-# now correctly and monotonically increases, e.g. "+0:04" -> "+0:10").
-#
-# Residual, much milder caveat: the two live "+MM:SS" screenshots below
-# still aren't guaranteed byte-for-byte reproducible run to run, since the
-# exact real wall-clock overhead of the intervening `pebble` CLI calls
-# (process spawn/connect time) still varies - but the counter should
-# always be monotonically increasing and roughly track the scripted SLEEP
-# durations now. A future golden diff confined to the "+MM:SS" text region
-# with a plausible (close to the scripted SLEEP total), forward-only value
-# is expected drift, not evidence of a regression - but a value that goes
-# DOWN, or is wildly off, is a real regression signal again (unlike
-# before this fix, when a backward jump on its own proved nothing).
-# Everything else this file checks (the alarm screen appearing at all,
-# its layout, the Stop button dismissing it) was never affected either
-# way and remains fully meaningful to compare.
+# NOTE: live-verified (2026-09-30) across native (tests/functional_
+# framework/run_sequence.sh) and containerized (docker/run_container.sh)
+# runs, not guessed; re-verify (checkpoint 2 especially) if this file's
+# SLEEP durations change, ideally including at least one containerized
+# check given checkpoint 2's demonstrated cross-environment spread.
 IMPORT ../common/wipe_and_prep.seq
-APPMSG --int 10029=0
 
 APPMSG --string 10000="$(printf 'Quick Timer\0375\0371')"
 SLEEP 1
 APPMSG --int 10020=0 10021=1 10022=5
 SLEEP 1
 SLEEP 7
+APPMSG --int 10020=0 10029=-8 10030=5 10033=0 --string 10031="12:00"
 SCREENSHOT alarm_just_fired_elapsed_near_0
-SLEEP 5
+SLEEP 25
+APPMSG --int 10020=0 10029=-35 10030=8 10033=0 --string 10031="12:00"
 SCREENSHOT alarm_elapsed_should_now_read_about_5s
 TAP down
 SLEEP 1
+# Idle/stopped after Stop - tc_reset() puts it back to the full configured
+# duration (5s), an exact, time-independent constant, safe to check
+# tightly (paused/idle timers now respect the override too - see
+# remaining_override_get() in main.c).
+APPMSG --int 10020=0 10029=5 10030=2 10033=0 --string 10031="12:00"
 SCREENSHOT dismissed

@@ -10,16 +10,20 @@ IMPORT ../common/wipe_and_prep.seq
 
 APPMSG --string 10000="$(printf 'Original Name\037300\0371')"
 SLEEP 1
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT initial_list
 
 # "+ New timer" sits at row 0 and is where a fresh list's selection
 # defaults to - ml_select_long() is a no-op there, so move down first.
 TAP down
 LONGPRESS select
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT edit_menu
 TAP down
 TAP select
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT label_keyboard_open
 TAP back
 SLEEP 1
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT name_should_be_unchanged

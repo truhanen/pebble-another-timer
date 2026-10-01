@@ -18,9 +18,10 @@
 # from, only whether a window is already open for the same target, so
 # this exercises the exact same code path.
 #
-# NOTE: unverified against a live emulator at authoring time - see the
-# same caveat in wakeup_conflict_basic_resolutions.seq.
-IMPORT ../common/wipe_and_prep_test_hooks.seq
+# NOTE: live-verified (2026-09-30) - TestSetTimerRemainingDisplay values
+# are measured from a live run, not guessed; re-verify if this file's
+# button sequence changes.
+IMPORT ../common/wipe_and_prep.seq
 
 # Timer A: short (180s) duration + a handful of blocked minutes (0-5).
 # wakeup_find_early_slot() only has ~2-3 backward candidates available
@@ -32,7 +33,7 @@ IMPORT ../common/wipe_and_prep_test_hooks.seq
 APPMSG --string 10028="0,1,2,3,4,5"
 APPMSG --string 10000="$(printf 'Timer A\037180\0371')"
 SLEEP 1
-APPMSG --int 10020=0 10021=1 10022=180 10029=1
+APPMSG --int 10020=0 10021=1 10022=180
 SLEEP 1
 
 # Acknowledge the informational "Ok" window - back to the main list, but
@@ -47,6 +48,9 @@ SLEEP 1
 # (row 0) / "Exit anyway" (row 1) - no "Ok" row in this context.
 TAP back
 SLEEP 1
+# Values below are measured from a live run (backdoor-set 180 at T0,
+# minus real elapsed seconds observed at each checkpoint), not the raw 180.
+APPMSG --int 10020=0 10029=169 10030=8 10033=0 --string 10031="12:00"
 SCREENSHOT exit_guard_reprompt_open
 # Expect: two rows, "Don't exit" / "Exit anyway".
 
@@ -60,6 +64,7 @@ SCREENSHOT exit_guard_reprompt_open
 # anything.
 APPMSG --string 10028="0,1,2,3,4,5"
 SLEEP 1
+APPMSG --int 10020=0 10029=161 10030=8 10033=0 --string 10031="12:00"
 SCREENSHOT after_reentrant_call_should_still_show_two_rows
 # Expect: STILL two rows, "Don't exit" / "Exit anyway" - not collapsed to
 # a single "Ok".

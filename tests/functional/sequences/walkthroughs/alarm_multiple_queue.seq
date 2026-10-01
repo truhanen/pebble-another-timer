@@ -14,24 +14,66 @@ APPMSG --int 10018=0
 APPMSG --string 10000="$(printf 'Timer A\0375\0371\036Timer B\0375\0372')"
 SLEEP 1
 APPMSG --int 10020=0 10021=1 10022=5
-# FreezeDisplay=1 on B's (the LAST) seed message re-captures the frozen
-# "now" here, giving B an exact 5s remaining below - A's own display is
-# still bounded-but-not-exact (it reflects whatever real gap existed
-# between these two separate AppMessage sends, a single command's worth of
-# jitter, not the whole test's) - an inherent limit of one single global
-# freeze instant with two timers seeded in two separate messages. Still a
-# large improvement over fully live.
-APPMSG --int 10020=1 10021=1 10022=5 10029=1
-SLEEP 1
+APPMSG --int 10020=1 10021=1 10022=5
+# Despite the backdoor having just set both timers to an exact 5s
+# remaining and this screenshot's name: whether both timers have already
+# naturally expired by here is environment-dependent, not just a numeric
+# jitter question - native runs reliably crossed the 5s boundary on CLI
+# round-trip overhead alone, but running the same steps containerized
+# (tests/functional/docker/run_container.sh, solo) twice showed BOTH
+# timers still genuinely running (A with 1s left, B with 2s left), not
+# yet expired at all. SLEEP 6 below (replacing a bare SLEEP 1) adds real
+# margin so both are reliably in overtime regardless of that per-
+# environment speed difference, matching alarm_natural_expiry_stop.seq's
+# same fix for the same reason.
+SLEEP 16
+# format_alarm_elapsed() reads effective_now_for()/
+# TestSetTimerRemainingDisplay exactly like a running timer's remaining
+# time, just as elapsed-past-end_time (negative "remaining") instead of
+# remaining-until-it, so the overtime counter here is checked the same
+# way as everywhere else.
+#
+# SLEEP 16 (up from an original SLEEP 6) - same fix as
+# alarm_natural_expiry_stop.seq's matching checkpoint, for the same
+# reason: with only ~6s of margin the measured overtime itself was tiny
+# (~4-9s), so a tolerance wide enough to cover real CLI-round-trip
+# variance (~±2-3s) was a LARGE fraction of that tiny value (114%,
+# tol=8 vs value=7). Waiting longer doesn't widen that same ~2-3s of
+# round-trip variance, so it shrinks as a fraction of a bigger baseline
+# instead. Live-verified (native x2, containerized x1, 2026-10-01) with
+# no override sent (to read the real, live value) - Timer A (idx 0, the
+# one whose alarm fired first): 14s, 18s, 19s - center ~17, tolerance 6
+# comfortably covers the observed spread (relative ~35%, down from 114%).
+APPMSG --int 10020=0 10029=-17 10030=6 10033=0 --string 10031="12:00"
 SCREENSHOT both_running_5s
 
+# 7 more real seconds pass. Live-verified (same runs): Timer A 23s, 29s,
+# 31s - center ~27, tolerance 8 covers the observed spread (relative ~30%,
+# down from 59% at the old SLEEP 6 baseline) - this checkpoint's absolute
+# value varies more across environments than most (short 5s duration
+# timers are inherently more sensitive to per-environment CLI/device
+# round-trip speed than the 180s-1200s timers elsewhere in this suite -
+# see alarm_overtime_display.seq's own comment on the same effect), hence
+# the wider tolerance.
 SLEEP 7
+APPMSG --int 10020=0 10029=-27 10030=8 10033=0 --string 10031="12:00"
 SCREENSHOT first_alarm_showing
 
+# Stop dismisses A's alarm; the queue advances to Timer B (idx 1), whose
+# own overtime has been accumulating in the background this whole time.
+# Live-verified (same runs): 27s, 37s, 37s - center ~32, tolerance 10
+# covers the observed spread - same wider-tolerance reasoning as the
+# checkpoint above.
 TAP down
 SLEEP 1
+APPMSG --int 10020=1 10029=-32 10030=10 10033=0 --string 10031="12:00"
 SCREENSHOT second_alarm_should_now_be_showing
 
+# Both timers are idle/stopped after their alarms are dismissed -
+# tc_reset() puts each back to its full configured duration (5s), an
+# exact, time-independent constant, safe to check tightly for both rows.
 TAP down
 SLEEP 1
+APPMSG --int 10020=0 10029=5 10030=2 10033=0 --string 10031="12:00"
+APPMSG --int 10020=1 10029=5 10030=2 10033=0 --string 10031="12:00"
 SCREENSHOT both_dismissed_back_to_list

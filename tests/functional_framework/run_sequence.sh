@@ -189,7 +189,7 @@ SCREENSHOT_COUNTER=0
 
 # Persists a marker into this run's own output directory whenever it's
 # running under the containerized harness (PEBBLE_TEST_CONTAINERIZED=1,
-# set by tests/functional/docker/run-sequence-in-container.sh alongside
+# set by tests/functional/container/run-sequence-in-container.sh alongside
 # its libfaketime env - see that script for why containerized execution
 # is what makes screenshots/timing reproducible at all). A FILE, not just
 # checking the env var live, because golden approval can happen in a

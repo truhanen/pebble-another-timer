@@ -2,12 +2,22 @@
 # Entrypoint for the pebble-another-timer-tests image (see Containerfile's
 # own comments for the full "why" on every design choice referenced here).
 #
+# NAMING NOTE: two different scripts are both bare-named "run_sequence.sh"
+# in this project - tests/functional/run_sequence.sh (the HOST-side
+# launcher that starts this very container) and tests/functional_framework/
+# run_sequence.sh (the generic, app-agnostic framework script this
+# entrypoint ultimately execs, below). Throughout this file, a bare
+# "run_sequence.sh" means the FRAMEWORK one (the default/dominant meaning
+# here, since that's what this file is mostly about) - every mention of
+# the HOST launcher instead is spelled out with its full path.
+#
 # Usage (via `podman run ... <image> <args>`):
 #   <seq-file-relative-to-repo-root> [extra run_sequence.sh flags...]
 #
 # What this does, in order:
-# 1. Copies the read-only /src mount (the repo, mounted by run_container.sh)
-#    into a private, per-container scratch directory - never builds
+# 1. Copies the read-only /src mount (the repo, mounted by
+#    tests/functional/run_sequence.sh) into a private, per-container
+#    scratch directory - never builds
 #    in-place against /src, so N containers running in parallel against
 #    the SAME host checkout never race on build/ output.
 # 2. npm install + the copy's own tests/functional_framework/run_sequence.sh
@@ -53,8 +63,8 @@
 #    every command, discarding real elapsed time between commands
 #    entirely. This was the actual root cause of a live-verified bug: the
 #    alarm screen's live "+MM:SS" overtime counter (only meaningful in
-#    alarm_overtime_display.seq, the one sequence that deliberately runs
-#    with FreezeDisplay=0 to watch it tick) appeared to jump BACKWARD
+#    alarm_overtime_display.seq, the one sequence that deliberately never
+#    sends a display override, to watch it tick) appeared to jump BACKWARD
 #    between two screenshots instead of counting up, because each
 #    screenshot's own resync was re-deriving "now" from ITS OWN process
 #    start, not from shared elapsed real time.
@@ -77,16 +87,15 @@
 #    old emu-set-time approach wanted, just without that approach's fatal
 #    flaw (see the header comment above) AND without the "@" form's
 #    per-process-anchor flaw discovered here. The 12:00 wall-clock time
-#    deliberately matches copy_frozen_clock_string()'s own hardcoded
-#    "12:00" (main.c) - so a screenshot's clock/bottom-bar reads the same
-#    either way, whether FreezeDisplay pinned it directly or a sequence
-#    (like alarm_overtime_display.seq) deliberately left it unfrozen to
-#    watch real ticking. Not load-bearing for correctness (see
-#    copy_frozen_clock_string()'s own comment on why the frozen value is
-#    an arbitrary constant, not derived from anything) - purely to avoid a
-#    confusing, unrelated-looking clock jump between otherwise-similar
-#    screenshots depending on which sequence froze the display and which
-#    didn't.
+#    deliberately matches the "12:00" every migrated sequence sends via
+#    TestSetClockDisplay (main.c) - so a screenshot's clock/bottom-bar
+#    reads the same either way, whether a sequence overrode it directly or
+#    (like alarm_overtime_display.seq) deliberately left it live to watch
+#    real ticking. Not load-bearing for correctness (any stable string
+#    would do for TestSetClockDisplay, with no tolerance attached - see its
+#    own design comment in main.c) - purely to avoid a confusing,
+#    unrelated-looking clock jump between otherwise-similar screenshots
+#    depending on which sequence overrides the display and which doesn't.
 set -eu
 
 SEQ_ARG="${1:?usage: <seq-file-relative-to-repo-root> [extra run_sequence.sh flags...]}"
@@ -108,14 +117,15 @@ shift
 # script commonly gets the SAME low PID (e.g. 2) in every container;
 # live-verified two parallel containers landing on the same real second
 # AND the same PID, making $$ useless for cross-container uniqueness here
-# (harmless in the current run_all_parallel.sh usage, where every job runs
+# (harmless in the current run_all.sh usage, where every job runs
 # a distinct sequence name and so still gets a distinct RUN_ID/name path
 # either way, but would collide if the same sequence were ever run twice
 # concurrently).
 #
 # RUN_ID_OVERRIDE, if set, skips all of the above and is used as-is - set
-# by run_container.sh when ITS caller (run_all_parallel.sh, for a shared
-# batch run across many containers) exported it first: one shared host-
+# by tests/functional/run_sequence.sh (the host launcher) when ITS caller
+# (run_all.sh, for a shared batch run across many containers) exported it
+# first: one shared host-
 # generated timestamp (host clock, never touched by any container's own
 # faketime) becomes every sequence's RUN_ID for that batch, so the whole
 # batch's output lands under one shared $OUT_BASE/$RUN_ID/ directory - the
@@ -123,7 +133,8 @@ shift
 # Safe to share across containers in one batch specifically because each
 # one runs a distinct sequence name (see the paragraph above) - no two
 # ever write to the same $RUN_ID/$SEQ_NAME/ leaf path. Not set at all for
-# a standalone single-sequence run (plain run_container.sh), where the
+# a standalone single-sequence run (plain tests/functional/run_sequence.sh,
+# invoked directly rather than via run_all.sh), where the
 # generated-per-invocation RUN_ID below is exactly what's wanted instead.
 # Also captured here, pre-LD_PRELOAD/FAKETIME, for the FAKETIME relative-
 # offset computation below (see that comment for why a relative offset,
@@ -164,15 +175,16 @@ export FAKETIME="$FAKETIME_OFFSET_SECONDS"
 # own output directory - the signal update_golden() (lib/golden.sh) checks
 # before approving any golden baseline, since only this pinned-clock
 # harness makes screenshots reproducible enough to serve as one (see
-# tests/functional/docker/README.md and golden.sh's own comment).
+# tests/functional/container/README.md and golden.sh's own comment).
 export PEBBLE_TEST_CONTAINERIZED=1
 
-# Opt-in only (set by run_container.sh's --touch flag, itself opt-in per
-# invocation) - see Containerfile's own comment on run_touch/TOUCH for the
+# Opt-in only (set by tests/functional/run_sequence.sh's --touch flag,
+# itself opt-in per invocation) - see Containerfile's own comment on
+# run_touch/TOUCH for the
 # full "why": a sequence using the TOUCH instruction needs a REAL windowed
 # emulator (no --vnc) rendered into a virtual X display xdotool can target,
 # which every other sequence has no need for and shouldn't pay the cost of
-# (see tests/functional/docker/README.md's performance note). Xvfb's own
+# (see tests/functional/container/README.md's performance note). Xvfb's own
 # startup is fast (live-verified near-instant - a 1s settle below is
 # already generous headroom) but xdpyinfo is polled rather than assuming a
 # fixed sleep is enough, since that startup time isn't guaranteed constant

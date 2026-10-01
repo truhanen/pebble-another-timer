@@ -9,9 +9,11 @@
 # NOTE: unverified against a live emulator at authoring time.
 IMPORT ../common/wipe_and_prep.seq
 APPMSG --int 10016=0 10015=0 10003=0
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT list_empty
 
 TAP select
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT duration_dial_default
 
 # dial_back() walks fields backward one at a time (minute -> hour) before
@@ -21,7 +23,9 @@ SCREENSHOT duration_dial_default
 # live-verified (a single BACK only moved focus to the hour field, leaving
 # the dial still open).
 TAP back
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT duration_dial_hour_field_focused
 TAP back
 SLEEP 1
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT should_still_be_empty_no_phantom_timer

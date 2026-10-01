@@ -29,9 +29,11 @@
 IMPORT ../common/wipe_and_prep.seq
 
 APPMSG --int 10016=0 10015=0 10003=0
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT list_empty
 
 TAP select
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT duration_dial_default
 
 # Dial centre (100, 135) and radius 70 - same as
@@ -54,9 +56,11 @@ SCREENSHOT duration_dial_default
 # same formula as touch_dial_set_via_position.seq's single point.
 TOUCHDOWN 135 196
 TOUCHSWEEP 100 135 70 150 -30 36
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT touch_dial_open_below_one_minute
 TOUCHUP
 
 # Same deferred-confirm settle as touch_dial_set_via_position.seq.
 SLEEP 0.5
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT timer_created

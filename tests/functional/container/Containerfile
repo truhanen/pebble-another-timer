@@ -7,9 +7,9 @@
 #
 # Build (from the repo root):
 #   podman build --platform linux/amd64 -t pebble-another-timer-tests \
-#     -f tests/functional/docker/Containerfile .
+#     -f tests/functional/container/Containerfile .
 #
-# Run ONE sequence (see tests/functional/docker/run_container.sh for the
+# Run ONE sequence (see tests/functional/run_sequence.sh for the
 # wrapper this is meant to be driven through - it handles --init,
 # read-only source mount, and the writable output mount correctly):
 #   podman run --rm --init --platform linux/amd64 \
@@ -47,8 +47,8 @@
 # infinity` entrypoint and 100% fixed by re-running the same container
 # with `--init` (podman's built-in lightweight init, catatonit). This is a
 # `podman run` flag, not something a Containerfile can set for its
-# caller, so run_container.sh always passes it - don't drop it if you
-# invoke this image some other way.
+# caller, so tests/functional/run_sequence.sh always passes it - don't
+# drop it if you invoke this image some other way.
 FROM debian:bookworm-slim
 
 ARG SDK_VERSION=4.33.1
@@ -64,8 +64,9 @@ RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends \
       xvfb xdotool x11-utils \
     && rm -rf /var/lib/apt/lists/*
 # xvfb/xdotool/x11-utils are ONLY used by the opt-in TOUCH instruction (see
-# functional_framework/lib/steps.sh run_touch and run_container.sh's --touch
-# flag) - real touchscreen input only reaches this app's touch_service at
+# functional_framework/lib/steps.sh run_touch and
+# tests/functional/run_sequence.sh's --touch flag) - real touchscreen
+# input only reaches this app's touch_service at
 # all when qemu-pebble opens a genuine SDL/X11 window (i.e. `pebble install`
 # run WITHOUT --vnc) that xdotool's XTest-based clicks can target; qemu's own
 # `-vnc` framebuffer (what every other sequence uses) is display-only and
@@ -102,6 +103,6 @@ RUN uv tool install "git+https://github.com/coredevices/pebble-tool.git"
 RUN pebble sdk install "${SDK_VERSION}"
 
 WORKDIR /src
-COPY tests/functional/docker/run-sequence-in-container.sh /usr/local/bin/run-sequence-in-container.sh
+COPY tests/functional/container/run-sequence-in-container.sh /usr/local/bin/run-sequence-in-container.sh
 RUN chmod +x /usr/local/bin/run-sequence-in-container.sh
 ENTRYPOINT ["/usr/local/bin/run-sequence-in-container.sh"]

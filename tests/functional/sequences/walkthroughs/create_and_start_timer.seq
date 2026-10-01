@@ -10,33 +10,52 @@
 #   auto-starting and popping the app back to the watchface on its own,
 #   which would otherwise race this sequence's own explicit start step.
 IMPORT ../common/wipe_and_prep.seq
-# Unfreeze: this timer is started for real via the button-driven wizard
-# flow below, not the SetTimerIndex backdoor, so its end_time comes from a
-# real now_s() call this sequence doesn't control - leaving the display
-# frozen to wipe_and_prep.seq's early setup-time anchor would make
-# timer_running below show a stale/confusing value instead of a
-# recognizable one. See run_control_pause_resume_stop.seq's own comment
-# for the same reasoning applied to a real state transition.
-APPMSG --int 10029=0
+# This timer is created and started for real via the button-driven wizard
+# flow below, not the TestSetTimerIndex backdoor, so its duration/end_time
+# come from real button presses/now_s() calls this sequence doesn't
+# control - "timer_running" below (the only screenshot showing a REAL,
+# just-started RUNNING timer) uses a value measured from a live run, same
+# pattern as run_control_pause_resume_stop.seq's "resumed_running"/
+# run_control_restart.seq's post-restart screenshot. Every screenshot
+# still gets the clock/elapsed overrides for a reproducible bottom bar.
+#
+# NOTE: live-verified (2026-09-30) - TestSetTimerRemainingDisplay values
+# are measured from a live run, not guessed; re-verify if this file's
+# button sequence changes.
 APPMSG --int 10016=0 10015=0 10003=0
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT list_empty
 
 # SELECT on the (only) "+ New timer" row opens the duration dial, header
 # "Duration", defaulting to 00:01:00 with the minute field focused.
 TAP select
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT duration_dial_default
 
 # UP/DOWN adjust the focused field; SELECT advances hour -> minute -> second
 # and, once on the last field, confirms instead of advancing further.
 TAP up
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT duration_minute_adjusted
 TAP select
 TAP up
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT duration_seconds_adjusted
 TAP select
+# Idle, just-created timer: duration is an exact, time-independent
+# constant (2:01 = 121s from the dial adjustments above), safe to check
+# tightly.
+APPMSG --int 10020=0 10029=121 10030=5 10033=0 --string 10031="12:00"
 SCREENSHOT timer_created
 
 # A short SELECT on the newly created (and already-focused) timer row
 # starts it - confirmed by the green background/countdown row.
 TAP select
+# Value measured from a live run (118s) - real button-driven Start
+# transitions show more run-to-run variance than pure backdoor
+# checkpoints even when centered correctly (see
+# wakeup_conflict_leak_on_state_change.seq's own note), so this keeps a
+# wider tolerance than the exact idle checkpoint above despite starting
+# from a measured center, not a guess.
+APPMSG --int 10020=0 10029=118 10030=20 10033=0 --string 10031="12:00"
 SCREENSHOT timer_running

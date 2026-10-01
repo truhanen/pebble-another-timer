@@ -2,9 +2,9 @@
 
 Runs `tests/functional_framework`'s sequences inside Podman/Docker
 containers instead of directly on the host - either one sequence at a
-time (`run_container.sh`) or many at once in parallel
-(`run_all_parallel.sh`), each in its own fully isolated container instead
-of sharing one host-managed emulator instance.
+time (`tests/functional/run_sequence.sh`) or many at once in parallel
+(`tests/functional/run_all.sh`), each in its own fully isolated container
+instead of sharing one host-managed emulator instance.
 
 **This is the REQUIRED path for `tests/functional/run_all.sh`, CI, and any
 golden-baseline approval** - not merely the recommended one. A native run
@@ -32,13 +32,13 @@ podman machine start
 
 # Build the image (from the repo root):
 podman build --platform linux/amd64 -t pebble-another-timer-tests \
-  -f tests/functional/docker/Containerfile .
+  -f tests/functional/container/Containerfile .
 ```
 
 Rebuild the image whenever `Containerfile` or
 `run-sequence-in-container.sh` changes; you do NOT need to rebuild when
-the app's own source changes - `run_container.sh` mounts the repo fresh
-into every container run (see Containerfile's own comments for why: a
+the app's own source changes - `tests/functional/run_sequence.sh` mounts
+the repo fresh into every container run (see Containerfile's own comments for why: a
 build baked into the image would go stale immediately, and copying at
 container-start time is what makes parallel runs safe against each other
 in the first place).
@@ -47,14 +47,14 @@ in the first place).
 
 ```sh
 # One sequence:
-tests/functional/docker/run_container.sh \
+tests/functional/run_sequence.sh \
   tests/functional/sequences/walkthroughs/create_and_start_timer.seq
 
 # All of them, N at a time:
-tests/functional/docker/run_all_parallel.sh -j 4
+tests/functional/run_all.sh -j 4
 
 # A subset, N at a time:
-tests/functional/docker/run_all_parallel.sh -j 4 --pattern 'wakeup_conflict_*'
+tests/functional/run_all.sh -j 4 --pattern 'wakeup_conflict_*'
 
 # Golden testing works the same as natively (see the main framework's own
 # README) - --golden-dir's host path is mounted into the container
@@ -63,9 +63,10 @@ tests/functional/docker/run_all_parallel.sh -j 4 --pattern 'wakeup_conflict_*'
 # ...: no such file or directory`, since /tmp isn't in Podman's applehv
 # machine's default shared-mount scope. Live-verified; not something this
 # script can detect or fix in advance. No --mask-rect needed - every
-# sequence freezes its own live displays deterministic by default (see
-# sequences/common/wipe_and_prep.seq / main.c's display_now()).
-tests/functional/docker/run_container.sh \
+# sequence makes its own live displays deterministic via explicit,
+# tolerance-checked TestSet*Display overrides sent before each screenshot
+# (see main.c's effective_now_for()).
+tests/functional/run_sequence.sh \
   tests/functional/sequences/walkthroughs/create_and_start_timer.seq \
   --golden-dir tests/functional/golden
 
@@ -73,11 +74,22 @@ tests/functional/docker/run_container.sh \
 tests/functional/run_all.sh --golden-dir tests/functional/golden
 ```
 
-## TOUCH (real touchscreen input) - opt-in, container-only
+## TOUCH (real touchscreen input) - auto-detected, container-only
 
-`--touch` (on `run_container.sh`, or wired through `run_all_parallel.sh`'s
-own passthrough if you add it there) makes a sequence's `TOUCH x y [hold_s]`
-instruction (see `functional_framework/README.md`) actually work: it starts
+`tests/functional/run_sequence.sh` auto-detects whether a sequence needs this (any
+`TOUCH`/`TOUCHDOWN`/`TOUCHUP`/`TOUCHMOVE`/`TOUCHSWEEP`/`TOUCHDRAG`
+instruction, including through `IMPORT`s) and enables it itself - you
+don't need to remember `--touch` or wire it through
+`run_all.sh`'s passthrough for this to work in a batch run.
+Passing `--touch` explicitly still works too (e.g. to force it on a
+sequence the detection doesn't catch), it's just no longer required.
+This is also why these sequences used to silently error out of a batch
+`run_all.sh` run - nothing passed `--touch` for them, and the resulting
+error was easy to miss scrolling past in parallel output.
+
+Mechanically, `--touch` (explicit or auto-detected) makes a sequence's
+`TOUCH x y [hold_s]` instruction (see `functional_framework/README.md`)
+actually work: it starts
 Xvfb inside the container and runs the emulator without `--vnc`, so
 qemu-pebble opens a real SDL/X11 window that `xdotool` can deliver genuine,
 correctly-hit-tested touch events into. This only works this way -
@@ -90,15 +102,15 @@ Accessibility, for `cliclick`) - a container's own Xvfb has neither problem,
 since nothing real is looking at "the cursor" there.
 
 ```sh
-tests/functional/docker/run_container.sh \
+tests/functional/run_sequence.sh \
   tests/functional/sequences/walkthroughs/some_touch_sequence.seq --touch
 ```
 
-**Performance: this is deliberately opt-in, not the default for every
-sequence.** Most existing sequences are button/AppMessage-driven and have
-no need for a real window at all, so they keep using the fast, lightweight
-`--vnc`-only path unchanged. A `--touch` run pays a small, one-time-per-
-container cost instead:
+**Performance: this is only applied to sequences that actually need it,
+not every sequence.** Most existing sequences are button/AppMessage-driven
+and have no need for a real window at all, so the auto-detection leaves
+them on the fast, lightweight `--vnc`-only path unchanged. A touch-mode
+run pays a small, one-time-per-container cost instead:
 - Starting Xvfb and confirming it's up adds on the order of a second (live-
   verified near-instant; the entrypoint polls `xdpyinfo` rather than
   assuming a fixed sleep, since startup time isn't a hard guarantee across
@@ -146,7 +158,7 @@ Live-verified: 6 parallel containers (each doing its own `npm install` +
 TypeScript compile + `pebble build` + qemu-pebble/pypkjs) reliably failed
 3 of 6 with a plain "TypeScript compilation failed" under memory pressure
 at 2GiB, and passed 6 of 6 at 8GiB with nothing else changed. If
-`run_all_parallel.sh` jobs fail with build errors (not emulator/screenshot
+`run_all.sh` jobs fail with build errors (not emulator/screenshot
 errors) under load but pass individually, this is almost certainly why -
 raise the machine's memory (`podman machine set --memory <MB>`, machine
 must be stopped first) rather than assuming it's a code bug. There's no

@@ -6,17 +6,15 @@
 # main list with the timer still running (foreground hold).
 #
 # Uses TestBlockedSystemWakeupMinuteOffsetsPos (APP_TEST_HOOKS=1 build
-# required - see wipe_and_prep_test_hooks.seq) instead of a real colliding
+# required - see wipe_and_prep.seq) instead of a real colliding
 # wakeup from another app. The offset list is relative to whichever timer
 # is currently the target (find_soonest_unarmed_running_idx), so it
 # automatically re-centers as the target changes.
 #
-# NOTE: unverified against a live emulator at authoring time - row/field
-# indices below are derived from reading main.c (wc_row_kind,
-# try_auto_early_wake, wakeup_find_early_slot), not confirmed on screen.
-# Treat this as a first draft to validate before trusting it as a
-# standing regression test.
-IMPORT ../common/wipe_and_prep_test_hooks.seq
+# NOTE: live-verified (2026-09-30) - TestSetTimerRemainingDisplay values
+# are measured from a live run, not guessed; re-verify if this file's
+# button sequence changes.
+IMPORT ../common/wipe_and_prep.seq
 
 ## --- Timer A (id 1, 1200s): only its own exact minute is blocked ---
 # leaving 14 other whole minutes free within wakeup_find_early_slot()'s
@@ -25,8 +23,9 @@ IMPORT ../common/wipe_and_prep_test_hooks.seq
 APPMSG --string 10027="0"
 APPMSG --string 10000="$(printf 'Timer A\0371200\0371')"
 SLEEP 1
-APPMSG --int 10020=0 10021=1 10022=1200 10029=1
+APPMSG --int 10020=0 10021=1 10022=1200
 SLEEP 1
+APPMSG --int 10020=0 10029=1196 10030=8 10033=0 --string 10031="12:00"
 SCREENSHOT a_silently_resolved_still_running
 # Expect: plain running list, NOT a conflict window.
 
@@ -46,8 +45,11 @@ SLEEP 1
 APPMSG --string 10028="0,1,2,3,4,5"
 APPMSG --string 10000="$(printf 'Timer A\0371200\0371\036Timer B\037180\0372')"
 SLEEP 1
-APPMSG --int 10020=1 10021=1 10022=180 10029=1
+APPMSG --int 10020=1 10021=1 10022=180
 SLEEP 1
+# A is idle now (no display override applies - see
+# run_control_pause_resume_stop.seq's comment); only B needs one.
+APPMSG --int 10020=1 10029=176 10030=8 10033=0 --string 10031="12:00"
 SCREENSHOT b_ok_window_shown
 # Expect: red "Timer conflicts with / another app's wakeup. / MUST STAY
 # OPEN." message (see open_wakeup_conflict_window_ex's msg_buf), single
@@ -56,4 +58,12 @@ SCREENSHOT b_ok_window_shown
 # exit-attempt re-prompt).
 TAP select
 SLEEP 1
+# A is idle now (state=0 sent via backdoor above, no explicit remaining -
+# main.c falls back to the real end_time-now at that exact backdoor call,
+# so its final idle value is measurable the same way as everywhere else,
+# now that a paused/idle timer's shown value also respects
+# TestSetTimerRemainingDisplay - see remaining_override_get() in main.c).
+# Measured from a live run: ~1191s (19:51).
+APPMSG --int 10020=1 10029=167 10030=8 10033=0 --string 10031="12:00"
+APPMSG --int 10020=0 10029=1191 10030=10 10033=0 --string 10031="12:00"
 SCREENSHOT b_ok_dismissed_back_on_list

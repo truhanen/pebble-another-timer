@@ -73,16 +73,17 @@ test_core:
 	gcc -I src/c tests/test_timer_calc.c src/c/timer_calc.c -o /tmp/pebble-another-timer-test_core
 	/tmp/pebble-another-timer-test_core
 
-# Rebuild whenever tests/functional/docker/Containerfile or
+# Rebuild whenever tests/functional/container/Containerfile or
 # run-sequence-in-container.sh change - NOT needed for app source changes,
-# since run_container.sh copies the repo fresh into every container run.
+# since every container run mounts (tests/functional/run_sequence.sh) and
+# copies (container/run-sequence-in-container.sh) the repo fresh.
 .PHONY: build_functional_test_image
 build_functional_test_image:
 	podman build --platform linux/amd64 -t pebble-another-timer-tests \
-		-f tests/functional/docker/Containerfile .
+		-f tests/functional/container/Containerfile .
 
 # Plain pass/fail run of the whole functional suite, containerized (see
-# tests/functional/docker/README.md for why this is required rather than
+# tests/functional/container/README.md for why this is required rather than
 # just recommended) - no golden comparison.
 .PHONY: test_functional
 test_functional:

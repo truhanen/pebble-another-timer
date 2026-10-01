@@ -40,17 +40,54 @@ IMPORT ../common/wipe_and_prep.seq
 # screenshots (same as create_and_start_timer.seq) - deliberately NOT
 # KeyboardOnNewTimer=0, see the header comment above.
 APPMSG --int 10015=0 10003=0
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT list_empty
 
 TAP select
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT duration_dial_default
 
 # Same "15 minutes" dial point as touch_dial_set_via_position.seq (see its
 # own comment for the derivation) - the duration value itself is
 # incidental here; this test's real subject is the keyboard that opens
 # next.
-TOUCH 170 135 0.6
-SLEEP 0.5
+#
+# Unlike touch_dial_set_via_position.seq (which sets KeyboardOnNewTimer=0
+# and returns straight to the main list after the dial's own ~0.5s settle
+# - see its own comment), this sequence deliberately lets the keyboard
+# open, which is an ADDITIONAL window push on top of the dial's commit/
+# close animation.
+#
+# Uses the split TOUCHDOWN/SLEEP/TOUCHUP form here, NOT the atomic TOUCH
+# helper (contrast the comment above run_touch() in
+# functional_framework/lib/steps.sh) - live-verified the atomic form
+# (mousedown+sleep+mouseup chained inside a single xdotool invocation) was
+# genuinely flaky landing this specific dial-commit-then-keyboard-open
+# transition: reproduced directly across repeated containerized runs,
+# still showing the duration dial instead of the keyboard regardless of
+# how long a SLEEP followed it (tried up to 1.5s with no improvement) -
+# not purely a post-touch settle problem. Two changes together fixed it,
+# confirmed clean across 6 consecutive containerized runs (0/6 flaky,
+# vs. roughly 1-in-4 before):
+# 1. Splitting into two separate xdotool invocations (TOUCHDOWN, a real
+#    host-level SLEEP, then a separate TOUCHUP) instead of one chained
+#    xdotool call - matching touch_dial_set_via_position.seq's own
+#    pattern (the one other touch sequence in this suite using a real
+#    hold, which was never flaky) - this alone roughly halved the
+#    failure rate but didn't eliminate it (still ~1-in-4).
+# 2. Lengthening the hold from 0.6s (this app's touchLiftMinDurationMs
+#    tap-vs-hold threshold is 100ms, so 0.6s was already well clear of
+#    that on paper) to 1.2s - eliminated the remainder. Exact root cause
+#    unconfirmed (plausibly xdotool/X11/qemu event-timing jitter under
+#    container load, not a gesture-recognition threshold issue per se,
+#    since 0.6s already cleared the app's own threshold with margin) -
+#    if this ever regresses, re-verify with several repeated runs (a
+#    single run passing or failing proves nothing either way here).
+TOUCHDOWN 170 135
+SLEEP 1.2
+TOUCHUP
+SLEEP 1
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT keyboard_open
 
 # "O" is the 3rd letter of key5 ("mno", cell centre (166, 113): row 1,
@@ -66,10 +103,12 @@ TOUCH 166 113 0.1
 # j -> k.
 TOUCH 100 113 0.1
 TOUCH 100 113 0.1
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT keyboard_typed
 
 # SELECT commits the pending "k" and submits the whole label - see
 # multitap_keyboard_window.c's prv_select_click / multitap_keyboard_submit.
 TAP select
 SLEEP 0.5
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT timer_created

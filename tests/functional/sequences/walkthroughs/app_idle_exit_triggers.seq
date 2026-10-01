@@ -10,6 +10,13 @@
 IMPORT ../common/wipe_and_prep.seq
 
 APPMSG --int 10011=5
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT list_idle_exit_5s
 SLEEP 8
+# Deliberately NOT sending a clock/elapsed override here - if idle-exit
+# worked, the app has already exited and this screenshot shows the SYSTEM
+# watchface (no bottom bar of ours to make deterministic at all); if
+# idle-exit is broken (the bug this test exists to catch), sending an
+# AppMessage to this still-running app right at the idle boundary risks
+# being read as activity and masking the exact failure being tested for.
 SCREENSHOT should_have_auto_exited_to_watchface

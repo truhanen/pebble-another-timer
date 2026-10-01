@@ -16,12 +16,15 @@ IMPORT ../common/wipe_and_prep.seq
 # (live-verified: that version's 01/02 screenshots were pixel-identical).
 APPMSG --string 10000="$(printf 'Egg 9 min\037540\03610 s\03710\036Egg 12 min\037720')"
 SLEEP 1
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT sorted_mru_default
 
 APPMSG --int 10001=1
 SLEEP 1
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT sorted_shortest_first
 
 APPMSG --int 10001=2
 SLEEP 1
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT sorted_longest_first

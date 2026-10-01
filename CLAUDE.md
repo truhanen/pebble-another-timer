@@ -196,57 +196,66 @@ watch-originated create/adjust/delete syncs back to it (matched by the
 persistent `id` each `Timer`/`TimerEntry` carries — see `tc_reconcile` in
 `timer_calc.c` — not by list position).
 
-`SetTimerIndex`/`SetTimerState`/`SetTimerRemaining` are watch-only, never sent
-or read by the phone app: a testing/screenshot backdoor (see
-`make send_emulator_set_timer` above) that forces the timer at a raw list
-index into an exact state/remaining-time combo, bypassing the normal
-start/pause/reset flow.
+All of this section's AppMessage keys are watch-only test hooks, never sent
+or read by the phone app, and (per the "is this a testing hook, not
+whether it changes real behavior" rule) are ALL only handled when the
+build was made with `APP_TEST_HOOKS=1` in the environment (`APP_TEST_HOOKS=1
+pebble build`) — a normal build still declares every key below (harmless,
+unused integers/strings) but silently ignores the messages.
 
-`FreezeDisplay`/`FreezeElapsedSeconds` are independent of `SetTimerIndex`
-(unlike the fields above, they're acted on even alone, with zero timers
-present) but commonly sent alongside it in the same message. `FreezeDisplay`
-`1`/`0` freezes/unfreezes literally every live time/remaining/elapsed
-display app-wide: main-list running/paused rows (text, progress arrow, AND
-the overtime/running background color tint - all three previously could
-disagree once frozen, since the color used a separate un-frozen `now_s()`
-call; fixed), the wakeup-conflict window's identifying banner, the bottom
-bar's clock and elapsed-since-launch, the alarm screen's live overtime
-counter, the detail window's legacy header, and the delete-confirm/
-start-confirmation screens. `FreezeElapsedSeconds` sets the exact bottom-bar
-elapsed-since-launch value shown while frozen (a direct test-supplied
-number, not derived from real app-launch timing, which would itself still
-vary run to run).
+`TestSetTimerIndex`/`TestSetTimerState`/`TestSetTimerRemaining` are a
+testing/screenshot backdoor (see `make send_emulator_set_timer` above) that
+forces the timer at a raw list index into an exact state/remaining-time
+combo, bypassing the normal start/pause/reset flow.
 
-Exists purely to make golden/pixel-comparison screenshot testing
-deterministic - most of these otherwise depend on exactly how much real
-wall-clock time elapsed between some setup step and the screenshot actually
-being taken, which varies run to run even under the containerized test
-harness's pinned clock (see `tests/functional/docker/README.md`) -
-replacing the need to `--mask-rect` those regions out of golden comparison
-at all. Sending `FreezeDisplay=1` alongside `SetTimerState`/
-`SetTimerRemaining` in the *same* `SetTimerIndex` message captures the
-identical `now` just used to compute a timer's `end_time`, so its frozen
-value is exact (e.g. always precisely `5:00` remaining), not just "whatever
-was left when the freeze happened to arrive". The bottom bar's clock text
-can't be pinned by overriding `now_s()` alone since `clock_copy_time_string()`
-reads the system time-of-day directly - `draw_bottom_bar()` substitutes a
-hardcoded placeholder (`copy_frozen_clock_string()`, `main.c`, always
-`"10:00"`) while active instead. Deliberately NOT derived from
-`s_test_freeze_now` (unlike a timer's remaining time, there's no
-"correct" clock value to preserve, and deriving it from whichever real
-second `FreezeDisplay` happened to be sent on would itself vary run to
-run - a fixed constant sidesteps that). Only affects what's
-drawn (`display_now()`, `main.c`) - every other `now_s()` call site (expiry
-sweep, wakeup rearm, sort order, persistence) is untouched, so a frozen
-screenshot can never mask a real expiry/wakeup bug. Not `APP_TEST_HOOKS`-gated
-(available in every build, like the `Set*` keys above it) since it can't
-affect real behavior, only rendering.
+`TestSetTimerRemainingDisplay`/`TestSetTimerRemainingDisplayToleranceSec`
+(per timer, targeted via the same `TestSetTimerIndex` field as above, sent
+in the same message), `TestSetClockDisplay`/
+`TestSetClockDisplayToleranceMinutes` (a `"HH:MM"` string), and
+`TestSetLaunchElapsedDisplaySec`/`TestSetLaunchElapsedDisplayToleranceSec`
+are explicit, per-value display overrides — this is what makes golden/
+pixel-comparison screenshot testing deterministic, replacing the need to
+`--mask-rect` those regions out of golden comparison at all. Each family
+sets what its one display value shows (a timer's remaining/overtime text,
+the bottom-bar/alarm-screen clock, the bottom bar's elapsed-since-launch)
+completely independently of the others and of real app state — `main.c`'s
+`effective_now_for(idx, t)` derives an "effective now" backwards from the
+override (`end_time - override`) so every existing `tc_remaining_now()`/
+`ml_row_colors()` formula stays untouched, only the "now" fed into it
+changes; the clock/elapsed overrides are simpler direct substitutions.
+Every other `now_s()` call site (expiry sweep, wakeup rearm, sort order,
+persistence) is completely untouched by any of this, so an overridden
+screenshot can never mask a real expiry/wakeup bug — only rendering is
+affected.
 
-`TestBlockedSystemWakeupMinuteOffsetsPos`/`...Neg` are also watch-only, but
-unlike the `Set*` keys above they're only handled when the build was made
-with `APP_TEST_HOOKS=1` in the environment (`APP_TEST_HOOKS=1 pebble
-build`) — a normal build still declares both keys (harmless, unused
-integers) but silently ignores the messages. Each is a comma-separated list
+The optional tolerance field in each family is the actual safety net: if
+given, `inbox_received()` compares the requested value against the app's
+own real ground truth (`tc_remaining_now()` for a timer, the real
+clock-of-day, or the real `raw_launch_elapsed_s()`) at the moment the
+override is set, and if it's out of tolerance, that one reading — and
+only that one, not the whole screen — gets replaced with a `"BAD"` marker
+instead of the (possibly stale) requested value. This is what lets a
+`.seq` file *require* that a frozen-looking value stays close to what a
+real device would actually be showing, rather than accepting an
+arbitrarily-diverged guess: a sequence sends the value it expects
+(exact, if backdoor-derived and time-independent; a generous estimate, if
+following a real button-driven state transition whose exact timing isn't
+known in advance) immediately before each `SCREENSHOT`, not once for the
+whole run. Omitting a tolerance just sets a static display value with no
+verification (e.g. the clock/elapsed overrides, which are always sent as
+`"12:00"`/`0` with no tolerance, since — like the `FreezeDisplay`-era
+`"12:00"` placeholder they replace — there's no "correct" clock or
+elapsed-launch value to check against, only a stable one). A `TS_PAUSED`/
+`TS_IDLE` timer's remaining value is a special case: `tc_remaining_now()`
+returns the stored `t->remaining`/`t->duration` directly, ignoring `now`
+entirely, so a display override has **no visual effect** on it at all —
+only send one for a paused/idle timer if its exact value really is known
+(otherwise skip it for that message; the value shown is unaffected either
+way, and skipping avoids a spurious `"BAD"` marker on the detail window's
+header, which doesn't share `ml_draw_detail_line()`'s guard against this).
+
+`TestBlockedSystemWakeupMinuteOffsetsPos`/`...Neg` are handled the same
+way (`APP_TEST_HOOKS=1`-gated). Each is a comma-separated list
 of non-negative whole-minute offsets (e.g. `"0,2"`), simulating another
 app's wakeup occupying those minutes *relative to whichever timer's own
 end_time is currently being evaluated* — Pos counts minutes at/after that
@@ -298,20 +307,41 @@ real exclusion window actually behaves.
   Pebble projects) bash interpreter for scripted emulator walkthroughs:
   flat plain-text `.seq` files (button presses, AppMessages, sleeps,
   screenshots, installs, raw `pebble` CLI passthrough, with `IMPORT` to
-  share setup between sequences) run via `run_sequence.sh`. See its own
-  README for the instruction-set reference. `tests/functional/` holds this
-  app's own config (`app.conf`) and sequences (`sequences/common/` for
+  share setup between sequences) run via its own `run_sequence.sh`. See its
+  own README for the instruction-set reference. `tests/functional/` holds
+  this app's own config (`app.conf`) and sequences (`sequences/common/` for
   shared setup like wipe+prep, `sequences/walkthroughs/` for actual test
-  scenarios), e.g.:
+  scenarios).
+
+  **`tests/functional/run_sequence.sh <seq-file>` is the one entrypoint to
+  run a single sequence for this app** - don't invoke
+  `tests/functional_framework/run_sequence.sh` directly. It runs inside the
+  `pebble-another-timer-tests` container image by default (see
+  `container/README.md` for image setup) - reproducible clock, no races
+  against a shared emulator - or natively against a shared host emulator
+  with `--no-container`, which is the right choice for fast interactive
+  dev/debugging but whose screenshots aren't reproducible run to run (see
+  below). E.g.:
   ```bash
-  tests/functional_framework/run_sequence.sh \
-    --conf tests/functional/app.conf \
-    --seq  tests/functional/sequences/walkthroughs/create_and_start_timer.seq
+  tests/functional/run_sequence.sh \
+    tests/functional/sequences/walkthroughs/create_and_start_timer.seq
+  # or, natively:
+  tests/functional/run_sequence.sh --no-container \
+    tests/functional/sequences/walkthroughs/create_and_start_timer.seq
   ```
-  Still subject to every gotcha in the `pebble-emulator` skill (idle-exit,
-  `--vnc` consistency, `--app-uuid` matching) - the framework applies those
-  structurally (every emulator-facing step gets `--emulator`/`--vnc`
-  automatically) but doesn't remove the underlying constraints.
+  `--touch` (needed for a sequence using the TOUCH/TOUCHDOWN/TOUCHUP/
+  TOUCHMOVE/TOUCHSWEEP/TOUCHDRAG instructions, auto-detected by default in
+  container mode) is incompatible with `--no-container` and rejected
+  outright - a real touchscreen event only reaches the guest through a
+  genuine SDL/X11 window (Xvfb+xdotool), which is container-only; there is
+  no supported native equivalent (see `container/Containerfile`'s own
+  comment).
+
+  A native run is still subject to every gotcha in the `pebble-emulator`
+  skill (idle-exit, `--vnc` consistency, `--app-uuid` matching) - the
+  framework applies those structurally (every emulator-facing step gets
+  `--emulator`/`--vnc` automatically) but doesn't remove the underlying
+  constraints.
 
   `sequences/walkthroughs/wakeup_conflict_*.seq` cover the conflict-window
   feature end to end under its current single-Ok/Don't-exit/Exit-anyway
@@ -321,11 +351,12 @@ real exclusion window actually behaves.
   multi-timer plan eviction, natural-fire-while-open, and pausing a timer
   that holds an accepted plan) using
   `TestBlockedSystemWakeupMinuteOffsetsPos`/`...Neg` (see above) instead of
-  `tests/wakeup_test_app`'s real cross-app timing - deterministic and fast,
-  at the cost of needing an `APP_TEST_HOOKS=1` build (`IMPORT
-  ../common/wipe_and_prep_test_hooks.seq` instead of `wipe_and_prep.seq`;
-  its own header comment explains the trap of running these against a
-  normal build - the hook AppMessage is silently ignored, not an error).
+  `tests/wakeup_test_app`'s real cross-app timing - deterministic and fast.
+  Needs an `APP_TEST_HOOKS=1` build like every other sequence now does (see
+  `wipe_and_prep.seq`'s own header comment - a normal build silently
+  ignores every `Test*` AppMessage rather than erroring, so a walkthrough
+  that never shows an expected conflict window is the first symptom to
+  check this against).
   Written without a live emulator run available at the time (only read
   against the source, not confirmed on screen) - verify the exact
   row-index button sequences before trusting these as standing regression
@@ -337,8 +368,7 @@ real exclusion window actually behaves.
   wizard (including discarding a draft), the long-press edit menu
   (duration/label/after-finished/vibration/sound), `RunningFirst`,
   `TimerConfig` reconcile preserving a running timer's live state across a
-  same-id edit, idle-exit actually firing, and the empty-list state. None
-  of these need `APP_TEST_HOOKS` - `wipe_and_prep.seq` is enough. Same
+  same-id edit, idle-exit actually firing, and the empty-list state. Same
   "unverified against a live emulator at authoring time" caveat applies;
   a few (label rename, direct single-item delete) are deliberately scoped
   down to what's reachable with button-only input and no live
@@ -348,15 +378,14 @@ real exclusion window actually behaves.
 
   **`tests/functional/run_all.sh` (the "does the whole suite pass" /
   CI / golden-approval entrypoint) is containerized-only - it has no
-  native mode.** A native run against a shared host emulator (via
-  `tests/functional_framework/run_sequence.sh` directly, as in the single-
-  sequence example above) is still fully supported and is the right choice
-  for fast interactive dev/debugging, but its screenshots aren't
-  reproducible run to run for anything the `FreezeDisplay` test hook (see
-  above) doesn't cover, so it's never trusted as a real pass/fail verdict
-  or as a source for approving a golden baseline - `update_golden()`/
-  `promote_golden.sh` (`tests/functional_framework/lib/golden.sh`)
-  mechanically refuse to do so from a native run. See
-  `tests/functional/docker/README.md` for setup. Any CI job for this
-  project must call `run_all.sh`, not `run_sequence.sh` against a native
-  emulator.
+  native mode.** `tests/functional/run_sequence.sh --no-container` (see
+  above) is still fully supported and is the right choice for fast
+  interactive dev/debugging a single sequence, but its screenshots aren't
+  reproducible run to run for anything the `TestSet*Display` override
+  families (see above) don't cover, so it's never trusted as a real
+  pass/fail verdict or as a source for approving a golden baseline -
+  `update_golden()`/`promote_golden.sh`
+  (`tests/functional_framework/lib/golden.sh`) mechanically refuse to do so
+  from a native run. See `tests/functional/container/README.md` for setup.
+  Any CI job for this project must call `run_all.sh`, not
+  `run_sequence.sh --no-container`.

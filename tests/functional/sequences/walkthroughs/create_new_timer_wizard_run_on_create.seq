@@ -5,22 +5,29 @@
 # KeyboardOnNewTimer stays 0 - see new_timer_discard_draft.seq's own note
 # on why label entry isn't scripted here.
 #
-# NOTE: unverified against a live emulator at authoring time.
+# NOTE: live-verified (2026-09-30) - confirmed both post-creation
+# screenshots already show the system watchface (AutoReturnStart's pop
+# already happened by then), so there's genuinely no app UI/timer value to
+# override at either checkpoint, not just an estimation gap.
 IMPORT ../common/wipe_and_prep.seq
-# Unfreeze: this timer auto-starts for real via RunOnCreate, not the
-# SetTimerIndex backdoor - see create_and_start_timer.seq's own comment
-# for why leaving the default freeze on would corrupt the running-state
-# screenshot below.
-APPMSG --int 10029=0
+# This timer auto-starts for real via RunOnCreate, not the
+# TestSetTimerIndex backdoor - like create_and_start_timer.seq, its exact
+# resulting remaining time isn't known precisely enough in advance to send
+# a TestSetTimerRemainingDisplay override, so the final screenshot's timer
+# row stays live (only the clock/elapsed fields are sent throughout).
 APPMSG --int 10016=0 10015=1 10003=1
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT list_empty
 
 TAP select
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT duration_dial_default
 TAP up
 TAP select
 TAP up
 TAP select
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT timer_committed
 SLEEP 1
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT should_already_be_running_and_near_watchface

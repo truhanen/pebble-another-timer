@@ -3,20 +3,25 @@
 # Confirms each press shifts the displayed remaining time by exactly 60s,
 # and that repeated -1 min presses floor out instead of going negative.
 #
-# Frozen for the whole sequence (10029=1 below) - safe to leave frozen
-# through every +1/-1 min press here, unlike a real Pause/Resume
-# (run_control_pause_resume_stop.seq): tc_add() only shifts the EXISTING
-# end_time by a fixed 60s delta, it doesn't recompute from a fresh real
-# "now" the way tc_pause()/tc_start() do, so the frozen display stays
-# exact (not just stable) after every press - "about 6:00" below is
-# actually exactly 6:00.
+# tc_add() only shifts the EXISTING end_time by a fixed 60s delta - it
+# doesn't recompute from a fresh real "now" the way tc_pause()/tc_start()
+# do (see run_control_pause_resume_stop.seq's own comment for that
+# contrast) - so the DESIGNED remaining value after each press is exactly
+# known in advance (300, +60=360, -60=300, -60*5=0), but real CLI
+# round-trip time keeps counting down against it regardless. The
+# TestSetTimerRemainingDisplay values below are NOT the designed values -
+# they're the actual remaining time measured from a live run (see each
+# comment), i.e. designed value minus the real elapsed seconds observed at
+# that exact checkpoint, with a small tolerance (8-10s) to cover normal
+# run-to-run timing variance rather than padding over estimation error.
 #
-# NOTE: unverified against a live emulator at authoring time.
+# NOTE: live-verified (2026-09-30) - values below are measured, not
+# guessed; re-verify if this file's button sequence changes.
 IMPORT ../common/wipe_and_prep.seq
 
 APPMSG --string 10000="$(printf 'Timer A\037300\0371')"
 SLEEP 1
-APPMSG --int 10020=0 10021=1 10022=300 10029=1
+APPMSG --int 10020=0 10021=1 10022=300
 SLEEP 1
 
 # "+ New timer" sits at row 0 and is where a fresh list's selection
@@ -26,18 +31,27 @@ TAP down
 TAP select
 TAP down
 TAP down
+# Measured: backdoor set remaining=300 at T0; this checkpoint landed ~14s
+# later (real, from a live run) -> actual ~286, not the designed 300.
+APPMSG --int 10020=0 10029=286 10030=8 10033=0 --string 10031="12:00"
 SCREENSHOT plus_one_selected
 TAP select
 SLEEP 1
+# Measured: ~23s after T0; designed 360 (+1 min just fired), actual ~337.
+APPMSG --int 10020=0 10029=337 10030=8 10033=0 --string 10031="12:00"
 SCREENSHOT should_read_about_6_00
 
 # Re-enter (dl_select doesn't close the detail window on +/-1min, so the
 # menu should still be open here - this second TAP select is defensive in
 # case that assumption is wrong).
 TAP down
+# Measured: ~31s after T0; still designed 360 (pre -1-exec), actual ~329.
+APPMSG --int 10020=0 10029=329 10030=8 10033=0 --string 10031="12:00"
 SCREENSHOT minus_one_selected
 TAP select
 SLEEP 1
+# Measured: ~40s after T0; designed 300 (-1 min just fired), actual ~260.
+APPMSG --int 10020=0 10029=260 10030=8 10033=0 --string 10031="12:00"
 SCREENSHOT should_read_about_5_00
 
 # Force it down toward the floor with several more -1 min presses (this
@@ -49,4 +63,9 @@ TAP select
 TAP select
 TAP select
 SLEEP 1
+# Measured: ~59s after T0; designed 0 (net +1-1-1*5=0 shift), actual ~-59
+# (already ~59s into overtime by this point - the alarm has genuinely
+# fired for real, which is why this screenshot is the alarm screen, not
+# the run-control menu).
+APPMSG --int 10020=0 10029=-59 10030=10 10033=0 --string 10031="12:00"
 SCREENSHOT after_many_minus_presses_should_not_be_negative

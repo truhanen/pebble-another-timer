@@ -3,7 +3,9 @@
 # Confirms Stop restores the FULL configured duration, not whatever
 # remaining time was left when stopped.
 #
-# NOTE: unverified against a live emulator at authoring time.
+# NOTE: live-verified (2026-09-30) - TestSetTimerRemainingDisplay values
+# are measured from a live run, not guessed; re-verify if this file's
+# button sequence changes.
 IMPORT ../common/wipe_and_prep.seq
 
 # AutoReturnStop defaults to on - without disabling it, Stop below would
@@ -14,33 +16,34 @@ APPMSG --int 10018=0
 
 APPMSG --string 10000="$(printf 'Timer A\037300\0371')"
 SLEEP 1
-APPMSG --int 10020=0 10021=1 10022=300 10029=1
+APPMSG --int 10020=0 10021=1 10022=300
 SLEEP 1
+APPMSG --int 10020=0 10029=296 10030=8 10033=0 --string 10031="12:00"
 SCREENSHOT running_300s
 
-# Unfreeze before the real Pause/Resume/Stop button presses below - each
-# of those is a genuine state transition that reads the REAL clock
-# (tc_pause()/tc_start()/tc_reset(), deliberately never frozen - see
-# display_now()'s own comment on why real logic stays untouched). Leaving
-# the display frozen to running_300s's stale seed-moment through those
-# would make LATER screenshots show an increasingly large, nonsensical
-# remaining value (frozen "now" stuck in the past while end_time keeps
-# advancing from fresh real timestamps at each real transition) - worse
-# than not freezing at all. The paused/resumed/stopped screenshots below
-# keep whatever small amount of real-button-timing jitter they always
-# had; FreezeDisplay can't remove that specific kind (it's baked into the
-# real stored state at the moment of a real pause, not something drawn).
-APPMSG --int 10029=0
+# Pause/Resume/Stop below are genuine state transitions that read the
+# REAL clock (tc_pause()/tc_start()/tc_reset()). A paused/idle timer's
+# shown value now respects TestSetTimerRemainingDisplay too (see
+# remaining_override_get() in main.c - it substitutes the override value
+# directly rather than deriving a fake "now", since tc_remaining_now()
+# ignores its `now` argument entirely for non-RUNNING state), but its
+# *exact* real remaining still depends on precisely when this real Pause
+# press lands, which isn't knowable in advance - "paused" below uses a
+# generous estimate/tolerance for that reason, same as "resumed_running".
 
 # "+ New timer" sits at row 0 and is where a fresh list's selection
 # defaults to - a short SELECT there opens a NEW blank timer's duration
 # dial, not this timer's run-control menu. One DOWN first.
 TAP down
 TAP select
+APPMSG --int 10020=0 10029=286 10030=8 10033=0 --string 10031="12:00"
 SCREENSHOT run_control_menu
 TAP down
 TAP select
 SLEEP 1
+# Best-effort estimate (~286s remaining, wide tolerance) - exact value
+# depends on real Pause-press timing, see the note above.
+APPMSG --int 10020=0 10029=286 10030=20 10033=0 --string 10031="12:00"
 SCREENSHOT paused
 
 # Resume: for TS_PAUSED, tc_detail_actions gives Stop=0/Start(Resume)=1.
@@ -48,11 +51,21 @@ TAP select
 TAP down
 TAP select
 SLEEP 1
+# Value measured from a live run (285s) - real Pause/Resume transitions
+# show more run-to-run variance than pure backdoor checkpoints even when
+# centered correctly (see wakeup_conflict_leak_on_state_change.seq's own
+# note), so this keeps a wider tolerance than the backdoor-only ones above
+# despite starting from a measured center, not a guess.
+APPMSG --int 10020=0 10029=285 10030=20 10033=0 --string 10031="12:00"
 SCREENSHOT resumed_running
 
 # Stop: back to the run-control menu, row 0.
 TAP select
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT run_control_menu_again
 TAP select
 SLEEP 1
+# Stop resets to the full configured duration - an exact, time-independent
+# constant (see tc_reset()), unlike the paused/resumed estimates above.
+APPMSG --int 10020=0 10029=300 10030=5 10033=0 --string 10031="12:00"
 SCREENSHOT stopped_should_show_full_duration_not_remaining

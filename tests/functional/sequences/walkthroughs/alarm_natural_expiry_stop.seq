@@ -18,14 +18,50 @@ IMPORT ../common/wipe_and_prep.seq
 APPMSG --int 10018=1
 APPMSG --string 10000="$(printf 'Quick Timer\0375\0371')"
 SLEEP 1
-APPMSG --int 10020=0 10021=1 10022=5 10029=1
-SLEEP 1
+APPMSG --int 10020=0 10021=1 10022=5
+# Despite this screenshot's name, this checkpoint is expected to show the
+# alarm screen, not a running row - a 5s duration this soon after the
+# backdoor call is borderline enough that its OWN STATE (running vs.
+# alarm), not just its numeric value, turned out to vary by environment:
+# a plain "SLEEP 1" here reliably crossed into overtime natively (CLI
+# round-trip overhead alone exceeded 5s), but the exact same sequence run
+# containerized (tests/functional/docker/run_container.sh, solo, no other
+# load) twice showed the timer STILL RUNNING with 2s left - meaning the
+# round trip there is genuinely faster, not just numerically different.
+#
+# SLEEP 16 (up from an original SLEEP 6) adds enough real margin to
+# reliably cross the 5s boundary regardless of that per-environment speed
+# difference - and deliberately well past it, not just barely past it:
+# with only ~6s of margin, the measured overtime value itself was tiny
+# (~3-7s), so a tolerance wide enough to cover real CLI-round-trip
+# variance (~±2-3s) was a LARGE fraction of that tiny value (120%,
+# tol=6 vs value=5) - a tolerance that wide barely constrains anything.
+# Waiting longer doesn't make that same ~2-3s of round-trip variance any
+# wider in absolute terms, so it shrinks as a fraction of a bigger
+# baseline instead. Live-verified (3 runs: native x2, containerized x1,
+# 2026-10-01) with no override sent (to read the real, live value): 13s,
+# 15s, 15s - center ~14, tolerance 5 comfortably covers the observed
+# spread with margin (relative ~36%, down from 120%).
+APPMSG --int 10020=0 10029=-14 10030=5 10033=0 --string 10031="12:00"
 SCREENSHOT running_5s
 
-# Let real time cross the 5s end while the app stays foregrounded.
+# Let 7 more real seconds pass. Live-verified (same 3 runs): 22s, 27s,
+# 27s - center ~24, tolerance 7 covers the observed spread (relative ~29%,
+# down from 60% at the old SLEEP 6 baseline). Still exactly as measurable
+# as any other checkpoint, unlike alarm_overtime_display.seq (which
+# deliberately uses a much bigger checkpoint gap specifically to prove
+# monotonic ticking via non-overlapping tolerance windows - this file's
+# two checkpoints aren't trying to prove that, just that the alarm screen
+# is showing and dismissible, so a single generously-toleranced check per
+# checkpoint is enough here).
 SLEEP 7
+APPMSG --int 10020=0 10029=-24 10030=7 10033=0 --string 10031="12:00"
 SCREENSHOT alarm_screen_should_be_showing
 
+# The timer is idle/stopped after Stop - tc_reset() puts it back to the
+# full configured duration (5s), an exact, time-independent constant (see
+# tc_remaining_now()'s non-RUNNING branch), safe to check tightly.
 TAP down
 SLEEP 1
+APPMSG --int 10020=0 10029=5 10030=2 10033=0 --string 10031="12:00"
 SCREENSHOT after_stop_should_be_list_autoreturnstop_has_no_effect_on_alarm_dismissal

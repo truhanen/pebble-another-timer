@@ -16,6 +16,7 @@ IMPORT ../common/wipe_and_prep.seq
 
 APPMSG --string 10000="$(printf 'Quick Timer\0375\0371')"
 SLEEP 1
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT initial_idle
 
 # "+ New timer" sits at row 0 (moved to the top of the list) and is where
@@ -25,16 +26,20 @@ SCREENSHOT initial_idle
 # all. One DOWN moves selection onto the just-seeded timer row.
 TAP down
 LONGPRESS select
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT edit_menu
 TAP down
 TAP down
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT after_finished_row_selected
 TAP select
 SLEEP 1
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT delete_confirm_shown
 
 # Confirming "Delete" here deletes the timer immediately - no snoozing,
 # no waiting for it to fire.
 TAP select
 SLEEP 1
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT should_be_gone_from_list_immediately

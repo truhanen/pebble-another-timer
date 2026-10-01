@@ -12,25 +12,37 @@ SLEEP 1
 
 # "+ New timer" sits at row 0 and is where a fresh list's selection
 # defaults to - ml_select_long() is a no-op there, so move down first.
+# None of these screenshots need a TestSetTimerRemainingDisplay override:
+# the edit menu is LONG_EXISTING style (shows s_detail_edit_secs directly,
+# never reads through effective_now_for()), and the later alarm screen's
+# overtime counter is genuinely live (see alarm_overtime_display.seq's
+# reasoning) - only the clock/elapsed fields get sent throughout.
 TAP down
 LONGPRESS select
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT edit_menu
 TAP down
 TAP down
 TAP down
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT vibration_row_selected
 TAP select
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT vibration_toggled_off
 TAP down
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT sound_row_selected
 TAP select
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT sound_toggled_off
 TAP back
 
-APPMSG --int 10020=0 10021=1 10022=5 10029=1
+APPMSG --int 10020=0 10021=1 10022=5
 SLEEP 1
 SLEEP 7
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT alarm_still_shows_with_both_disabled
 TAP down
 SLEEP 1
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT dismissed_cleanly

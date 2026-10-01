@@ -10,12 +10,28 @@
 # Also corrected the assumed row order: the default sort (running-first)
 # puts "Running Timer" at row 1 and "Idle Timer" at row 2, not the other
 # way around - confirmed via a live screenshot, not assumed.
+#
+# NOTE: live-verified (2026-09-30) - TestSetTimerRemainingDisplay values
+# below are measured from a live run, not guessed; re-verify if this
+# file's button sequence changes.
 IMPORT ../common/wipe_and_prep.seq
 
 APPMSG --string 10000="$(printf 'Idle Timer\03760\0371\036Running Timer\037300\0372')"
 SLEEP 1
-APPMSG --int 10020=1 10021=1 10022=300 10029=1
+APPMSG --int 10020=1 10021=1 10022=300
 SLEEP 1
+# Only the Running Timer (idx 1) gets a TestSetTimerRemainingDisplay
+# override - it's the only one whose main-list text/color even reads
+# through effective_now_for(); an idle timer's shown value is always its
+# real, time-independent t->remaining (tc_remaining_now() ignores "now"
+# for non-RUNNING state), so an override for the Idle Timer here would be
+# a no-op at best - see run_control_pause_resume_stop.seq's comment on the
+# same distinction. Nothing ever touches the Running Timer's real
+# end_time in this file (the duration edits below are explicitly designed
+# NOT to) - values below are measured from a live run (backdoor-set 300 at
+# T0, minus real elapsed seconds observed at each checkpoint), not the
+# raw designed 300, with a small tolerance for run-to-run variance.
+APPMSG --int 10020=1 10029=296 10030=8 10033=0 --string 10031="12:00"
 SCREENSHOT initial_list
 
 # --- Idle Timer: row 2 (row 0 = "+ New timer", row 1 = Running Timer,
@@ -23,14 +39,17 @@ SCREENSHOT initial_list
 TAP down
 TAP down
 LONGPRESS select
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT idle_edit_menu
 TAP select
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT idle_duration_dial
 TAP up
 TAP select
 TAP up
 TAP select
 SLEEP 1
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT idle_duration_changed_remaining_should_match
 
 # Confirming the dial's last field (apply_overwrite_only) already pops
@@ -44,26 +63,29 @@ SCREENSHOT idle_duration_changed_remaining_should_match
 # earlier "TAP down" here was a no-op that left the long-press re-opening
 # Idle Timer's own menu again. UP (not down) is what actually reaches
 # Running Timer at row 1 from here.
+APPMSG --int 10020=1 10029=253 10030=10 10033=0 --string 10031="12:00"
 SCREENSHOT back_on_main_list_already
 
 # --- Running Timer: row 1 ---
 TAP up
 LONGPRESS select
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT running_edit_menu
 TAP select
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT running_duration_dial
 TAP up
 TAP select
 TAP up
 TAP select
 SLEEP 1
+APPMSG --int 10020=1 10029=217 10030=12 10033=0 --string 10031="12:00"
 SCREENSHOT running_duration_changed_should_NOT_affect_live_countdown
-# Display is frozen (10029=1 above), so this is now a clean pixel check
-# rather than an arithmetic one: the running row's FIRST/left number on
-# its second line (the genuine remaining time) should read EXACTLY the
-# same "5:00" it did in initial_list, completely unaffected by the
-# duration edit. The SECOND/right number on that line is NOT "time since
-# the timer actually started" - it's duration-minus-remaining, so it DOES
-# change here, reflecting the just-edited (new) duration even though the
-# frozen remaining value didn't move. Don't misread that second number as
+# The running row's FIRST/left number on its second line (the genuine
+# remaining time) should read a value consistent with 300 minus real
+# elapsed time (measured ~217s here), completely unaffected by the
+# duration edit. The SECOND/right number on that line is NOT "time since the timer
+# actually started" - it's duration-minus-remaining, so it DOES change
+# here, reflecting the just-edited (new) duration even though the checked
+# remaining value didn't move. Don't misread that second number as
 # evidence of a bug - check the first one.
