@@ -1,0 +1,137 @@
+# Pure layout survey of the alarm screen's title (main.c's layout_alarm_
+# title/trigger_alarm): how a timer's name - or, if unnamed, its
+# formatted duration (tc_format_remaining) - lays out across a range of
+# text shapes the auto-shrinking/word-wrap ladder has to handle
+# differently:
+#   - a short single-word name (no wrap needed at the largest font)
+#   - a short multi-word name (wraps across 2-3 lines at a comfortable size)
+#   - a single very long word (can't wrap at a space at all - tests the
+#     font-shrink ladder's behavior on an unbreakable run of characters)
+#   - three unnamed timers whose formatted-duration fallback
+#     (tc_format_remaining) differs in both length and separator count:
+#     "0:30" (30s), "30:00" (30m), "10:00:00" (10h) - the time fallback
+#     path is also the only one that must NEVER word-wrap (see
+#     layout_alarm_title's s_alarm_title_is_time branch), so these three
+#     also exercise that single-line/GTextOverflowModeFill path
+#     specifically, at three quite different string lengths.
+#
+# IMPORTANT: t->duration (what the time-fallback title formats) and how
+# long this sequence actually has to wait for a REAL natural expiry are
+# completely independent - TimerConfig's own duration field drives the
+# former, while the TestSetTimerIndex backdoor's TestSetTimerRemaining
+# independently controls the latter. Every case below uses a short (2s)
+# real remaining regardless of its configured duration, so a "10h timer"
+# case still only takes a few real seconds to reach its alarm screen, not
+# 10 real hours - only the TITLE shown once it fires reflects the
+# configured duration, per trigger_alarm()'s own
+# tc_format_remaining(..., t->duration) call.
+#
+# Each case is a SEPARATE single timer, not six queued together - with
+# only one timer ever in overtime at a time, the "+N more" sub-label
+# (format_alarm_sub) stays empty/hidden in every screenshot, isolating
+# the title layout itself as the only thing changing between them.
+#
+# Reaches the alarm screen via a REAL natural expiry (short remaining +
+# real SLEEP crossing it), NOT the TestSetTimerIndex backdoor's own
+# state/remaining fields alone - confirmed by reading the backdoor's own
+# code path (main.c's TestSetTimerIndex handler) that an instant
+# backdoor-set overtime does NOT open the alarm screen: sweep_expiries()
+# there only flags alarm_pending/alarm_notified on the Timer struct with
+# no UI effect at all, and showing it requires a show_next_pending_alarm()
+# call, which only the periodic 1s tick_cb makes - and tick_cb's own
+# sweep_expiries() call won't re-fire for a timer whose alarm_notified the
+# backdoor's own sweep already consumed. A real SLEEP crossing a short
+# (2s) remaining lets tick_cb's own first sweep catch the fresh edge
+# itself and correctly chain into show_next_pending_alarm() - exactly the
+# same mechanism (and same SLEEP 16 margin, live-verified elsewhere in
+# this suite - see alarm_natural_expiry_stop.seq's own derivation) every
+# other alarm_*.seq file in this suite already relies on.
+#
+# TestSetTimerRemainingDisplay is sent alongside, centered on this same
+# live-verified ~14s overtime value (and its wide tolerance) from
+# alarm_natural_expiry_stop.seq's own SLEEP-16 checkpoint - identical
+# timing shape (short-duration backdoor-set timer, SLEEP 16, one
+# overtime check), so the same center/tolerance should transfer directly.
+# Re-verify if this ever proves otherwise; this is a layout survey, not a
+# timing check, so the elapsed row's exact value is incidental here -
+# wide tolerance is a deliberate choice, not padding over estimation
+# error.
+#
+# Each case replaces the previous one via a fresh TimerConfig push (a new
+# id each time) after dismissing that case's alarm with a real Stop press
+# - tc_reconcile() drops the prior (by then idle, non-custom) timer since
+# it's absent from the new config, so each case starts from a clean single-
+# timer list, same as if this were six separate single-timer sequences.
+#
+# NOTE: unverified against a live emulator at authoring time - re-verify
+# the alarm screen's Stop button is DOWN (confirmed elsewhere in this
+# suite, e.g. alarm_natural_expiry_stop.seq) still holds, and that each
+# title actually renders as expected, before trusting this as a standing
+# regression test.
+IMPORT ../common/wipe_and_prep.seq
+
+# AutoReturnStop is irrelevant to alarm dismissal (alarm_dismiss_tail()
+# ignores it - see alarm_natural_expiry_stop.seq's own comment) - set to 0
+# anyway just to keep this sequence self-contained/order-independent of
+# that setting's default.
+APPMSG --int 10018=0
+
+# --- Case 1: one short word ---
+APPMSG --string 10000="$(printf 'Tea\0375\0371')"
+SLEEP 1
+APPMSG --int 10020=0 10021=1 10022=2
+SLEEP 16
+APPMSG --int 10020=0 10029=-14 10030=10 10033=0 --string 10031="12:00"
+SCREENSHOT label_one_short_word
+TAP down
+SLEEP 1
+
+# --- Case 2: three short words ---
+APPMSG --string 10000="$(printf 'Take Out Trash\0375\0372')"
+SLEEP 1
+APPMSG --int 10020=0 10021=1 10022=2
+SLEEP 16
+APPMSG --int 10020=0 10029=-14 10030=10 10033=0 --string 10031="12:00"
+SCREENSHOT label_three_short_words
+TAP down
+SLEEP 1
+
+# --- Case 3: one very long word ---
+APPMSG --string 10000="$(printf 'Antidisestablishmentarianism\0375\0373')"
+SLEEP 1
+APPMSG --int 10020=0 10021=1 10022=2
+SLEEP 16
+APPMSG --int 10020=0 10029=-14 10030=10 10033=0 --string 10031="12:00"
+SCREENSHOT label_one_very_long_word
+TAP down
+SLEEP 1
+
+# --- Case 4: no label, 30s configured duration -> title falls back to "0:30" ---
+APPMSG --string 10000="$(printf '\03730\0374')"
+SLEEP 1
+APPMSG --int 10020=0 10021=1 10022=2
+SLEEP 16
+APPMSG --int 10020=0 10029=-14 10030=10 10033=0 --string 10031="12:00"
+SCREENSHOT no_label_30s_timer
+TAP down
+SLEEP 1
+
+# --- Case 5: no label, 30m configured duration -> title falls back to "30:00" ---
+APPMSG --string 10000="$(printf '\0371800\0375')"
+SLEEP 1
+APPMSG --int 10020=0 10021=1 10022=2
+SLEEP 16
+APPMSG --int 10020=0 10029=-14 10030=10 10033=0 --string 10031="12:00"
+SCREENSHOT no_label_30m_timer
+TAP down
+SLEEP 1
+
+# --- Case 6: no label, 10h configured duration -> title falls back to "10:00:00" ---
+APPMSG --string 10000="$(printf '\03736000\0376')"
+SLEEP 1
+APPMSG --int 10020=0 10021=1 10022=2
+SLEEP 16
+APPMSG --int 10020=0 10029=-14 10030=10 10033=0 --string 10031="12:00"
+SCREENSHOT no_label_10h_timer
+TAP down
+SLEEP 1
