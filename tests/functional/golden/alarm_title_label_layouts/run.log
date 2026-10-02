@@ -1,0 +1,92 @@
+sequence: alarm_title_label_layouts.seq
+platform=emery vnc=1 app_uuid=1df6fc5c-261d-49c7-b339-6ea60cbe6649
+[wipe_and_prep.seq:23] KILL
++ pebble kill
+[wipe_and_prep.seq:24] WIPE
++ pebble wipe
+[wipe_and_prep.seq:25] INSTALL
++ pebble install --emulator emery --vnc
+[wipe_and_prep.seq:26] SLEEP 3
+[wipe_and_prep.seq:53] APPMSG --int 10011=0
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10011=0
+[alarm_title_label_layouts.seq:77] APPMSG --int 10018=0
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10018=0
+[alarm_title_label_layouts.seq:80] APPMSG --string 10000="$(printf 'Tea\0375\0371')"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --string 10000=Tea51
+[alarm_title_label_layouts.seq:81] SLEEP 1
+[alarm_title_label_layouts.seq:82] APPMSG --int 10020=0 10021=1 10022=2
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10021=1 10022=2
+[alarm_title_label_layouts.seq:83] SLEEP 16
+[alarm_title_label_layouts.seq:84] APPMSG --int 10020=0 10029=-14 10030=10 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10029=-14 10030=10 10033=0 --string 10031=12:00
+[alarm_title_label_layouts.seq:85] SCREENSHOT label_one_short_word
++ pebble screenshot --emulator emery --vnc --no-open 01_label_one_short_word.png
+[alarm_title_label_layouts.seq:86] TAP down
++ pebble emu-button --emulator emery --vnc click down --duration 150
+[alarm_title_label_layouts.seq:87] SLEEP 1
+[alarm_title_label_layouts.seq:90] APPMSG --string 10000="$(printf 'Take Out Trash\0375\0372')"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --string 10000=Take Out Trash52
+[alarm_title_label_layouts.seq:91] SLEEP 1
+[alarm_title_label_layouts.seq:92] APPMSG --int 10020=0 10021=1 10022=2
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10021=1 10022=2
+[alarm_title_label_layouts.seq:93] SLEEP 16
+[alarm_title_label_layouts.seq:94] APPMSG --int 10020=0 10029=-14 10030=10 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10029=-14 10030=10 10033=0 --string 10031=12:00
+[alarm_title_label_layouts.seq:95] SCREENSHOT label_three_short_words
++ pebble screenshot --emulator emery --vnc --no-open 02_label_three_short_words.png
+[alarm_title_label_layouts.seq:96] TAP down
++ pebble emu-button --emulator emery --vnc click down --duration 150
+[alarm_title_label_layouts.seq:97] SLEEP 1
+[alarm_title_label_layouts.seq:100] APPMSG --string 10000="$(printf 'Antidisestablishmentarianism\0375\0373')"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --string 10000=Antidisestablishmentarianism53
+[alarm_title_label_layouts.seq:101] SLEEP 1
+[alarm_title_label_layouts.seq:102] APPMSG --int 10020=0 10021=1 10022=2
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10021=1 10022=2
+[alarm_title_label_layouts.seq:103] SLEEP 16
+[alarm_title_label_layouts.seq:104] APPMSG --int 10020=0 10029=-14 10030=10 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10029=-14 10030=10 10033=0 --string 10031=12:00
+[alarm_title_label_layouts.seq:105] SCREENSHOT label_one_very_long_word
++ pebble screenshot --emulator emery --vnc --no-open 03_label_one_very_long_word.png
+[alarm_title_label_layouts.seq:106] TAP down
++ pebble emu-button --emulator emery --vnc click down --duration 150
+[alarm_title_label_layouts.seq:107] SLEEP 1
+[alarm_title_label_layouts.seq:110] APPMSG --string 10000="$(printf '\03730\0374')"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --string 10000=304
+[alarm_title_label_layouts.seq:111] SLEEP 1
+[alarm_title_label_layouts.seq:112] APPMSG --int 10020=0 10021=1 10022=2
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10021=1 10022=2
+[alarm_title_label_layouts.seq:113] SLEEP 16
+[alarm_title_label_layouts.seq:114] APPMSG --int 10020=0 10029=-14 10030=10 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10029=-14 10030=10 10033=0 --string 10031=12:00
+[alarm_title_label_layouts.seq:115] SCREENSHOT no_label_30s_timer
++ pebble screenshot --emulator emery --vnc --no-open 04_no_label_30s_timer.png
+[alarm_title_label_layouts.seq:116] TAP down
++ pebble emu-button --emulator emery --vnc click down --duration 150
+[alarm_title_label_layouts.seq:117] SLEEP 1
+[alarm_title_label_layouts.seq:120] APPMSG --string 10000="$(printf '\0371800\0375')"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --string 10000=18005
+[alarm_title_label_layouts.seq:121] SLEEP 1
+[alarm_title_label_layouts.seq:122] APPMSG --int 10020=0 10021=1 10022=2
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10021=1 10022=2
+[alarm_title_label_layouts.seq:123] SLEEP 16
+[alarm_title_label_layouts.seq:124] APPMSG --int 10020=0 10029=-14 10030=10 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10029=-14 10030=10 10033=0 --string 10031=12:00
+[alarm_title_label_layouts.seq:125] SCREENSHOT no_label_30m_timer
++ pebble screenshot --emulator emery --vnc --no-open 05_no_label_30m_timer.png
+[alarm_title_label_layouts.seq:126] TAP down
++ pebble emu-button --emulator emery --vnc click down --duration 150
+[alarm_title_label_layouts.seq:127] SLEEP 1
+[alarm_title_label_layouts.seq:130] APPMSG --string 10000="$(printf '\03736000\0376')"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --string 10000=360006
+[alarm_title_label_layouts.seq:131] SLEEP 1
+[alarm_title_label_layouts.seq:132] APPMSG --int 10020=0 10021=1 10022=2
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10021=1 10022=2
+[alarm_title_label_layouts.seq:133] SLEEP 16
+[alarm_title_label_layouts.seq:134] APPMSG --int 10020=0 10029=-14 10030=10 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10029=-14 10030=10 10033=0 --string 10031=12:00
+[alarm_title_label_layouts.seq:135] SCREENSHOT no_label_10h_timer
++ pebble screenshot --emulator emery --vnc --no-open 06_no_label_10h_timer.png
+[alarm_title_label_layouts.seq:136] TAP down
++ pebble emu-button --emulator emery --vnc click down --duration 150
+[alarm_title_label_layouts.seq:137] SLEEP 1
+sequence PASSED - log: run.log

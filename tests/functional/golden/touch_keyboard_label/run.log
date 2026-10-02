@@ -1,0 +1,55 @@
+sequence: touch_keyboard_label.seq
+platform=emery vnc=0 app_uuid=1df6fc5c-261d-49c7-b339-6ea60cbe6649
+[wipe_and_prep.seq:23] KILL
++ pebble kill
+[wipe_and_prep.seq:24] WIPE
++ pebble wipe
+[wipe_and_prep.seq:25] INSTALL
++ pebble install --emulator emery
+[wipe_and_prep.seq:26] SLEEP 3
+[wipe_and_prep.seq:53] APPMSG --int 10011=0
++ pebble send-app-message --emulator emery --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10011=0
+[touch_keyboard_label.seq:42] APPMSG --int 10015=0 10003=0
++ pebble send-app-message --emulator emery --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10015=0 10003=0
+[touch_keyboard_label.seq:43] APPMSG --int 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10033=0 --string 10031=12:00
+[touch_keyboard_label.seq:44] SCREENSHOT list_empty
++ pebble screenshot --emulator emery --no-open 01_list_empty.png
+[touch_keyboard_label.seq:46] TAP select
++ pebble emu-button --emulator emery click select --duration 150
+[touch_keyboard_label.seq:47] APPMSG --int 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10033=0 --string 10031=12:00
+[touch_keyboard_label.seq:48] SCREENSHOT duration_dial_default
++ pebble screenshot --emulator emery --no-open 02_duration_dial_default.png
+[touch_keyboard_label.seq:86] TOUCHDOWN 170 135
++ xdotool mousemove --window 2097160 170 135 mousedown 1
+[touch_keyboard_label.seq:87] SLEEP 1.2
+[touch_keyboard_label.seq:88] TOUCHUP
++ xdotool mouseup 1
+[touch_keyboard_label.seq:101] SLEEP 4.5
+[touch_keyboard_label.seq:102] APPMSG --int 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10033=0 --string 10031=12:00
+[touch_keyboard_label.seq:103] SCREENSHOT keyboard_open
++ pebble screenshot --emulator emery --no-open 03_keyboard_open.png
+[touch_keyboard_label.seq:108] TOUCH 166 113 0.1
++ xdotool mousemove --window 2097160 166 113 mousedown 1 sleep 0.1 mouseup 1
+[touch_keyboard_label.seq:109] TOUCH 166 113 0.1
++ xdotool mousemove --window 2097160 166 113 mousedown 1 sleep 0.1 mouseup 1
+[touch_keyboard_label.seq:110] TOUCH 166 113 0.1
++ xdotool mousemove --window 2097160 166 113 mousedown 1 sleep 0.1 mouseup 1
+[touch_keyboard_label.seq:116] TOUCH 100 113 0.1
++ xdotool mousemove --window 2097160 100 113 mousedown 1 sleep 0.1 mouseup 1
+[touch_keyboard_label.seq:117] TOUCH 100 113 0.1
++ xdotool mousemove --window 2097160 100 113 mousedown 1 sleep 0.1 mouseup 1
+[touch_keyboard_label.seq:118] APPMSG --int 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10033=0 --string 10031=12:00
+[touch_keyboard_label.seq:119] SCREENSHOT keyboard_typed
++ pebble screenshot --emulator emery --no-open 04_keyboard_typed.png
+[touch_keyboard_label.seq:123] TAP select
++ pebble emu-button --emulator emery click select --duration 150
+[touch_keyboard_label.seq:124] SLEEP 0.5
+[touch_keyboard_label.seq:125] APPMSG --int 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10033=0 --string 10031=12:00
+[touch_keyboard_label.seq:126] SCREENSHOT timer_created
++ pebble screenshot --emulator emery --no-open 05_timer_created.png
+sequence PASSED - log: run.log

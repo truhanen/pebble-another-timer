@@ -1,0 +1,49 @@
+sequence: run_control_restart.seq
+platform=emery vnc=1 app_uuid=1df6fc5c-261d-49c7-b339-6ea60cbe6649
+[wipe_and_prep.seq:23] KILL
++ pebble kill
+[wipe_and_prep.seq:24] WIPE
++ pebble wipe
+[wipe_and_prep.seq:25] INSTALL
++ pebble install --emulator emery --vnc
+[wipe_and_prep.seq:26] SLEEP 3
+[wipe_and_prep.seq:53] APPMSG --int 10011=0
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10011=0
+[run_control_restart.seq:10] APPMSG --string 10000="$(printf 'Timer A\037300\0371')"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --string 10000=Timer A3001
+[run_control_restart.seq:11] SLEEP 1
+[run_control_restart.seq:15] APPMSG --int 10020=0 10021=1 10022=60
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10021=1 10022=60
+[run_control_restart.seq:16] SLEEP 1
+[run_control_restart.seq:17] APPMSG --int 10020=0 10029=57 10030=8 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10029=57 10030=8 10033=0 --string 10031=12:00
+[run_control_restart.seq:18] SCREENSHOT running_60s_left
++ pebble screenshot --emulator emery --vnc --no-open 01_running_60s_left.png
+[run_control_restart.seq:33] TAP down
++ pebble emu-button --emulator emery --vnc click down --duration 150
+[run_control_restart.seq:34] TAP select
++ pebble emu-button --emulator emery --vnc click select --duration 150
+[run_control_restart.seq:35] APPMSG --int 10020=0 10029=46 10030=8 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10029=46 10030=8 10033=0 --string 10031=12:00
+[run_control_restart.seq:36] SCREENSHOT run_control_menu
++ pebble screenshot --emulator emery --vnc --no-open 02_run_control_menu.png
+[run_control_restart.seq:37] TAP down
++ pebble emu-button --emulator emery --vnc click down --duration 150
+[run_control_restart.seq:38] TAP down
++ pebble emu-button --emulator emery --vnc click down --duration 150
+[run_control_restart.seq:39] TAP down
++ pebble emu-button --emulator emery --vnc click down --duration 150
+[run_control_restart.seq:40] TAP down
++ pebble emu-button --emulator emery --vnc click down --duration 150
+[run_control_restart.seq:46] APPMSG --int 10020=0 10029=45 10030=10 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10029=45 10030=10 10033=0 --string 10031=12:00
+[run_control_restart.seq:47] SCREENSHOT restart_selected
++ pebble screenshot --emulator emery --vnc --no-open 03_restart_selected.png
+[run_control_restart.seq:48] TAP select
++ pebble emu-button --emulator emery --vnc click select --duration 150
+[run_control_restart.seq:49] SLEEP 1
+[run_control_restart.seq:55] APPMSG --int 10020=0 10029=295 10030=20 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10029=295 10030=20 10033=0 --string 10031=12:00
+[run_control_restart.seq:56] SCREENSHOT should_read_5_00_again_not_1_00
++ pebble screenshot --emulator emery --vnc --no-open 04_should_read_5_00_again_not_1_00.png
+sequence PASSED - log: run.log

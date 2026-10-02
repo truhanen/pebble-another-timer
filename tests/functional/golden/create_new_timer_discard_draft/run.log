@@ -1,0 +1,37 @@
+sequence: create_new_timer_discard_draft.seq
+platform=emery vnc=1 app_uuid=1df6fc5c-261d-49c7-b339-6ea60cbe6649
+[wipe_and_prep.seq:23] KILL
++ pebble kill
+[wipe_and_prep.seq:24] WIPE
++ pebble wipe
+[wipe_and_prep.seq:25] INSTALL
++ pebble install --emulator emery --vnc
+[wipe_and_prep.seq:26] SLEEP 3
+[wipe_and_prep.seq:53] APPMSG --int 10011=0
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10011=0
+[create_new_timer_discard_draft.seq:11] APPMSG --int 10016=0 10015=0 10003=0
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10016=0 10015=0 10003=0
+[create_new_timer_discard_draft.seq:12] APPMSG --int 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10033=0 --string 10031=12:00
+[create_new_timer_discard_draft.seq:13] SCREENSHOT list_empty
++ pebble screenshot --emulator emery --vnc --no-open 01_list_empty.png
+[create_new_timer_discard_draft.seq:15] TAP select
++ pebble emu-button --emulator emery --vnc click select --duration 150
+[create_new_timer_discard_draft.seq:16] APPMSG --int 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10033=0 --string 10031=12:00
+[create_new_timer_discard_draft.seq:17] SCREENSHOT duration_dial_default
++ pebble screenshot --emulator emery --vnc --no-open 02_duration_dial_default.png
+[create_new_timer_discard_draft.seq:25] TAP back
++ pebble emu-button --emulator emery --vnc click back --duration 150
+[create_new_timer_discard_draft.seq:26] APPMSG --int 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10033=0 --string 10031=12:00
+[create_new_timer_discard_draft.seq:27] SCREENSHOT duration_dial_hour_field_focused
++ pebble screenshot --emulator emery --vnc --no-open 03_duration_dial_hour_field_focused.png
+[create_new_timer_discard_draft.seq:28] TAP back
++ pebble emu-button --emulator emery --vnc click back --duration 150
+[create_new_timer_discard_draft.seq:29] SLEEP 1
+[create_new_timer_discard_draft.seq:30] APPMSG --int 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10033=0 --string 10031=12:00
+[create_new_timer_discard_draft.seq:31] SCREENSHOT should_still_be_empty_no_phantom_timer
++ pebble screenshot --emulator emery --vnc --no-open 04_should_still_be_empty_no_phantom_timer.png
+sequence PASSED - log: run.log

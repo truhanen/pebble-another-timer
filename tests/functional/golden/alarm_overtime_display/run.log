@@ -1,0 +1,35 @@
+sequence: alarm_overtime_display.seq
+platform=emery vnc=1 app_uuid=1df6fc5c-261d-49c7-b339-6ea60cbe6649
+[wipe_and_prep.seq:23] KILL
++ pebble kill
+[wipe_and_prep.seq:24] WIPE
++ pebble wipe
+[wipe_and_prep.seq:25] INSTALL
++ pebble install --emulator emery --vnc
+[wipe_and_prep.seq:26] SLEEP 3
+[wipe_and_prep.seq:53] APPMSG --int 10011=0
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10011=0
+[alarm_overtime_display.seq:55] APPMSG --string 10000="$(printf 'Quick Timer\0375\0371')"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --string 10000=Quick Timer51
+[alarm_overtime_display.seq:56] SLEEP 1
+[alarm_overtime_display.seq:57] APPMSG --int 10020=0 10021=1 10022=5
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10021=1 10022=5
+[alarm_overtime_display.seq:58] SLEEP 1
+[alarm_overtime_display.seq:59] SLEEP 7
+[alarm_overtime_display.seq:60] APPMSG --int 10020=0 10029=-8 10030=5 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10029=-8 10030=5 10033=0 --string 10031=12:00
+[alarm_overtime_display.seq:61] SCREENSHOT alarm_just_fired_elapsed_near_0
++ pebble screenshot --emulator emery --vnc --no-open 01_alarm_just_fired_elapsed_near_0.png
+[alarm_overtime_display.seq:62] SLEEP 25
+[alarm_overtime_display.seq:63] APPMSG --int 10020=0 10029=-35 10030=8 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10029=-35 10030=8 10033=0 --string 10031=12:00
+[alarm_overtime_display.seq:67] SCREENSHOT alarm_elapsed_should_now_read_about_35s
++ pebble screenshot --emulator emery --vnc --no-open 02_alarm_elapsed_should_now_read_about_35s.png
+[alarm_overtime_display.seq:68] TAP down
++ pebble emu-button --emulator emery --vnc click down --duration 150
+[alarm_overtime_display.seq:69] SLEEP 1
+[alarm_overtime_display.seq:74] APPMSG --int 10020=0 10029=5 10030=2 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10029=5 10030=2 10033=0 --string 10031=12:00
+[alarm_overtime_display.seq:75] SCREENSHOT dismissed
++ pebble screenshot --emulator emery --vnc --no-open 03_dismissed.png
+sequence PASSED - log: run.log

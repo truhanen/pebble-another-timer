@@ -1,0 +1,65 @@
+sequence: run_control_pause_resume_stop.seq
+platform=emery vnc=1 app_uuid=1df6fc5c-261d-49c7-b339-6ea60cbe6649
+[wipe_and_prep.seq:23] KILL
++ pebble kill
+[wipe_and_prep.seq:24] WIPE
++ pebble wipe
+[wipe_and_prep.seq:25] INSTALL
++ pebble install --emulator emery --vnc
+[wipe_and_prep.seq:26] SLEEP 3
+[wipe_and_prep.seq:53] APPMSG --int 10011=0
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10011=0
+[run_control_pause_resume_stop.seq:15] APPMSG --int 10018=0
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10018=0
+[run_control_pause_resume_stop.seq:17] APPMSG --string 10000="$(printf 'Timer A\037300\0371')"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --string 10000=Timer A3001
+[run_control_pause_resume_stop.seq:18] SLEEP 1
+[run_control_pause_resume_stop.seq:19] APPMSG --int 10020=0 10021=1 10022=300
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10021=1 10022=300
+[run_control_pause_resume_stop.seq:20] SLEEP 1
+[run_control_pause_resume_stop.seq:21] APPMSG --int 10020=0 10029=296 10030=8 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10029=296 10030=8 10033=0 --string 10031=12:00
+[run_control_pause_resume_stop.seq:22] SCREENSHOT running_300s
++ pebble screenshot --emulator emery --vnc --no-open 01_running_300s.png
+[run_control_pause_resume_stop.seq:37] TAP down
++ pebble emu-button --emulator emery --vnc click down --duration 150
+[run_control_pause_resume_stop.seq:38] TAP select
++ pebble emu-button --emulator emery --vnc click select --duration 150
+[run_control_pause_resume_stop.seq:39] APPMSG --int 10020=0 10029=286 10030=8 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10029=286 10030=8 10033=0 --string 10031=12:00
+[run_control_pause_resume_stop.seq:40] SCREENSHOT run_control_menu
++ pebble screenshot --emulator emery --vnc --no-open 02_run_control_menu.png
+[run_control_pause_resume_stop.seq:41] TAP down
++ pebble emu-button --emulator emery --vnc click down --duration 150
+[run_control_pause_resume_stop.seq:42] TAP select
++ pebble emu-button --emulator emery --vnc click select --duration 150
+[run_control_pause_resume_stop.seq:43] SLEEP 1
+[run_control_pause_resume_stop.seq:46] APPMSG --int 10020=0 10029=286 10030=20 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10029=286 10030=20 10033=0 --string 10031=12:00
+[run_control_pause_resume_stop.seq:47] SCREENSHOT paused
++ pebble screenshot --emulator emery --vnc --no-open 03_paused.png
+[run_control_pause_resume_stop.seq:50] TAP select
++ pebble emu-button --emulator emery --vnc click select --duration 150
+[run_control_pause_resume_stop.seq:51] TAP down
++ pebble emu-button --emulator emery --vnc click down --duration 150
+[run_control_pause_resume_stop.seq:52] TAP select
++ pebble emu-button --emulator emery --vnc click select --duration 150
+[run_control_pause_resume_stop.seq:53] SLEEP 1
+[run_control_pause_resume_stop.seq:59] APPMSG --int 10020=0 10029=285 10030=20 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10029=285 10030=20 10033=0 --string 10031=12:00
+[run_control_pause_resume_stop.seq:60] SCREENSHOT resumed_running
++ pebble screenshot --emulator emery --vnc --no-open 04_resumed_running.png
+[run_control_pause_resume_stop.seq:63] TAP select
++ pebble emu-button --emulator emery --vnc click select --duration 150
+[run_control_pause_resume_stop.seq:64] APPMSG --int 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10033=0 --string 10031=12:00
+[run_control_pause_resume_stop.seq:65] SCREENSHOT run_control_menu_again
++ pebble screenshot --emulator emery --vnc --no-open 05_run_control_menu_again.png
+[run_control_pause_resume_stop.seq:66] TAP select
++ pebble emu-button --emulator emery --vnc click select --duration 150
+[run_control_pause_resume_stop.seq:67] SLEEP 1
+[run_control_pause_resume_stop.seq:70] APPMSG --int 10020=0 10029=300 10030=5 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10029=300 10030=5 10033=0 --string 10031=12:00
+[run_control_pause_resume_stop.seq:71] SCREENSHOT stopped_should_show_full_duration_not_remaining
++ pebble screenshot --emulator emery --vnc --no-open 06_stopped_should_show_full_duration_not_remaining.png
+sequence PASSED - log: run.log

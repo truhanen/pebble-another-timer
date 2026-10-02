@@ -1,0 +1,29 @@
+sequence: sync_timerconfig_reconcile_running_survives.seq
+platform=emery vnc=1 app_uuid=1df6fc5c-261d-49c7-b339-6ea60cbe6649
+[wipe_and_prep.seq:23] KILL
++ pebble kill
+[wipe_and_prep.seq:24] WIPE
++ pebble wipe
+[wipe_and_prep.seq:25] INSTALL
++ pebble install --emulator emery --vnc
+[wipe_and_prep.seq:26] SLEEP 3
+[wipe_and_prep.seq:53] APPMSG --int 10011=0
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10011=0
+[sync_timerconfig_reconcile_running_survives.seq:14] APPMSG --string 10000="$(printf 'Original Name\037300\0371')"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --string 10000=Original Name3001
+[sync_timerconfig_reconcile_running_survives.seq:15] SLEEP 1
+[sync_timerconfig_reconcile_running_survives.seq:16] APPMSG --int 10020=0 10021=1 10022=200
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10021=1 10022=200
+[sync_timerconfig_reconcile_running_survives.seq:17] SLEEP 1
+[sync_timerconfig_reconcile_running_survives.seq:18] APPMSG --int 10020=0 10029=197 10030=8 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10029=197 10030=8 10033=0 --string 10031=12:00
+[sync_timerconfig_reconcile_running_survives.seq:19] SCREENSHOT running_with_200s_left
++ pebble screenshot --emulator emery --vnc --no-open 01_running_with_200s_left.png
+[sync_timerconfig_reconcile_running_survives.seq:27] APPMSG --string 10000="$(printf 'Renamed\037600\0371')"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --string 10000=Renamed6001
+[sync_timerconfig_reconcile_running_survives.seq:28] SLEEP 1
+[sync_timerconfig_reconcile_running_survives.seq:29] APPMSG --int 10020=0 10029=188 10030=8 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10029=188 10030=8 10033=0 --string 10031=12:00
+[sync_timerconfig_reconcile_running_survives.seq:30] SCREENSHOT should_show_new_name_still_running_about_200s_left_not_600
++ pebble screenshot --emulator emery --vnc --no-open 02_should_show_new_name_still_running_about_200s_left_not_600.png
+sequence PASSED - log: run.log

@@ -1,0 +1,48 @@
+sequence: wakeup_conflict_basic_resolutions.seq
+platform=emery vnc=1 app_uuid=1df6fc5c-261d-49c7-b339-6ea60cbe6649
+[wipe_and_prep.seq:23] KILL
++ pebble kill
+[wipe_and_prep.seq:24] WIPE
++ pebble wipe
+[wipe_and_prep.seq:25] INSTALL
++ pebble install --emulator emery --vnc
+[wipe_and_prep.seq:26] SLEEP 3
+[wipe_and_prep.seq:53] APPMSG --int 10011=0
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10011=0
+[wakeup_conflict_basic_resolutions.seq:23] APPMSG --string 10027="0"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --string 10027=0
+[wakeup_conflict_basic_resolutions.seq:24] APPMSG --string 10000="$(printf 'Timer A\0371200\0371')"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --string 10000=Timer A12001
+[wakeup_conflict_basic_resolutions.seq:25] SLEEP 1
+[wakeup_conflict_basic_resolutions.seq:26] APPMSG --int 10020=0 10021=1 10022=1200
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10021=1 10022=1200
+[wakeup_conflict_basic_resolutions.seq:27] SLEEP 1
+[wakeup_conflict_basic_resolutions.seq:28] APPMSG --int 10020=0 10029=1196 10030=8 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10029=1196 10030=8 10033=0 --string 10031=12:00
+[wakeup_conflict_basic_resolutions.seq:29] SCREENSHOT a_silently_resolved_still_running
++ pebble screenshot --emulator emery --vnc --no-open 01_a_silently_resolved_still_running.png
+[wakeup_conflict_basic_resolutions.seq:34] APPMSG --int 10020=0 10021=0
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10021=0
+[wakeup_conflict_basic_resolutions.seq:35] SLEEP 1
+[wakeup_conflict_basic_resolutions.seq:45] APPMSG --string 10028="0,1,2,3,4,5"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --string 10028=0,1,2,3,4,5
+[wakeup_conflict_basic_resolutions.seq:46] APPMSG --string 10000="$(printf 'Timer A\0371200\0371\036Timer B\037180\0372')"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --string 10000=Timer A12001Timer B1802
+[wakeup_conflict_basic_resolutions.seq:47] SLEEP 1
+[wakeup_conflict_basic_resolutions.seq:48] APPMSG --int 10020=1 10021=1 10022=180
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=1 10021=1 10022=180
+[wakeup_conflict_basic_resolutions.seq:49] SLEEP 1
+[wakeup_conflict_basic_resolutions.seq:52] APPMSG --int 10020=1 10029=176 10030=8 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=1 10029=176 10030=8 10033=0 --string 10031=12:00
+[wakeup_conflict_basic_resolutions.seq:53] SCREENSHOT b_ok_window_shown
++ pebble screenshot --emulator emery --vnc --no-open 02_b_ok_window_shown.png
+[wakeup_conflict_basic_resolutions.seq:59] TAP select
++ pebble emu-button --emulator emery --vnc click select --duration 150
+[wakeup_conflict_basic_resolutions.seq:60] SLEEP 1
+[wakeup_conflict_basic_resolutions.seq:67] APPMSG --int 10020=1 10029=167 10030=8 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=1 10029=167 10030=8 10033=0 --string 10031=12:00
+[wakeup_conflict_basic_resolutions.seq:68] APPMSG --int 10020=0 10029=1191 10030=10 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10029=1191 10030=10 10033=0 --string 10031=12:00
+[wakeup_conflict_basic_resolutions.seq:69] SCREENSHOT b_ok_dismissed_back_on_list
++ pebble screenshot --emulator emery --vnc --no-open 03_b_ok_dismissed_back_on_list.png
+sequence PASSED - log: run.log

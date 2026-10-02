@@ -1,0 +1,36 @@
+sequence: alarm_natural_expiry_stop.seq
+platform=emery vnc=1 app_uuid=1df6fc5c-261d-49c7-b339-6ea60cbe6649
+[wipe_and_prep.seq:23] KILL
++ pebble kill
+[wipe_and_prep.seq:24] WIPE
++ pebble wipe
+[wipe_and_prep.seq:25] INSTALL
++ pebble install --emulator emery --vnc
+[wipe_and_prep.seq:26] SLEEP 3
+[wipe_and_prep.seq:53] APPMSG --int 10011=0
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10011=0
+[alarm_natural_expiry_stop.seq:18] APPMSG --int 10018=1
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10018=1
+[alarm_natural_expiry_stop.seq:19] APPMSG --string 10000="$(printf 'Quick Timer\0375\0371')"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --string 10000=Quick Timer51
+[alarm_natural_expiry_stop.seq:20] SLEEP 1
+[alarm_natural_expiry_stop.seq:21] APPMSG --int 10020=0 10021=1 10022=5
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10021=1 10022=5
+[alarm_natural_expiry_stop.seq:53] SLEEP 16
+[alarm_natural_expiry_stop.seq:54] APPMSG --int 10020=0 10029=-14 10030=5 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10029=-14 10030=5 10033=0 --string 10031=12:00
+[alarm_natural_expiry_stop.seq:55] SCREENSHOT alarm_showing_after_5s_timer
++ pebble screenshot --emulator emery --vnc --no-open 01_alarm_showing_after_5s_timer.png
+[alarm_natural_expiry_stop.seq:66] SLEEP 7
+[alarm_natural_expiry_stop.seq:67] APPMSG --int 10020=0 10029=-24 10030=7 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10029=-24 10030=7 10033=0 --string 10031=12:00
+[alarm_natural_expiry_stop.seq:68] SCREENSHOT alarm_screen_should_be_showing
++ pebble screenshot --emulator emery --vnc --no-open 02_alarm_screen_should_be_showing.png
+[alarm_natural_expiry_stop.seq:73] TAP down
++ pebble emu-button --emulator emery --vnc click down --duration 150
+[alarm_natural_expiry_stop.seq:74] SLEEP 1
+[alarm_natural_expiry_stop.seq:75] APPMSG --int 10020=0 10029=5 10030=2 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10029=5 10030=2 10033=0 --string 10031=12:00
+[alarm_natural_expiry_stop.seq:76] SCREENSHOT after_stop_should_be_list_autoreturnstop_has_no_effect_on_alarm_dismissal
++ pebble screenshot --emulator emery --vnc --no-open 03_after_stop_should_be_list_autoreturnstop_has_no_effect_on_alarm_dismissal.png
+sequence PASSED - log: run.log

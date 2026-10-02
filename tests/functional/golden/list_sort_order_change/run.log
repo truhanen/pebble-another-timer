@@ -1,0 +1,33 @@
+sequence: list_sort_order_change.seq
+platform=emery vnc=1 app_uuid=1df6fc5c-261d-49c7-b339-6ea60cbe6649
+[wipe_and_prep.seq:23] KILL
++ pebble kill
+[wipe_and_prep.seq:24] WIPE
++ pebble wipe
+[wipe_and_prep.seq:25] INSTALL
++ pebble install --emulator emery --vnc
+[wipe_and_prep.seq:26] SLEEP 3
+[wipe_and_prep.seq:53] APPMSG --int 10011=0
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10011=0
+[list_sort_order_change.seq:17] APPMSG --string 10000="$(printf 'Egg 9 min\037540\03610 s\03710\036Egg 12 min\037720')"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --string 10000=Egg 9 min54010 s10Egg 12 min720
+[list_sort_order_change.seq:18] SLEEP 1
+[list_sort_order_change.seq:19] APPMSG --int 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10033=0 --string 10031=12:00
+[list_sort_order_change.seq:20] SCREENSHOT sorted_mru_default
++ pebble screenshot --emulator emery --vnc --no-open 01_sorted_mru_default.png
+[list_sort_order_change.seq:22] APPMSG --int 10001=1
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10001=1
+[list_sort_order_change.seq:23] SLEEP 1
+[list_sort_order_change.seq:24] APPMSG --int 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10033=0 --string 10031=12:00
+[list_sort_order_change.seq:25] SCREENSHOT sorted_shortest_first
++ pebble screenshot --emulator emery --vnc --no-open 02_sorted_shortest_first.png
+[list_sort_order_change.seq:27] APPMSG --int 10001=2
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10001=2
+[list_sort_order_change.seq:28] SLEEP 1
+[list_sort_order_change.seq:29] APPMSG --int 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10033=0 --string 10031=12:00
+[list_sort_order_change.seq:30] SCREENSHOT sorted_longest_first
++ pebble screenshot --emulator emery --vnc --no-open 03_sorted_longest_first.png
+sequence PASSED - log: run.log

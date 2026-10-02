@@ -1,0 +1,24 @@
+sequence: touch_dial_cancel.seq
+platform=emery vnc=0 app_uuid=1df6fc5c-261d-49c7-b339-6ea60cbe6649
+[wipe_and_prep.seq:23] KILL
++ pebble kill
+[wipe_and_prep.seq:24] WIPE
++ pebble wipe
+[wipe_and_prep.seq:25] INSTALL
++ pebble install --emulator emery
+[wipe_and_prep.seq:26] SLEEP 3
+[wipe_and_prep.seq:53] APPMSG --int 10011=0
++ pebble send-app-message --emulator emery --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10011=0
+[touch_dial_cancel.seq:17] TAP select
++ pebble emu-button --emulator emery click select --duration 150
+[touch_dial_cancel.seq:18] APPMSG --int 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10033=0 --string 10031=12:00
+[touch_dial_cancel.seq:19] SCREENSHOT duration_dial_default
++ pebble screenshot --emulator emery --no-open 01_duration_dial_default.png
+[touch_dial_cancel.seq:33] TOUCH 100 114 0.6
++ xdotool mousemove --window 2097160 100 114 mousedown 1 sleep 0.6 mouseup 1
+[touch_dial_cancel.seq:41] APPMSG --int 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10033=0 --string 10031=12:00
+[touch_dial_cancel.seq:42] SCREENSHOT duration_dial_after_touch_cancel
++ pebble screenshot --emulator emery --no-open 02_duration_dial_after_touch_cancel.png
+sequence PASSED - log: run.log

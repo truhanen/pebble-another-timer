@@ -1,0 +1,59 @@
+sequence: wakeup_conflict_multi_timer_eviction.seq
+platform=emery vnc=1 app_uuid=1df6fc5c-261d-49c7-b339-6ea60cbe6649
+[wipe_and_prep.seq:23] KILL
++ pebble kill
+[wipe_and_prep.seq:24] WIPE
++ pebble wipe
+[wipe_and_prep.seq:25] INSTALL
++ pebble install --emulator emery --vnc
+[wipe_and_prep.seq:26] SLEEP 3
+[wipe_and_prep.seq:53] APPMSG --int 10011=0
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10011=0
+[wakeup_conflict_multi_timer_eviction.seq:40] APPMSG --string 10027="0"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --string 10027=0
+[wakeup_conflict_multi_timer_eviction.seq:41] APPMSG --string 10000="$(printf 'Timer A\037300\0371')"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --string 10000=Timer A3001
+[wakeup_conflict_multi_timer_eviction.seq:42] SLEEP 1
+[wakeup_conflict_multi_timer_eviction.seq:43] APPMSG --int 10020=0 10021=1 10022=300
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10021=1 10022=300
+[wakeup_conflict_multi_timer_eviction.seq:44] SLEEP 1
+[wakeup_conflict_multi_timer_eviction.seq:45] APPMSG --int 10020=0 10029=296 10030=8 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10029=296 10030=8 10033=0 --string 10031=12:00
+[wakeup_conflict_multi_timer_eviction.seq:46] SCREENSHOT a_silently_resolved
++ pebble screenshot --emulator emery --vnc --no-open 01_a_silently_resolved.png
+[wakeup_conflict_multi_timer_eviction.seq:65] APPMSG --string 10000="$(printf 'Timer A\037300\0371\036Timer B\037150\0372')"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --string 10000=Timer A3001Timer B1502
+[wakeup_conflict_multi_timer_eviction.seq:66] SLEEP 1
+[wakeup_conflict_multi_timer_eviction.seq:67] APPMSG --int 10020=1 10021=1 10022=150
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=1 10021=1 10022=150
+[wakeup_conflict_multi_timer_eviction.seq:68] SLEEP 1
+[wakeup_conflict_multi_timer_eviction.seq:69] APPMSG --int 10020=0 10029=284 10030=8 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10029=284 10030=8 10033=0 --string 10031=12:00
+[wakeup_conflict_multi_timer_eviction.seq:70] APPMSG --int 10020=1 10029=144 10030=8 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=1 10029=144 10030=8 10033=0 --string 10031=12:00
+[wakeup_conflict_multi_timer_eviction.seq:71] SCREENSHOT b_silently_resolved_evicted_a
++ pebble screenshot --emulator emery --vnc --no-open 02_b_silently_resolved_evicted_a.png
+[wakeup_conflict_multi_timer_eviction.seq:78] APPMSG --string 10028="0,1,2,3,4,5,6,7"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --string 10028=0,1,2,3,4,5,6,7
+[wakeup_conflict_multi_timer_eviction.seq:79] SLEEP 1
+[wakeup_conflict_multi_timer_eviction.seq:85] APPMSG --int 10020=0 10029=283 10030=10 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10029=283 10030=10 10033=0 --string 10031=12:00
+[wakeup_conflict_multi_timer_eviction.seq:92] APPMSG --int 10020=1 10029=141 10030=20 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=1 10029=141 10030=20 10033=0 --string 10031=12:00
+[wakeup_conflict_multi_timer_eviction.seq:93] SCREENSHOT b_still_fine_after_widened_block
++ pebble screenshot --emulator emery --vnc --no-open 03_b_still_fine_after_widened_block.png
+[wakeup_conflict_multi_timer_eviction.seq:108] APPMSG --int 10020=1 10021=0
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=1 10021=0
+[wakeup_conflict_multi_timer_eviction.seq:109] SLEEP 1
+[wakeup_conflict_multi_timer_eviction.seq:123] APPMSG --int 10020=0 10029=279 10030=12 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10029=279 10030=12 10033=0 --string 10031=12:00
+[wakeup_conflict_multi_timer_eviction.seq:124] SCREENSHOT a_gets_fresh_reprompt
++ pebble screenshot --emulator emery --vnc --no-open 04_a_gets_fresh_reprompt.png
+[wakeup_conflict_multi_timer_eviction.seq:128] TAP select
++ pebble emu-button --emulator emery --vnc click select --duration 150
+[wakeup_conflict_multi_timer_eviction.seq:129] SLEEP 1
+[wakeup_conflict_multi_timer_eviction.seq:133] APPMSG --int 10020=0 10029=274 10030=12 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10029=274 10030=12 10033=0 --string 10031=12:00
+[wakeup_conflict_multi_timer_eviction.seq:134] SCREENSHOT final_state
++ pebble screenshot --emulator emery --vnc --no-open 05_final_state.png
+sequence PASSED - log: run.log

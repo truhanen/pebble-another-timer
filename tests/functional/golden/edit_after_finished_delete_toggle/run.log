@@ -1,0 +1,49 @@
+sequence: edit_after_finished_delete_toggle.seq
+platform=emery vnc=1 app_uuid=1df6fc5c-261d-49c7-b339-6ea60cbe6649
+[wipe_and_prep.seq:23] KILL
++ pebble kill
+[wipe_and_prep.seq:24] WIPE
++ pebble wipe
+[wipe_and_prep.seq:25] INSTALL
++ pebble install --emulator emery --vnc
+[wipe_and_prep.seq:26] SLEEP 3
+[wipe_and_prep.seq:53] APPMSG --int 10011=0
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10011=0
+[edit_after_finished_delete_toggle.seq:17] APPMSG --string 10000="$(printf 'Quick Timer\0375\0371')"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --string 10000=Quick Timer51
+[edit_after_finished_delete_toggle.seq:18] SLEEP 1
+[edit_after_finished_delete_toggle.seq:19] APPMSG --int 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10033=0 --string 10031=12:00
+[edit_after_finished_delete_toggle.seq:20] SCREENSHOT initial_idle
++ pebble screenshot --emulator emery --vnc --no-open 01_initial_idle.png
+[edit_after_finished_delete_toggle.seq:27] TAP down
++ pebble emu-button --emulator emery --vnc click down --duration 150
+[edit_after_finished_delete_toggle.seq:28] LONGPRESS select
++ pebble emu-button --emulator emery --vnc click select --duration 700
+[edit_after_finished_delete_toggle.seq:29] APPMSG --int 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10033=0 --string 10031=12:00
+[edit_after_finished_delete_toggle.seq:30] SCREENSHOT edit_menu
++ pebble screenshot --emulator emery --vnc --no-open 02_edit_menu.png
+[edit_after_finished_delete_toggle.seq:31] TAP down
++ pebble emu-button --emulator emery --vnc click down --duration 150
+[edit_after_finished_delete_toggle.seq:32] TAP down
++ pebble emu-button --emulator emery --vnc click down --duration 150
+[edit_after_finished_delete_toggle.seq:33] APPMSG --int 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10033=0 --string 10031=12:00
+[edit_after_finished_delete_toggle.seq:34] SCREENSHOT after_finished_row_selected
++ pebble screenshot --emulator emery --vnc --no-open 03_after_finished_row_selected.png
+[edit_after_finished_delete_toggle.seq:35] TAP select
++ pebble emu-button --emulator emery --vnc click select --duration 150
+[edit_after_finished_delete_toggle.seq:36] SLEEP 1
+[edit_after_finished_delete_toggle.seq:37] APPMSG --int 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10033=0 --string 10031=12:00
+[edit_after_finished_delete_toggle.seq:38] SCREENSHOT delete_confirm_shown
++ pebble screenshot --emulator emery --vnc --no-open 04_delete_confirm_shown.png
+[edit_after_finished_delete_toggle.seq:42] TAP select
++ pebble emu-button --emulator emery --vnc click select --duration 150
+[edit_after_finished_delete_toggle.seq:43] SLEEP 1
+[edit_after_finished_delete_toggle.seq:44] APPMSG --int 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10033=0 --string 10031=12:00
+[edit_after_finished_delete_toggle.seq:45] SCREENSHOT should_be_gone_from_list_immediately
++ pebble screenshot --emulator emery --vnc --no-open 05_should_be_gone_from_list_immediately.png
+sequence PASSED - log: run.log

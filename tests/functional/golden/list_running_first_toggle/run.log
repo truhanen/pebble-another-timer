@@ -1,0 +1,38 @@
+sequence: list_running_first_toggle.seq
+platform=emery vnc=1 app_uuid=1df6fc5c-261d-49c7-b339-6ea60cbe6649
+[wipe_and_prep.seq:23] KILL
++ pebble kill
+[wipe_and_prep.seq:24] WIPE
++ pebble wipe
+[wipe_and_prep.seq:25] INSTALL
++ pebble install --emulator emery --vnc
+[wipe_and_prep.seq:26] SLEEP 3
+[wipe_and_prep.seq:53] APPMSG --int 10011=0
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10011=0
+[list_running_first_toggle.seq:22] APPMSG --string 10000="$(printf 'Idle One\037300\0371\036Idle Two\037300\0372\036Running One\037300\0373')"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --string 10000=Idle One3001Idle Two3002Running One3003
+[list_running_first_toggle.seq:23] SLEEP 1
+[list_running_first_toggle.seq:24] APPMSG --int 10020=2 10021=1 10022=200
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=2 10021=1 10022=200
+[list_running_first_toggle.seq:25] SLEEP 1
+[list_running_first_toggle.seq:26] APPMSG --int 10020=0 10021=0 10022=300
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10021=0 10022=300
+[list_running_first_toggle.seq:27] SLEEP 1
+[list_running_first_toggle.seq:28] APPMSG --int 10020=1 10021=0 10022=300
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=1 10021=0 10022=300
+[list_running_first_toggle.seq:29] SLEEP 1
+[list_running_first_toggle.seq:31] APPMSG --int 10004=0
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10004=0
+[list_running_first_toggle.seq:32] SLEEP 1
+[list_running_first_toggle.seq:39] APPMSG --int 10020=2 10029=186 10030=8 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=2 10029=186 10030=8 10033=0 --string 10031=12:00
+[list_running_first_toggle.seq:40] SCREENSHOT running_first_off_running_one_should_trail
++ pebble screenshot --emulator emery --vnc --no-open 01_running_first_off_running_one_should_trail.png
+[list_running_first_toggle.seq:41] APPMSG --int 10004=1
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10004=1
+[list_running_first_toggle.seq:42] SLEEP 1
+[list_running_first_toggle.seq:48] APPMSG --int 10020=2 10029=186 10030=10 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=2 10029=186 10030=10 10033=0 --string 10031=12:00
+[list_running_first_toggle.seq:49] SCREENSHOT running_first_on_running_one_should_lead
++ pebble screenshot --emulator emery --vnc --no-open 02_running_first_on_running_one_should_lead.png
+sequence PASSED - log: run.log

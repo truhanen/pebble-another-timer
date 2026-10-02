@@ -1,0 +1,21 @@
+sequence: app_idle_exit_triggers.seq
+platform=emery vnc=1 app_uuid=1df6fc5c-261d-49c7-b339-6ea60cbe6649
+[wipe_and_prep.seq:23] KILL
++ pebble kill
+[wipe_and_prep.seq:24] WIPE
++ pebble wipe
+[wipe_and_prep.seq:25] INSTALL
++ pebble install --emulator emery --vnc
+[wipe_and_prep.seq:26] SLEEP 3
+[wipe_and_prep.seq:53] APPMSG --int 10011=0
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10011=0
+[app_idle_exit_triggers.seq:12] APPMSG --int 10011=5
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10011=5
+[app_idle_exit_triggers.seq:13] APPMSG --int 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10033=0 --string 10031=12:00
+[app_idle_exit_triggers.seq:14] SCREENSHOT list_idle_exit_5s
++ pebble screenshot --emulator emery --vnc --no-open 01_list_idle_exit_5s.png
+[app_idle_exit_triggers.seq:15] SLEEP 8
+[app_idle_exit_triggers.seq:30] SCREENSHOT should_have_auto_exited_to_watchface --mask-rect 170x45+15+93
++ pebble screenshot --emulator emery --vnc --no-open 02_should_have_auto_exited_to_watchface.png
+sequence PASSED - log: run.log

@@ -1,0 +1,36 @@
+sequence: wakeup_conflict_natural_fire_while_open.seq
+platform=emery vnc=1 app_uuid=1df6fc5c-261d-49c7-b339-6ea60cbe6649
+[wipe_and_prep.seq:23] KILL
++ pebble kill
+[wipe_and_prep.seq:24] WIPE
++ pebble wipe
+[wipe_and_prep.seq:25] INSTALL
++ pebble install --emulator emery --vnc
+[wipe_and_prep.seq:26] SLEEP 3
+[wipe_and_prep.seq:53] APPMSG --int 10011=0
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10011=0
+[wakeup_conflict_natural_fire_while_open.seq:53] APPMSG --string 10027="0"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --string 10027=0
+[wakeup_conflict_natural_fire_while_open.seq:55] APPMSG --string 10000="$(printf 'Quick Timer\03715\0371')"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --string 10000=Quick Timer151
+[wakeup_conflict_natural_fire_while_open.seq:56] SLEEP 1
+[wakeup_conflict_natural_fire_while_open.seq:57] APPMSG --int 10020=0 10021=1 10022=15
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10021=1 10022=15
+[wakeup_conflict_natural_fire_while_open.seq:58] SLEEP 1
+[wakeup_conflict_natural_fire_while_open.seq:66] APPMSG --int 10020=0 10029=11 10030=5 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10029=11 10030=5 10033=0 --string 10031=12:00
+[wakeup_conflict_natural_fire_while_open.seq:67] SCREENSHOT conflict_menu_ok_no_early_slot
++ pebble screenshot --emulator emery --vnc --no-open 01_conflict_menu_ok_no_early_slot.png
+[wakeup_conflict_natural_fire_while_open.seq:82] SLEEP 19
+[wakeup_conflict_natural_fire_while_open.seq:83] APPMSG --int 10020=0 10029=-10 10030=7 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10029=-10 10030=7 10033=0 --string 10031=12:00
+[wakeup_conflict_natural_fire_while_open.seq:84] SCREENSHOT should_now_show_real_alarm_not_conflict_menu
++ pebble screenshot --emulator emery --vnc --no-open 02_should_now_show_real_alarm_not_conflict_menu.png
+[wakeup_conflict_natural_fire_while_open.seq:86] TAP down
++ pebble emu-button --emulator emery --vnc click down --duration 150
+[wakeup_conflict_natural_fire_while_open.seq:87] SLEEP 1
+[wakeup_conflict_natural_fire_while_open.seq:88] APPMSG --int 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10033=0 --string 10031=12:00
+[wakeup_conflict_natural_fire_while_open.seq:89] SCREENSHOT final_state
++ pebble screenshot --emulator emery --vnc --no-open 03_final_state.png
+sequence PASSED - log: run.log

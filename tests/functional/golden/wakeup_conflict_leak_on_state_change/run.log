@@ -1,0 +1,56 @@
+sequence: wakeup_conflict_leak_on_state_change.seq
+platform=emery vnc=1 app_uuid=1df6fc5c-261d-49c7-b339-6ea60cbe6649
+[wipe_and_prep.seq:23] KILL
++ pebble kill
+[wipe_and_prep.seq:24] WIPE
++ pebble wipe
+[wipe_and_prep.seq:25] INSTALL
++ pebble install --emulator emery --vnc
+[wipe_and_prep.seq:26] SLEEP 3
+[wipe_and_prep.seq:53] APPMSG --int 10011=0
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10011=0
+[wakeup_conflict_leak_on_state_change.seq:35] APPMSG --string 10027="0"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --string 10027=0
+[wakeup_conflict_leak_on_state_change.seq:36] APPMSG --string 10000="$(printf 'Timer A\0371200\0371')"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --string 10000=Timer A12001
+[wakeup_conflict_leak_on_state_change.seq:37] SLEEP 1
+[wakeup_conflict_leak_on_state_change.seq:38] APPMSG --int 10020=0 10021=1 10022=1200
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10021=1 10022=1200
+[wakeup_conflict_leak_on_state_change.seq:39] SLEEP 1
+[wakeup_conflict_leak_on_state_change.seq:40] APPMSG --int 10020=0 10029=1196 10030=8 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10029=1196 10030=8 10033=0 --string 10031=12:00
+[wakeup_conflict_leak_on_state_change.seq:41] SCREENSHOT a_silently_resolved_running
++ pebble screenshot --emulator emery --vnc --no-open 01_a_silently_resolved_running.png
+[wakeup_conflict_leak_on_state_change.seq:47] TAP down
++ pebble emu-button --emulator emery --vnc click down --duration 150
+[wakeup_conflict_leak_on_state_change.seq:51] TAP select
++ pebble emu-button --emulator emery --vnc click select --duration 150
+[wakeup_conflict_leak_on_state_change.seq:52] APPMSG --int 10020=0 10029=1186 10030=8 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10029=1186 10030=8 10033=0 --string 10031=12:00
+[wakeup_conflict_leak_on_state_change.seq:53] SCREENSHOT run_control_menu
++ pebble screenshot --emulator emery --vnc --no-open 02_run_control_menu.png
+[wakeup_conflict_leak_on_state_change.seq:54] TAP down
++ pebble emu-button --emulator emery --vnc click down --duration 150
+[wakeup_conflict_leak_on_state_change.seq:55] TAP select
++ pebble emu-button --emulator emery --vnc click select --duration 150
+[wakeup_conflict_leak_on_state_change.seq:56] SLEEP 1
+[wakeup_conflict_leak_on_state_change.seq:63] APPMSG --int 10020=0 10029=1186 10030=20 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10029=1186 10030=20 10033=0 --string 10031=12:00
+[wakeup_conflict_leak_on_state_change.seq:64] SCREENSHOT timer_now_paused
++ pebble screenshot --emulator emery --vnc --no-open 03_timer_now_paused.png
+[wakeup_conflict_leak_on_state_change.seq:72] TAP select
++ pebble emu-button --emulator emery --vnc click select --duration 150
+[wakeup_conflict_leak_on_state_change.seq:73] TAP down
++ pebble emu-button --emulator emery --vnc click down --duration 150
+[wakeup_conflict_leak_on_state_change.seq:74] TAP select
++ pebble emu-button --emulator emery --vnc click select --duration 150
+[wakeup_conflict_leak_on_state_change.seq:75] SLEEP 1
+[wakeup_conflict_leak_on_state_change.seq:82] APPMSG --int 10020=0 10029=1185 10030=20 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10029=1185 10030=20 10033=0 --string 10031=12:00
+[wakeup_conflict_leak_on_state_change.seq:83] SCREENSHOT resumed_running_normally
++ pebble screenshot --emulator emery --vnc --no-open 04_resumed_running_normally.png
+[wakeup_conflict_leak_on_state_change.seq:90] APPMSG --int 10020=0 10029=1180 10030=20 10033=0 --string 10031="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10029=1180 10030=20 10033=0 --string 10031=12:00
+[wakeup_conflict_leak_on_state_change.seq:91] SCREENSHOT final_state_no_conflict_window
++ pebble screenshot --emulator emery --vnc --no-open 05_final_state_no_conflict_window.png
+sequence PASSED - log: run.log
