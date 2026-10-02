@@ -1138,9 +1138,16 @@ static void alarm_click_config(void *ctx) {
 }
 
 // Column reserved along each edge of the alarm screen for a vertical,
-// edge-rotated button label (see draw_edge_rotated_label below) -- also
-// bounds the title's wrap-fallback width in layout_alarm_title, so its
-// centered text never reaches into either column.
+// edge-rotated button label (see draw_edge_rotated_label below).
+// layout_alarm_title no longer uses this flat value for its own
+// wrap-fallback width - it measures each real label via
+// edge_rotated_label_font instead (that flat guess was reserving ~40px
+// per edge when the real labels only ever need ~20-24px, needlessly
+// shrinking the title - see that function's own comment). Still used by
+// layout_alarm_clock's box_w below, which - per ALARM_CLOCK_FONT_KEY's own
+// comment - never actually needs to clear either label column in the
+// first place (a short H:MM/HH:MM string there never reaches this far),
+// so a flat, approximate cap is fine to leave as-is there.
 #define ALARM_EDGE_TOP_MARGIN 4
 #define ALARM_EDGE_BOTTOM_MARGIN 8
 #define ALARM_EDGE_SIDE_MARGIN 0
@@ -1165,8 +1172,33 @@ static void alarm_click_config(void *ctx) {
 // further along that axis (positive = further down the screen), for
 // per-label fine-tuning independent of the other label(s) sharing the same
 // anchor.
-static void draw_edge_rotated_label(GContext *ctx, const char *text, GSize screen,
-    int max_len, bool right_edge, bool anchor_top, int y_offset) {
+// graphics_text_layout_get_content_size's reported height doesn't leave
+// room for descenders - only draw_edge_rotated_label's own scratch/crop/
+// erase boxes need this padding (to avoid clipping a glyph, since those
+// are sized directly off that measurement); it's a DRAWING safety margin,
+// not real claimed ink. edge_rotated_label_font below leaves it out of
+// what it reports, and draw_edge_rotated_label adds it itself, locally,
+// right where it's needed - rather than baking it into the shared
+// measurement and making every OTHER caller (layout_alarm_title's margin
+// reservation - how far the rotated label can actually be SEEN to reach)
+// subtract it back out again. Measured 2026-10-02 via APP_LOG
+// instrumentation that this padding, when it WAS baked into the shared
+// value, was costing "10:00:00" the last few px it needed to render at a
+// noticeably larger font without truncating.
+#define EDGE_LABEL_DESCENDER_PAD 6
+
+// Picks the largest font (same ladder draw_edge_rotated_label itself draws
+// with) whose pre-rotation width fits max_len, and reports its measured
+// size, UNPADDED (see EDGE_LABEL_DESCENDER_PAD's own comment on why) -
+// *out.h is what that label will actually be SEEN to reach along the
+// screen edge once rotated (pre-rotation height becomes post-rotation
+// width - see draw_edge_rotated_label's own comment on this axis swap).
+// Factored out so layout_alarm_title/layout_alarm_clock can reserve
+// exactly what a given label really needs instead of a flat, independently
+// maintained guess (ALARM_EDGE_LABEL_W used to be exactly that: measured
+// 2026-10-02 to be reserving ~40px per edge when the real labels only ever
+// use ~20-24px, needlessly starving the title's own available width).
+static GFont edge_rotated_label_font(const char *text, int max_len, GSize *out) {
   static const char *const keys[] = {
     FONT_KEY_GOTHIC_28_BOLD, FONT_KEY_GOTHIC_24_BOLD, FONT_KEY_GOTHIC_18_BOLD,
   };
@@ -1179,12 +1211,15 @@ static void draw_edge_rotated_label(GContext *ctx, const char *text, GSize scree
         text, font, probe, GTextOverflowModeFill, GTextAlignmentLeft);
     if (sz.w <= max_len) { break; }
   }
-  // graphics_text_layout_get_content_size's reported height doesn't leave
-  // room for descenders -- both the scratch draw box below and the bitmap
-  // cropped from it are sized off sz.h, so pad it before either happens,
-  // rather than only widening the (already-generous) erase padding further
-  // down, which is too late: the glyph itself would already be clipped.
-  sz.h += 6;
+  *out = sz;
+  return font;
+}
+
+static void draw_edge_rotated_label(GContext *ctx, const char *text, GSize screen,
+    int max_len, bool right_edge, bool anchor_top, int y_offset) {
+  GSize sz;
+  GFont font = edge_rotated_label_font(text, max_len, &sz);
+  sz.h += EDGE_LABEL_DESCENDER_PAD;   // scratch/crop/erase need it; layout doesn't
 
   // Scratch: drawn flush-left, well below the title's own band (layout_
   // alarm_title caps the title layer's own frame bottom well above this),
@@ -1468,7 +1503,26 @@ static void layout_alarm_title(void) {
   const int elapsed_h = 26;
   const int row_gap = 2;
   const int full_w = wd - 4;
-  const int narrow_w = wd - 2 * ALARM_EDGE_LABEL_W;
+  // Real reserved width per edge, not a flat guess - see
+  // edge_rotated_label_font's own comment. Same max_len formula every
+  // alarm_lbl_*_update_proc passes to draw_edge_rotated_label, so this
+  // measures the exact same font/size each label will actually render at.
+  // Left column only ever holds "Keep running"; the right column holds
+  // "+1 min" (top) and "Stop" (bottom) at different times the title's own
+  // vertical zone can overlap either of, so it reserves whichever of the
+  // two needs more.
+  const int edge_max_len = h / 2 - 6;
+  GSize edge_sz;
+  // edge_rotated_label_font reports unpadded reach (see its own and
+  // EDGE_LABEL_DESCENDER_PAD's comments) - that's exactly what this
+  // reservation wants, no adjustment needed.
+  edge_rotated_label_font("Keep running", edge_max_len, &edge_sz);
+  const int left_margin = edge_sz.h;
+  edge_rotated_label_font("+1 min", edge_max_len, &edge_sz);
+  int right_margin = edge_sz.h;
+  edge_rotated_label_font("Stop", edge_max_len, &edge_sz);
+  if (edge_sz.h > right_margin) { right_margin = edge_sz.h; }
+  const int narrow_w = wd - left_margin - right_margin;
   const int zone_top = layout_alarm_sub() + row_gap;
   refresh_alarm_clock_text();
   const int clock_top = h - ALARM_CLOCK_BOTTOM_MARGIN - alarm_clock_frame_height();
@@ -1478,11 +1532,15 @@ static void layout_alarm_title(void) {
   GSize sz;
   GFont tf = alarm_title_font(s_alarm_title_buf, full_w, max_h, &sz, s_alarm_title_is_time);
   int box_w = full_w;
+  int title_x = (wd - box_w) / 2;
   if (sz.w > narrow_w) {
     // Wrapped/measured content reaches into the edge columns at full width --
-    // re-measure against the narrower, still-centered box that clears them.
+    // re-measure against the narrower box that clears them (exactly, not
+    // centered within some larger reserved area, since the two margins
+    // aren't necessarily equal).
     tf = alarm_title_font(s_alarm_title_buf, narrow_w, max_h, &sz, s_alarm_title_is_time);
     box_w = narrow_w;
+    title_x = left_margin;
   }
   const int used_h = sz.h < max_h ? sz.h : max_h;   // clip only if even the smallest font overflows
   const int block_h = used_h + row_gap + elapsed_h;
@@ -1490,7 +1548,6 @@ static void layout_alarm_title(void) {
   if (block_top < zone_top) { block_top = zone_top; }   // guard: shouldn't trigger, block_h <= zone_h by construction
   const int title_y = block_top;
   const int elapsed_y = title_y + used_h + row_gap;
-  const int title_x = (wd - box_w) / 2;
   text_layer_set_font(s_alarm_title, tf);
   // The time-format fallback (no name set) must never word-wrap -- see the
   // single_line branch of alarm_title_font -- so the layer's own overflow
