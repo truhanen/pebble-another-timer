@@ -20,8 +20,7 @@
 # screenshots.
 #
 # Usage:
-#   tests/functional/run_sequence.sh <seq-file> [--no-container] [--touch]
-#                                     [--prebuilt-build DIR] [extra flags...]
+#   tests/functional/run_sequence.sh <seq-file> [flags...]
 #   tests/functional/run_sequence.sh --build-only DIR
 #
 # <seq-file> may be given relative to the repo root or as an absolute path
@@ -29,8 +28,84 @@
 # native mode, and translated to a path relative to the repo root for
 # container mode (what the container sees mounted at /src).
 #
-# --no-container: run natively against a shared host emulator instead of
-# inside the container image.
+# Flags (this wrapper's own):
+#
+#   --no-container          Run natively against a shared host emulator
+#                            instead of inside the container image. Fast
+#                            for interactive dev/debugging, but its
+#                            screenshots aren't reproducible run to run -
+#                            never trust a golden comparison/approval made
+#                            this way (see --golden-dir below and
+#                            CLAUDE.md's own caveat).
+#
+#   --golden-dir DIR         Base dir of golden baselines, one
+#                            subdirectory per sequence, to compare this
+#                            run's screenshots against (or approve into,
+#                            with --update-golden). Default:
+#                            tests/functional/golden (this project's own,
+#                            committed baseline set) - override only to
+#                            compare/approve against some other location.
+#                            Forwarded to functional_framework/
+#                            run_sequence.sh; in container mode, the host
+#                            path is mounted into the container at a fixed
+#                            internal path first - on macOS this must be
+#                            somewhere Podman's own VM actually shares (in
+#                            practice, somewhere under $HOME - this repo's
+#                            own tests/functional/golden/ qualifies); a
+#                            bare /tmp/... path fails at podman-run time
+#                            with `Error: statfs ...: no such file or
+#                            directory`, since /tmp isn't in the applehv
+#                            machine's default shared-mount scope.
+#
+#   --touch                  Starts Xvfb and runs the emulator without
+#                            --vnc inside the container instead of the
+#                            default --vnc-only path every other sequence
+#                            uses (see functional_framework/README.md and
+#                            container/README.md's performance note) -
+#                            needed for a sequence using the TOUCH/
+#                            TOUCHDOWN/TOUCHUP/TOUCHMOVE/TOUCHSWEEP/
+#                            TOUCHDRAG instructions. Auto-detected by
+#                            default (including through IMPORTs) in
+#                            container mode - passing it explicitly is
+#                            only needed to force touch mode on a sequence
+#                            this detection doesn't catch. INCOMPATIBLE
+#                            WITH --no-container: a real touchscreen event
+#                            only reaches the guest through a genuine
+#                            SDL/X11 window an Xvfb-backed xdotool can
+#                            target, which native mode has no supported
+#                            way to provide (qemu's --vnc framebuffer
+#                            never delivers touch input, and moving the
+#                            real OS cursor/granting Accessibility
+#                            permissions to automate a native desktop is
+#                            undesirable - see container/Containerfile's
+#                            own comment) - rejected outright rather than
+#                            left to fail confusingly partway through a
+#                            run.
+#
+#   --prebuilt-build DIR     Skip this container's own npm install +
+#                            pebble build and reuse the build/ tree a
+#                            prior --build-only DIR run already produced,
+#                            mounted read-only. DIR must be the SAME
+#                            directory passed to that --build-only call.
+#                            Container-only (rejected with
+#                            --no-container, which has no per-container
+#                            build to skip in the first place). Exists for
+#                            run_all.sh's batch use (build once, reuse
+#                            across every sequence container in the
+#                            batch), not meant for standalone use.
+#
+#   -h, --help               Show this help.
+#
+# Any other flag (e.g. --out-dir, --run-id, --continue-on-error, --vnc/
+# --no-vnc, --update-golden, --mask-rect) is forwarded as-is to
+# tests/functional_framework/run_sequence.sh - see its own --help for the
+# full reference. --fuzz is the one exception: this script always forwards
+# --fuzz 0 (exact match) itself and does not accept it as a flag - every
+# sequence already makes its own live displays deterministic via app-side
+# test hooks or per-screenshot masking (see tests/functional_framework/
+# README.md's SCREENSHOT row) rather than papering over drift with fuzz;
+# same reasoning and the same fixed value as run_all.sh's own "no --fuzz
+# flag, by design".
 #
 # --build-only DIR: build once (npm install + pebble build) inside the
 # same image every sequence container uses, and copy the result to
@@ -39,29 +114,6 @@
 # to build ONCE for a whole batch instead of once per sequence container -
 # a standalone single-sequence run has no such batch to amortize a shared
 # build across, so this isn't meant to be used outside of run_all.sh.
-#
-# --prebuilt-build DIR: skip this container's own npm install + pebble
-# build and reuse the build/ tree a prior --build-only DIR run already
-# produced, mounted read-only. DIR must be the SAME directory passed to
-# that --build-only call. Container-only (rejected with --no-container,
-# which has no per-container build to skip in the first place). Like
-# --build-only, this exists for run_all.sh's batch use, not standalone.
-#
-# --touch: starts Xvfb and runs the emulator without --vnc inside the
-# container instead of the default --vnc-only path every other sequence
-# uses (see functional_framework/README.md and container/README.md's
-# performance note) - needed for a sequence using the TOUCH/TOUCHDOWN/
-# TOUCHUP/TOUCHMOVE/TOUCHSWEEP/TOUCHDRAG instructions. Auto-detected by
-# default (including through IMPORTs) in container mode - passing it
-# explicitly is only needed to force touch mode on a sequence this
-# detection doesn't catch. INCOMPATIBLE WITH --no-container: a real
-# touchscreen event only reaches the guest through a genuine SDL/X11
-# window an Xvfb-backed xdotool can target, which native mode has no
-# supported way to provide (qemu's --vnc framebuffer never delivers touch
-# input, and moving the real OS cursor/granting Accessibility permissions
-# to automate a native desktop is undesirable - see
-# container/Containerfile's own comment) - rejected outright below rather
-# than left to fail confusingly partway through a run.
 #
 # --init is required for container mode (see Containerfile's own comment
 # on why - a real init process as PID 1 is what lets pebble-tool's own
@@ -72,12 +124,14 @@ set -eu
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 IMAGE="${PEBBLE_TEST_IMAGE:-pebble-another-timer-tests}"
 
-# --build-only DIR: build once (inside the same image every sequence
-# container uses, so identical SDK/toolchain - no version-drift risk) and
-# copy the result to DIR/build on the host, instead of running any
-# sequence - used by run_all.sh to build ONCE for a whole batch, then have
-# every sequence container reuse it via --prebuilt-build below instead of
-# repeating npm install + pebble build once per container. See
+usage() {
+  sed -n '2,121p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+}
+
+# --build-only DIR: see this script's own header comment for what/why.
+# Checked before anything else since it's a separate single-purpose mode,
+# not one of the flags in the loop below - it takes the place of
+# <seq-file> entirely rather than modifying a run. See also
 # container/run-sequence-in-container.sh's own --build-only handling.
 if [ "${1:-}" = "--build-only" ]; then
   OUT_BUILD_DIR="${2:?usage: run_sequence.sh --build-only <output-dir>}"
@@ -89,7 +143,11 @@ if [ "${1:-}" = "--build-only" ]; then
     "$IMAGE" --build-only
 fi
 
-SEQ_ARG="${1:?usage: run_sequence.sh <seq-file> [--no-container] [--touch] [extra flags...]}"
+case "${1:-}" in
+  -h|--help) usage; exit 0 ;;
+esac
+
+SEQ_ARG="${1:?usage: run_sequence.sh <seq-file> [flags...] (--help for details)}"
 shift
 
 # Accept an absolute path under the repo (what a human tab-completes to)
@@ -101,18 +159,6 @@ esac
 
 mkdir -p "$REPO_ROOT/tests/functional/out"
 
-# --golden-dir's host path isn't visible inside the container by default -
-# mount it at a fixed internal path and rewrite the flag's value to match,
-# so golden comparison/--update-golden works the same as it does natively.
-# On macOS, this path must be somewhere Podman's own VM actually shares
-# (in practice, somewhere under $HOME - this repo's own tests/functional/
-# golden/ qualifies) - live-verified that a bare /tmp/... path fails with
-# `Error: statfs ...: no such file or directory` at podman-run time, since
-# /tmp isn't in the applehv machine's default shared-mount scope. Not
-# something this script can fix or detect in advance; if you hit that
-# error, move --golden-dir's target under $HOME. Native mode needs none of
-# this - --golden-dir is forwarded to functional_framework/run_sequence.sh
-# unchanged, since it already runs directly against the host filesystem.
 CONTAINER=1
 EXTRA_ARGS=()
 GOLDEN_MOUNT=()
@@ -120,21 +166,16 @@ TOUCH_ENV=()
 TOUCH_REQUESTED=0
 PREBUILT_MOUNT=()
 PREBUILT_ENV=()
+GOLDEN_HOST="$REPO_ROOT/tests/functional/golden"
 while [ $# -gt 0 ]; do
   case "$1" in
     --no-container) CONTAINER=0; shift ;;
-    --golden-dir)
-      GOLDEN_HOST="$2"
-      if [ "$CONTAINER" = "1" ]; then
-        mkdir -p "$GOLDEN_HOST"
-        GOLDEN_HOST="$(cd "$GOLDEN_HOST" && pwd)"
-        GOLDEN_MOUNT=(-v "$GOLDEN_HOST:/golden")
-        EXTRA_ARGS+=(--golden-dir /golden)
-      else
-        EXTRA_ARGS+=(--golden-dir "$GOLDEN_HOST")
-      fi
-      shift 2
-      ;;
+    --golden-dir) GOLDEN_HOST="$2"; shift 2 ;;
+    # Deliberately unsupported here - see this script's own header comment
+    # on why --fuzz is always forced to 0 below rather than exposed as a
+    # flag (same reasoning/value as run_all.sh's own "no --fuzz flag, by
+    # design").
+    --fuzz) echo "--fuzz is not supported: this script always compares exactly (fuzz=0) - see its --help." >&2; exit 1 ;;
     # Opt-in: only sequences using the TOUCH instruction need this - it
     # starts Xvfb and runs the emulator without --vnc inside the container
     # (see container/run-sequence-in-container.sh and container/Containerfile's
@@ -155,9 +196,45 @@ while [ $# -gt 0 ]; do
     # once argument parsing is done (so either flag order works, same
     # reasoning as --touch above).
     --prebuilt-build) PREBUILT_BUILD_DIR="$2"; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    # Flags belonging to functional_framework/run_sequence.sh itself
+    # (--out-dir, --run-id, --continue-on-error, --vnc/--no-vnc,
+    # --update-golden, --mask-rect, ...) - forwarded through unchanged
+    # rather than duplicated here, so this wrapper doesn't have to track
+    # the framework's own flag list. Anything else is a typo, not a
+    # forwardable flag - reject it immediately instead of silently
+    # passing it through and letting the container fail late and
+    # confusingly (as a bare --help once did here before this check
+    # existed).
+    --out-dir|--run-id|--mask-rect) EXTRA_ARGS+=("$1" "$2"); shift 2 ;;
+    --vnc|--no-vnc|--update-golden|--continue-on-error) EXTRA_ARGS+=("$1"); shift ;;
+    -*) echo "Unknown argument: $1" >&2; usage >&2; exit 1 ;;
     *) EXTRA_ARGS+=("$1"); shift ;;
   esac
 done
+
+# Always exact (fuzz=0) - see this script's own header comment and the
+# --fuzz case above.
+EXTRA_ARGS+=(--fuzz 0)
+
+# --golden-dir's host path isn't visible inside the container by default -
+# mount it at a fixed internal path and rewrite the flag's value to match
+# (see this script's own header comment for the macOS/Podman-VM mount-
+# scope caveat this depends on). Native mode needs none of this -
+# --golden-dir is forwarded to functional_framework/run_sequence.sh
+# unchanged, since it already runs directly against the host filesystem.
+# Applied here, after the flag loop, using whatever GOLDEN_HOST ended up
+# as (the default set above, or an explicit --golden-dir override) - so
+# this doesn't matter which order --golden-dir and --no-container were
+# given in.
+if [ "$CONTAINER" = "1" ]; then
+  mkdir -p "$GOLDEN_HOST"
+  GOLDEN_HOST="$(cd "$GOLDEN_HOST" && pwd)"
+  GOLDEN_MOUNT=(-v "$GOLDEN_HOST:/golden")
+  EXTRA_ARGS+=(--golden-dir /golden)
+else
+  EXTRA_ARGS+=(--golden-dir "$GOLDEN_HOST")
+fi
 
 if [ -n "${PREBUILT_BUILD_DIR:-}" ]; then
   if [ "$CONTAINER" != "1" ]; then

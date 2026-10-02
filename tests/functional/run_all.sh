@@ -63,7 +63,10 @@
 #                          tests/functional_framework/README.md's
 #                          SCREENSHOT row), this project's standard for
 #                          getting a real exact match rather than papering
-#                          over drift with fuzz. The underlying framework
+#                          over drift with fuzz. run_sequence.sh (which
+#                          this script calls per sequence) enforces the
+#                          same fuzz=0 itself and rejects --fuzz outright -
+#                          see its own --help. The underlying framework
 #                          still supports --fuzz for a project that needs
 #                          it - see tests/functional_framework/
 #                          run_sequence.sh --help.
@@ -126,8 +129,9 @@ done
 
 # Golden comparison always happens (or approval, with --update-golden) -
 # no "skip verification" mode, see the flag list above. Fuzz is always 0
-# (exact match) - no --fuzz flag, see the flag list above.
-PASSTHROUGH+=(--golden-dir "$GOLDEN_DIR" --fuzz 0)
+# (exact match) - run_sequence.sh enforces that itself now and rejects an
+# explicit --fuzz, so it's not passed here any more either.
+PASSTHROUGH+=(--golden-dir "$GOLDEN_DIR")
 [ "$UPDATE_GOLDEN" = "1" ] && PASSTHROUGH+=(--update-golden)
 
 SEQS=("$SEQ_DIR"/$PATTERN.seq)
