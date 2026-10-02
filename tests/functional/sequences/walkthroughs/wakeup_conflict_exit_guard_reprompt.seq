@@ -47,14 +47,32 @@ SCREENSHOT back_on_main_list_conflict_still_unresolved
 # anyway" (row 1) - no "Ok" row at all in this context.
 TAP back
 SLEEP 1
-APPMSG --int 10020=0 10029=159 10030=8 10033=0 --string 10031="12:00"
+# The 159±8 previously here was measured from a NATIVE run; golden
+# approval only ever happens containerized (see CLAUDE.md), and
+# containerized round-trip timing runs measurably slower - a solo
+# containerized run reliably measured 167s real at this checkpoint (just
+# outside the old ±8 window). Recalibrated from a containerized
+# measurement, 2026-10-01.
+APPMSG --int 10020=0 10029=167 10030=10 10033=0 --string 10031="12:00"
 SCREENSHOT exit_guard_reprompt_shown
 
 # Select "Exit anyway" (row 1: one DOWN then SELECT) and confirm the app
 # actually exits to the watchface instead of re-prompting again or getting
 # stuck. The app has exited by this screenshot (real system watchface, not
 # this app's own UI), so no display override applies here.
+#
+# The OS idle watchface's own hint text rotates between messages (e.g.
+# "Press Down to access Timeline" / "Press Select to access Launcher") -
+# outside this app's control, so it's masked here rather than tuned like
+# an app-side value. --mask-rect is scoped to just THIS screenshot (see
+# run_screenshot/SCREENSHOT_MASK_RECTS in functional_framework/lib/
+# steps.sh) - unlike run_sequence.sh's own whole-run --mask-rect flag, it
+# doesn't blind exit_guard_reprompt_shown above (which uses this same
+# screen region for its own real "Don't exit"/"Exit anyway" content) to
+# the same rect. Region measured 2026-10-01 via a pixel diff across
+# several real captures showing both hint-text variants: tight bbox
+# (19,97)-(182,135), padded a few px to (15,93)-(185,138).
 TAP down
 TAP select
 SLEEP 1
-SCREENSHOT after_exit_anyway
+SCREENSHOT after_exit_anyway --mask-rect 170x45+15+93

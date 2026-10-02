@@ -73,8 +73,14 @@ SCREENSHOT conflict_menu_ok_no_early_slot
 # measured overtime value (see the header comment above for why this is
 # required rather than just omitting the override) - generous tolerance
 # since this value depends on real CLI round-trip timing, not a backdoor.
+#
+# The -14±5 here was right at the edge of its own tolerance window: a
+# solo containerized run measured +0:10 real overtime (barely inside the
+# old 9-19s window), so ordinary run-to-run jitter could easily push it
+# to BAD, as observed 2026-10-01 in a full-suite run. Recentered on the
+# measured value with more margin.
 SLEEP 19
-APPMSG --int 10020=0 10029=-14 10030=5 10033=0 --string 10031="12:00"
+APPMSG --int 10020=0 10029=-10 10030=7 10033=0 --string 10031="12:00"
 SCREENSHOT should_now_show_real_alarm_not_conflict_menu
 
 TAP down

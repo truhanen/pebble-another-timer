@@ -86,7 +86,19 @@ SCREENSHOT duration_dial_default
 TOUCHDOWN 170 135
 SLEEP 1.2
 TOUCHUP
-SLEEP 1
+# The SLEEP 1 originally here (settling the dial-commit-then-keyboard-open
+# transition tuned above) left a SEPARATE, previously misdiagnosed flake:
+# multitap_keyboard.c's text-entry caret blinks at 2Hz (CARET_BLINK_MS=500)
+# for the first CARET_IDLE_MS=4000 after the keyboard opens, then rests
+# permanently visible once that idle window passes. A screenshot taken
+# only ~1s after opening lands squarely inside that blinking window, so
+# whether the caret happens to be on or off is a real coin flip each run -
+# confirmed directly: a failing run's screenshot diffed against golden
+# showed ONLY the caret glyph differing, nothing touch/gesture-related.
+# Lengthened to clear CARET_IDLE_MS with real margin so the caret has
+# settled to its deterministic steady-on resting state before the
+# screenshot, independent of blink phase. Fixed 2026-10-01.
+SLEEP 4.5
 APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT keyboard_open
 

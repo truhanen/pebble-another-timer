@@ -61,7 +61,10 @@ APPMSG --int 10020=0 10029=-8 10030=5 10033=0 --string 10031="12:00"
 SCREENSHOT alarm_just_fired_elapsed_near_0
 SLEEP 25
 APPMSG --int 10020=0 10029=-35 10030=8 10033=0 --string 10031="12:00"
-SCREENSHOT alarm_elapsed_should_now_read_about_5s
+# Renamed 2026-10-02 - "about_5s" was stale from before the gap above was
+# retuned from an original 5s to the current 25s (see this file's own
+# header comment on that history); the real value here is ~35s overtime.
+SCREENSHOT alarm_elapsed_should_now_read_about_35s
 TAP down
 SLEEP 1
 # Idle/stopped after Stop - tc_reset() puts it back to the full configured

@@ -40,12 +40,15 @@ SLEEP 16
 # variance (~±2-3s) was a LARGE fraction of that tiny value (114%,
 # tol=8 vs value=7). Waiting longer doesn't widen that same ~2-3s of
 # round-trip variance, so it shrinks as a fraction of a bigger baseline
-# instead. Live-verified (native x2, containerized x1, 2026-10-01) with
-# no override sent (to read the real, live value) - Timer A (idx 0, the
-# one whose alarm fired first): 14s, 18s, 19s - center ~17, tolerance 6
-# comfortably covers the observed spread (relative ~35%, down from 114%).
-APPMSG --int 10020=0 10029=-17 10030=6 10033=0 --string 10031="12:00"
-SCREENSHOT both_running_5s
+# instead.
+#
+# No screenshot is taken here (at the "both still running" point the
+# comment above describes) - by the time SLEEP 16 has elapsed, both
+# timers have certainly already fired, so a screenshot at this point
+# could only ever show the alarm screen, never the "both still running"
+# list state its name would suggest. Removed 2026-10-01 rather than kept
+# as a confusingly-named alarm-screen screenshot indistinguishable in
+# intent from first_alarm_showing below.
 
 # 7 more real seconds pass. Live-verified (same runs): Timer A 23s, 29s,
 # 31s - center ~27, tolerance 8 covers the observed spread (relative ~30%,

@@ -19,10 +19,12 @@ APPMSG --int 10018=1
 APPMSG --string 10000="$(printf 'Quick Timer\0375\0371')"
 SLEEP 1
 APPMSG --int 10020=0 10021=1 10022=5
-# Despite this screenshot's name, this checkpoint is expected to show the
-# alarm screen, not a running row - a 5s duration this soon after the
-# backdoor call is borderline enough that its OWN STATE (running vs.
-# alarm), not just its numeric value, turned out to vary by environment:
+# This checkpoint shows the alarm screen, not a running row (renamed from
+# the earlier, misleading "running_5s" on 2026-10-02 - see
+# alarm_multiple_queue.seq's matching fix/comment for the same mistake) -
+# a 5s duration this soon after the backdoor call is borderline enough
+# that its OWN STATE (running vs. alarm), not just its numeric value,
+# turned out to vary by environment:
 # a plain "SLEEP 1" here reliably crossed into overtime natively (CLI
 # round-trip overhead alone exceeded 5s), but the exact same sequence run
 # containerized (tests/functional/docker/run_container.sh, solo, no other
@@ -42,8 +44,15 @@ APPMSG --int 10020=0 10021=1 10022=5
 # 2026-10-01) with no override sent (to read the real, live value): 13s,
 # 15s, 15s - center ~14, tolerance 5 comfortably covers the observed
 # spread with margin (relative ~36%, down from 120%).
+#
+# The SLEEP 16 described above was never actually added when this file
+# was last edited - only this comment was. Without it, barely any real
+# time elapsed before the override check below, so the timer was still
+# RUNNING (not overtime at all) at that point, making the -14s overtime
+# assumption deterministically wrong (not flaky) every run. Adding it now.
+SLEEP 16
 APPMSG --int 10020=0 10029=-14 10030=5 10033=0 --string 10031="12:00"
-SCREENSHOT running_5s
+SCREENSHOT alarm_showing_after_5s_timer
 
 # Let 7 more real seconds pass. Live-verified (same 3 runs): 22s, 27s,
 # 27s - center ~24, tolerance 7 covers the observed spread (relative ~29%,

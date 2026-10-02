@@ -19,4 +19,12 @@ SLEEP 8
 # idle-exit is broken (the bug this test exists to catch), sending an
 # AppMessage to this still-running app right at the idle boundary risks
 # being read as activity and masking the exact failure being tested for.
-SCREENSHOT should_have_auto_exited_to_watchface
+#
+# --mask-rect is safe here despite the above: it's a purely local,
+# post-capture image edit (ImageMagick painting over the already-saved
+# PNG) - no AppMessage, no app interaction of any kind - masking the OS
+# watchface's own rotating hint text, which would otherwise make this
+# golden intermittently fail for reasons having nothing to do with
+# idle-exit (see wakeup_conflict_exit_guard_reprompt.seq's identical
+# checkpoint for the full reasoning and how this rect was measured).
+SCREENSHOT should_have_auto_exited_to_watchface --mask-rect 170x45+15+93

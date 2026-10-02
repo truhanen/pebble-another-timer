@@ -4217,7 +4217,18 @@ static void inbox_received(DictionaryIterator *iter, void *ctx) {
           t->remaining = secs;
         } else {
           t->state = TS_IDLE;
-          t->remaining = secs < 0 ? 0 : secs;
+          // Matches tc_reset(): a real Stop always snaps back to the full
+          // configured duration - "idle with time left off the full
+          // duration" isn't a state a real user can ever reach. Without an
+          // explicit TestSetTimerRemaining, reset to the full duration
+          // instead of falling back to a live-elapsed snapshot (secs, used
+          // by the TS_PAUSED branch above) - that fallback let this
+          // backdoor land a timer in a screen state impossible in actual
+          // app usage, which showed up as the idle row in
+          // wakeup_conflict_basic_resolutions.seq's golden drifting by a
+          // real elapsed second between runs. An explicit
+          // TestSetTimerRemaining is still honored exactly as before.
+          t->remaining = rem_t ? (secs < 0 ? 0 : secs) : t->duration;
           t->end_time = 0;
           t->alarm_pending = false;
           t->alarm_notified = false;

@@ -63,7 +63,14 @@ SCREENSHOT idle_duration_changed_remaining_should_match
 # earlier "TAP down" here was a no-op that left the long-press re-opening
 # Idle Timer's own menu again. UP (not down) is what actually reaches
 # Running Timer at row 1 from here.
-APPMSG --int 10020=1 10029=253 10030=10 10033=0 --string 10031="12:00"
+#
+# The 253±10 previously here was measured from a NATIVE run; golden
+# approval only ever happens containerized (see CLAUDE.md), and
+# containerized round-trip timing runs measurably slower here - a solo
+# containerized run reliably measured 277s real at this checkpoint, well
+# outside that native-derived window. Recalibrated from a containerized
+# measurement, 2026-10-01.
+APPMSG --int 10020=1 10029=277 10030=12 10033=0 --string 10031="12:00"
 SCREENSHOT back_on_main_list_already
 
 # --- Running Timer: row 1 ---
@@ -79,7 +86,18 @@ TAP select
 TAP up
 TAP select
 SLEEP 1
-APPMSG --int 10020=1 10029=217 10030=12 10033=0 --string 10031="12:00"
+# The 217±12 previously here was also measured natively; three separate
+# solo containerized runs reliably measured 259-260s real at this
+# checkpoint (center confirmed correct, not a bad estimate) - but a
+# full-suite run under real -j2 parallel contention still pushed it to
+# BAD despite the already-widened ±15 (2026-10-02), the same class of
+# contention-driven overrun as run_control_plus_minus's much more severe
+# case. This checkpoint sits deep into the sequence (idle-menu nav +
+# running-menu nav + two duration-dial edits all precede it), so it
+# accumulates more real round-trip variance than most. Widened further
+# for real contention headroom rather than re-centering on a still-
+# correct value.
+APPMSG --int 10020=1 10029=260 10030=25 10033=0 --string 10031="12:00"
 SCREENSHOT running_duration_changed_should_NOT_affect_live_countdown
 # The running row's FIRST/left number on its second line (the genuine
 # remaining time) should read a value consistent with 300 minus real

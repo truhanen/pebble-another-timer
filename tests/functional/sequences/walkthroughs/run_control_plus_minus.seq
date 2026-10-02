@@ -37,21 +37,27 @@ APPMSG --int 10020=0 10029=286 10030=8 10033=0 --string 10031="12:00"
 SCREENSHOT plus_one_selected
 TAP select
 SLEEP 1
-# Measured: ~23s after T0; designed 360 (+1 min just fired), actual ~337.
-APPMSG --int 10020=0 10029=337 10030=8 10033=0 --string 10031="12:00"
+# The values below down to minus_one_selected/should_read_about_5_00 were
+# all previously measured from a NATIVE run; golden approval only ever
+# happens containerized (see CLAUDE.md), and containerized round-trip
+# timing runs measurably slower here. Recalibrated from solo containerized
+# measurements, 2026-10-01: 348s here (was estimated 337).
+APPMSG --int 10020=0 10029=348 10030=10 10033=0 --string 10031="12:00"
 SCREENSHOT should_read_about_6_00
 
 # Re-enter (dl_select doesn't close the detail window on +/-1min, so the
 # menu should still be open here - this second TAP select is defensive in
 # case that assumption is wrong).
 TAP down
-# Measured: ~31s after T0; still designed 360 (pre -1-exec), actual ~329.
-APPMSG --int 10020=0 10029=329 10030=8 10033=0 --string 10031="12:00"
+# Recalibrated from a containerized measurement, 2026-10-01: 344s (was
+# estimated 329).
+APPMSG --int 10020=0 10029=344 10030=10 10033=0 --string 10031="12:00"
 SCREENSHOT minus_one_selected
 TAP select
 SLEEP 1
-# Measured: ~40s after T0; designed 300 (-1 min just fired), actual ~260.
-APPMSG --int 10020=0 10029=260 10030=8 10033=0 --string 10031="12:00"
+# Recalibrated from a containerized measurement, 2026-10-01: 280s (was
+# estimated 260).
+APPMSG --int 10020=0 10029=280 10030=12 10033=0 --string 10031="12:00"
 SCREENSHOT should_read_about_5_00
 
 # Force it down toward the floor with several more -1 min presses (this
@@ -63,9 +69,11 @@ TAP select
 TAP select
 TAP select
 SLEEP 1
-# Measured: ~59s after T0; designed 0 (net +1-1-1*5=0 shift), actual ~-59
-# (already ~59s into overtime by this point - the alarm has genuinely
-# fired for real, which is why this screenshot is the alarm screen, not
-# the run-control menu).
-APPMSG --int 10020=0 10029=-59 10030=10 10033=0 --string 10031="12:00"
+# Measured: designed 0 (net +1-1-1*5=0 shift) - already well into overtime
+# by this point (the alarm has genuinely fired for real, which is why this
+# screenshot is the alarm screen, not the run-control menu). The -59
+# previously here was measured natively; a solo containerized run
+# reliably measured ~29s real overtime at this checkpoint. Recalibrated
+# from a containerized measurement, 2026-10-01.
+APPMSG --int 10020=0 10029=-29 10030=15 10033=0 --string 10031="12:00"
 SCREENSHOT after_many_minus_presses_should_not_be_negative

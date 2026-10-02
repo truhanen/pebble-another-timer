@@ -1,58 +1,100 @@
 #!/usr/bin/env bash
 # Runs every functional-test sequence under sequences/walkthroughs/,
-# containerized, across several podman containers AT ONCE (see
-# run_sequence.sh/container/Containerfile) - the "does the whole suite
-# pass" / CI / golden-approval entrypoint for this project. Each container
-# gets its own private copy of the source (see
-# container/run-sequence-in-container.sh) and its own qemu-pebble/pypkjs
+# containerized, across several podman containers AT ONCE - the "does the
+# whole suite pass" / CI / golden-approval entrypoint for this project.
+#
+# Container mechanics (see run_sequence.sh/container/Containerfile): each
+# container gets its own private copy of the source
+# (container/run-sequence-in-container.sh) and its own qemu-pebble/pypkjs
 # pair on isolated container-internal ports, so there's no shared state
 # between parallel jobs to race on.
 #
-# CONTAINERIZED EXECUTION ONLY - THIS IS DELIBERATE, NOT A MISSING
-# FEATURE. A native run's screenshots are not reproducible run to run (the
-# emulator's displayed clock/elapsed counters depend on real wall-clock
-# time with no pinning - see wipe_and_prep.seq's own comment for why
-# pinning it natively was tried and reverted), which would make this
-# script's own pass/fail verdict meaningless. If you want a fast
-# single-sequence run for interactive dev/debugging (attaching VNC, poking
-# at emulator state by hand, avoiding container image rebuilds), use
-# tests/functional/run_sequence.sh --no-container against your own host
-# emulator instead - that native path still exists and is fully
-# supported for that purpose, it's just never treated as authoritative for
-# "does this pass" or as a source for approving a golden baseline
-# (update_golden() in tests/functional_framework/lib/golden.sh enforces
-# this at the mechanism level too, independent of this script).
+# CONTAINERIZED EXECUTION ONLY - deliberate, not a missing feature. A
+# native run's screenshots aren't reproducible run to run (the emulator's
+# displayed clock/elapsed counters depend on real wall-clock time with no
+# pinning - see wipe_and_prep.seq's own comment for why pinning it
+# natively was tried and reverted), which would make this script's own
+# pass/fail verdict meaningless. For a fast single-sequence run for
+# interactive dev/debugging (attaching VNC, poking at emulator state by
+# hand, avoiding container image rebuilds), use `run_sequence.sh
+# --no-container` against your own host emulator instead - fully
+# supported for that, just never authoritative for "does this pass" or
+# for approving a golden baseline (update_golden() in lib/golden.sh
+# enforces this independently of this script).
 #
 # Usage:
 #   tests/functional/run_all.sh [-j N] [--pattern GLOB]
-#                                [--golden-dir DIR] [--fuzz PERCENT]
-#                                [--mask-rect WxH+X+Y] [--update-golden]
+#                                [--golden-dir DIR] [--update-golden]
 #                                [--continue-on-error]
 #
-# -j N sets how many containers run at once (default 4 - a qemu-pebble
-# instance is lightweight (Cortex-M33 TCG emulation), so this is mostly
-# bounded by host CPU/memory for N concurrent Rosetta-translated x86_64
-# containers, not by the emulator itself; raise it if the host has room).
-# --pattern restricts which sequences run, matched against each .seq
-# file's basename glob (e.g. --pattern 'wakeup_conflict_*' for just that
-# family) - default '*' (everything).
-# --mask-rect has NO default - every sequence makes its own live displays
-# deterministic via the TestSetTimerRemainingDisplay/TestSetClockDisplay/
-# TestSetLaunchElapsedDisplaySec AppMessage families (each sequence sends
-# the ones it needs, tolerance-checked, immediately before each
-# screenshot; see main.c's effective_now_for()), so masking the bottom bar
-# out of comparison isn't needed at all. Pass --mask-rect explicitly only
-# if some sequence shows a live region these overrides don't (yet) cover.
-# The image must already be built - see container/Containerfile's own
-# header.
+# Flags:
+#   -j N                   How many containers run at once. Default: 2
+#                          (lowered from 4 on 2026-10-01 - see "Why -j2"
+#                          below). A qemu-pebble instance itself is
+#                          lightweight (Cortex-M33 TCG emulation), so this
+#                          is bounded by host CPU/memory for N concurrent
+#                          Rosetta-translated x86_64 containers, not by
+#                          the emulator - raise it if the host has room.
 #
-# Failing sequences do NOT stop this script - it always runs every
-# matching sequence and reports a summary at the end, exiting non-zero
-# only if at least one sequence failed. (--continue-on-error, if given, is
-# passed through to each individual run too, so a failed STEP within one
-# sequence doesn't even stop that one sequence early - a different
-# granularity from this script's own always-continue behavior across
-# sequences.)
+#   --pattern GLOB         Restrict which sequences run, matched against
+#                          each .seq file's basename (e.g.
+#                          'wakeup_conflict_*' for just that family).
+#                          Default: '*' (everything).
+#
+#   --golden-dir DIR       Base dir of golden baselines, one subdirectory
+#                          per sequence, ALWAYS compared against (or
+#                          approved into, with --update-golden) - this
+#                          script has no "skip verification" mode. Only
+#                          override this to compare/approve against some
+#                          other location. Default: tests/functional/
+#                          golden (this project's own, committed baseline
+#                          set).
+#
+#   --update-golden        APPROVE each sequence's own output as the new
+#                          baseline under --golden-dir, instead of
+#                          comparing against the existing one (overwrites
+#                          it).
+#
+#                          Comparison is always exact (fuzz=0, no
+#                          tolerance) - this script has no --fuzz flag,
+#                          by design: every sequence already makes its own
+#                          live displays deterministic via app-side test
+#                          hooks or per-screenshot masking (see
+#                          tests/functional_framework/README.md's
+#                          SCREENSHOT row), this project's standard for
+#                          getting a real exact match rather than papering
+#                          over drift with fuzz. The underlying framework
+#                          still supports --fuzz for a project that needs
+#                          it - see tests/functional_framework/
+#                          run_sequence.sh --help.
+#
+#   --continue-on-error    Forwarded to each sequence's own step loop, so
+#                          a failed STEP within one sequence doesn't stop
+#                          that sequence early either. This script itself
+#                          always runs every matching sequence regardless
+#                          of this flag - see "Failure behavior" below.
+#
+# Why -j2 (lowered from 4, 2026-10-01):
+#   Several sequences carry tight, real-wall-clock-timing-derived
+#   screenshot assertions (e.g. run_control_plus_minus.seq). -j4 was
+#   observed to occasionally starve a container badly enough under real
+#   host CPU contention that a short-duration timer fired mid-sequence
+#   well before its assumed real-time budget - not a few-seconds
+#   tolerance miss but an entirely different, unrecoverable screen state.
+#   -j2 leaves meaningfully more CPU headroom per container. Raise back
+#   to 4+ only on a host with room to spare, and expect that failure
+#   class to resurface if so.
+#
+# The container image must already be built - see container/Containerfile's
+# own header.
+#
+# Failure behavior:
+#   Failing sequences do NOT stop this script - it always runs every
+#   matching sequence and reports a summary at the end, exiting non-zero
+#   only if at least one sequence failed. --continue-on-error is a
+#   different granularity (see the flag list above): it keeps a single
+#   sequence's OWN step loop going after a failed step, rather than
+#   aborting that one sequence early.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -61,26 +103,32 @@ SEQ_DIR="$REPO_ROOT/tests/functional/sequences/walkthroughs"
 RUN_SEQUENCE="$SCRIPT_DIR/run_sequence.sh"
 
 usage() {
-  sed -n '2,55p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,97p' "$0" | sed 's/^# \{0,1\}//'
 }
 
-JOBS=4
+JOBS=2
 PATTERN='*'
+GOLDEN_DIR="$REPO_ROOT/tests/functional/golden"
+UPDATE_GOLDEN=0
 PASSTHROUGH=()
 
 while [ $# -gt 0 ]; do
   case "$1" in
     -j) JOBS="$2"; shift 2 ;;
     --pattern) PATTERN="$2"; shift 2 ;;
-    --golden-dir) PASSTHROUGH+=(--golden-dir "$2"); shift 2 ;;
-    --update-golden) PASSTHROUGH+=(--update-golden); shift ;;
-    --fuzz) PASSTHROUGH+=(--fuzz "$2"); shift 2 ;;
-    --mask-rect) PASSTHROUGH+=(--mask-rect "$2"); shift 2 ;;
+    --golden-dir) GOLDEN_DIR="$2"; shift 2 ;;
+    --update-golden) UPDATE_GOLDEN=1; shift ;;
     --continue-on-error) PASSTHROUGH+=(--continue-on-error); shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage; exit 1 ;;
   esac
 done
+
+# Golden comparison always happens (or approval, with --update-golden) -
+# no "skip verification" mode, see the flag list above. Fuzz is always 0
+# (exact match) - no --fuzz flag, see the flag list above.
+PASSTHROUGH+=(--golden-dir "$GOLDEN_DIR" --fuzz 0)
+[ "$UPDATE_GOLDEN" = "1" ] && PASSTHROUGH+=(--update-golden)
 
 SEQS=("$SEQ_DIR"/$PATTERN.seq)
 if [ ! -e "${SEQS[0]}" ]; then
@@ -102,6 +150,21 @@ trap 'rm -rf "$JOB_DIR"' EXIT
 export RUN_ID_OVERRIDE="$(date '+%Y%m%d_%H%M%S')"
 echo "Batch output directory: $REPO_ROOT/tests/functional/out/$RUN_ID_OVERRIDE/"
 
+# Build ONCE for this whole batch (inside the same image every sequence
+# container uses, so identical SDK/toolchain - no version-drift risk)
+# instead of once per sequence container - every one of them would
+# otherwise independently npm-install + pebble-build the exact same
+# source under the exact same APP_TEST_HOOKS, producing identical output
+# regardless of which container does it. See run_sequence.sh's own
+# --build-only/--prebuilt-build comments and container/run-sequence-in-
+# container.sh's PREBUILT_BUILD handling for the rest of this mechanism.
+# Gitignored scratch dir (bare "build" in .gitignore already covers any
+# path component named that), cleaned up on exit alongside JOB_DIR.
+SHARED_BUILD_DIR="$REPO_ROOT/tests/functional/container/build/$RUN_ID_OVERRIDE"
+trap 'rm -rf "$JOB_DIR" "$SHARED_BUILD_DIR"' EXIT
+echo "Building once (shared across all $JOBS parallel containers)..."
+"$RUN_SEQUENCE" --build-only "$SHARED_BUILD_DIR"
+
 # One small job script per sequence (rather than trying to pass an array
 # of PASSTHROUGH args through xargs -I{} directly, which mangles multi-
 # word arguments) - each writes its own pass/fail marker file, since xargs
@@ -114,7 +177,7 @@ for seq in "${SEQS[@]}"; do
   {
     echo "#!/usr/bin/env bash"
     echo "set -u"
-    printf '%q ' "$RUN_SEQUENCE" "$seq"
+    printf '%q ' "$RUN_SEQUENCE" "$seq" --prebuilt-build "$SHARED_BUILD_DIR"
     for a in "${PASSTHROUGH[@]+"${PASSTHROUGH[@]}"}"; do printf '%q ' "$a"; done
     echo
     echo "echo \$? > '$JOB_DIR/result_$name'"

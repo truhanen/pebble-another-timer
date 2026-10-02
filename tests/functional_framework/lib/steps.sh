@@ -1,7 +1,54 @@
 # Instruction dispatch: one run_* function per keyword. Sourced by
-# run_sequence.sh, which must set PLATFORM, VNC, APP_UUID, RUN_OUT_DIR and
-# SCREENSHOT_COUNTER (a plain variable, not exported) before calling
-# dispatch_step.
+# run_sequence.sh, which must set PLATFORM, VNC, APP_UUID, RUN_OUT_DIR,
+# SCREENSHOT_COUNTER and MASK_RECT (plain variables, not exported) before
+# calling dispatch_step.
+
+# _im_convert_cmd/_mask_rect_apply: used only by run_screenshot below, to
+# paint a solid black rectangle over a region of a just-captured screenshot
+# - for a screen region with genuine, expected non-determinism (e.g. the
+# OS watchface's rotating hint text) that a test can't otherwise pin down.
+# Baking the mask into the file at CAPTURE time (not as a throwaway copy
+# at golden-comparison time, which an earlier version of this did) means
+# the masked region is always solid black in every screenshot this
+# produces, golden or not - a human reviewing either sees the same
+# deterministic black box, and a committed golden file never has some
+# arbitrary, non-deterministic OS-chosen value baked into it that would
+# otherwise jitter every time the file is re-approved for an unrelated
+# reason. golden.sh's comparison is then a plain, mask-unaware pixel
+# diff - both sides already have identical content in that region by
+# construction, not by any special-cased comparison logic.
+#
+# Sets IM_CONVERT_CMD to ("magick") or ("convert"), whichever is actually
+# on PATH - ImageMagick 7 folds the old standalone `convert` binary into
+# the `magick` subcommand and some packagings don't also install a
+# standalone `convert` shim, so `magick` is tried first.
+_im_convert_cmd() {
+  if command -v magick >/dev/null 2>&1; then
+    IM_CONVERT_CMD=(magick)
+  elif command -v convert >/dev/null 2>&1; then
+    IM_CONVERT_CMD=(convert)
+  else
+    return 1
+  fi
+}
+
+# _mask_rect_apply <png> <geometry WxH+X+Y>
+# Paints a solid black rectangle over the given region, IN PLACE.
+_mask_rect_apply() {
+  local path="$1" geometry="$2"
+  if [[ ! "$geometry" =~ ^([0-9]+)x([0-9]+)\+([0-9]+)\+([0-9]+)$ ]]; then
+    log_error "invalid --mask-rect '$geometry' (expected WxH+X+Y, e.g. 200x30+0+198)"
+    return 1
+  fi
+  local w="${BASH_REMATCH[1]}" h="${BASH_REMATCH[2]}" x="${BASH_REMATCH[3]}" y="${BASH_REMATCH[4]}"
+  local x2=$((x + w)) y2=$((y + h))
+  local IM_CONVERT_CMD=()
+  if ! _im_convert_cmd; then
+    log_error "ImageMagick not found (need 'magick' or 'convert' on PATH) - cannot apply --mask-rect"
+    return 1
+  fi
+  "${IM_CONVERT_CMD[@]}" "$path" -fill black -draw "rectangle $x,$y $x2,$y2" "$path"
+}
 
 # pebble_emu <subcommand> [args...]
 # Runs `pebble <subcommand> --emulator $PLATFORM [--vnc] [args...]`, i.e.
@@ -67,7 +114,20 @@ run_sleep() {
 }
 
 run_screenshot() {
-  local label="$1"
+  local label="$1"; shift
+  # A per-screenshot --mask-rect overrides run_sequence.sh's own
+  # whole-run MASK_RECT default (see its --mask-rect flag) - lets ONE
+  # screenshot in a sequence mask a region of genuine, expected
+  # non-determinism (e.g. the OS watchface's rotating hint text) without
+  # forcing every OTHER screenshot in the same sequence to also mask that
+  # same screen region.
+  local mask_rect="${MASK_RECT:-}"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --mask-rect) mask_rect="$2"; shift 2 ;;
+      *) log_error "run_screenshot: unknown argument: $1"; return 1 ;;
+    esac
+  done
   # Re-pin the emulator's clock (if CMD emu-set-time was ever used earlier
   # in this run - see run_cmd/_clock_pin_track below) immediately before
   # capturing. pebble-tool's own PebbleTransportPypkjs.post_connect()
@@ -88,6 +148,9 @@ run_screenshot() {
   # --no-open: without it, pebble-tool tries to open the image in a GUI
   # viewer, which hangs forever in a headless sandbox.
   pebble_emu screenshot --no-open "$RUN_OUT_DIR/$fname"
+  if [ -n "$mask_rect" ]; then
+    _mask_rect_apply "$RUN_OUT_DIR/$fname" "$mask_rect" || return 1
+  fi
 }
 
 run_appmsg() {

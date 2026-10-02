@@ -27,7 +27,12 @@ TAP select
 TAP up
 TAP select
 APPMSG --int 10033=0 --string 10031="12:00"
-SCREENSHOT timer_committed
+# Both remaining screenshots show the real system watchface (see header
+# comment) - its own hint text rotates between messages, outside this
+# app's control, so both are masked rather than tuned like an app-side
+# value (see wakeup_conflict_exit_guard_reprompt.seq's identical
+# checkpoint for the full reasoning and how this rect was measured).
+SCREENSHOT timer_committed --mask-rect 170x45+15+93
 SLEEP 1
 APPMSG --int 10033=0 --string 10031="12:00"
-SCREENSHOT should_already_be_running_and_near_watchface
+SCREENSHOT should_already_be_running_and_near_watchface --mask-rect 170x45+15+93

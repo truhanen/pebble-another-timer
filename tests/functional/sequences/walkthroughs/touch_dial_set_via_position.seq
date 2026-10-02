@@ -20,9 +20,15 @@ IMPORT ../common/wipe_and_prep.seq
 # keyboard (commits with an empty label) and stop RunOnCreate/
 # AutoReturnStart from racing this sequence's own screenshot.
 APPMSG --int 10016=0 10015=0 10003=0
+# Unlike every sibling touch_dial_*.seq, this file never froze the
+# elapsed-since-launch/clock display before its screenshots, leaving the
+# bottom bar's elapsed counter free to drift by real wall-clock time
+# between runs. Added 2026-10-01, matching touch_dial_below_one_minute.seq.
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT list_empty
 
 TAP select
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT duration_dial_default
 
 # Dial centre is (100, 135): grect_center_point of the full 200x228 window
@@ -41,6 +47,7 @@ SCREENSHOT duration_dial_default
 # (touch.c's animate_circle/circle_grow, ~100ms) finish first.
 TOUCHDOWN 170 135
 SLEEP 0.2
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT touch_dial_open_at_15
 TOUCHUP
 
@@ -51,4 +58,5 @@ TOUCHUP
 # and the dial's own close animation before the list screen is stable to
 # screenshot.
 SLEEP 0.5
+APPMSG --int 10033=0 --string 10031="12:00"
 SCREENSHOT timer_created

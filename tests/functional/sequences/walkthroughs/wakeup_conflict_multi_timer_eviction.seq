@@ -77,8 +77,19 @@ SCREENSHOT b_silently_resolved_evicted_a
 # owner is still the target).
 APPMSG --string 10028="0,1,2,3,4,5,6,7"
 SLEEP 1
-APPMSG --int 10020=0 10029=273 10030=10 10033=0 --string 10031="12:00"
-APPMSG --int 10020=1 10029=133 10030=8 10033=0 --string 10031="12:00"
+# The 273±10 previously here (Timer A) was measured from a NATIVE run;
+# golden approval only ever happens containerized (see CLAUDE.md), and
+# containerized round-trip timing runs measurably slower - a solo
+# containerized run reliably measured 283s real at this checkpoint.
+# Recalibrated from a containerized measurement, 2026-10-01.
+APPMSG --int 10020=0 10029=283 10030=10 10033=0 --string 10031="12:00"
+# Timer B's 133±8 was already marginal (a solo containerized run measured
+# 141s, right at the edge of that window) and tipped into BAD under real
+# parallel-batch CPU contention (observed 2026-10-01, run_all.sh -j4),
+# which adds more real delay than a solo run does. Recalibrated to the
+# solo-measured value with a much wider tolerance to absorb that
+# contention-driven slack, same reasoning as every other checkpoint above.
+APPMSG --int 10020=1 10029=141 10030=20 10033=0 --string 10031="12:00"
 SCREENSHOT b_still_fine_after_widened_block
 
 # Take B out of the running pool - A becomes the global-soonest target
@@ -96,16 +107,28 @@ SCREENSHOT b_still_fine_after_widened_block
 # for A, proving it wasn't silently abandoned when its plan was evicted.
 APPMSG --int 10020=1 10021=0
 SLEEP 1
-# B is now idle (its shown value, if any, is always its real
-# time-independent t->remaining regardless of override - see
-# run_control_pause_resume_stop.seq's comment on this), so only A gets an
-# override here.
-APPMSG --int 10020=0 10029=262 10030=10 10033=0 --string 10031="12:00"
+# B is now idle. Its shown value is always its real time-independent
+# t->remaining regardless of override (see run_control_pause_resume_stop.
+# seq's comment on this) - so only A gets an override here - but as of the
+# 2026-10-01 TestSetTimerIndex backdoor fix (main.c), going idle without an
+# explicit TestSetTimerRemaining now resets t->remaining to the full
+# configured duration (150s/2:30), matching tc_reset()'s real Stop
+# semantics, instead of freezing whatever was live-elapsed at the moment
+# of this call - so B's eventual idle value below is deterministic, not
+# just unpredictable-but-untested.
+#
+# The 262±10 previously here was also measured natively; a solo
+# containerized run reliably measured 279s real at this checkpoint.
+# Recalibrated from a containerized measurement, 2026-10-01.
+APPMSG --int 10020=0 10029=279 10030=12 10033=0 --string 10031="12:00"
 SCREENSHOT a_gets_fresh_reprompt
 # Expect: the single-row "Ok" informational window, naming Timer A.
 
 # Clean up: acknowledge it.
 TAP select
 SLEEP 1
-APPMSG --int 10020=0 10029=253 10030=10 10033=0 --string 10031="12:00"
+# The 253±10 previously here was also measured natively; a solo
+# containerized run reliably measured 274s real at this checkpoint.
+# Recalibrated from a containerized measurement, 2026-10-01.
+APPMSG --int 10020=0 10029=274 10030=12 10033=0 --string 10031="12:00"
 SCREENSHOT final_state

@@ -32,39 +32,6 @@ _im_compare_cmd() {
   fi
 }
 
-# Same idea as _im_compare_cmd but for drawing (used by _mask_rect_apply
-# below) - sets IM_CONVERT_CMD to ("magick") or ("convert").
-_im_convert_cmd() {
-  if command -v magick >/dev/null 2>&1; then
-    IM_CONVERT_CMD=(magick)
-  elif command -v convert >/dev/null 2>&1; then
-    IM_CONVERT_CMD=(convert)
-  else
-    return 1
-  fi
-}
-
-# _mask_rect_apply <src_png> <geometry WxH+X+Y> <dst_png>
-# Writes a copy of src_png to dst_png with a solid black rectangle drawn
-# over the given region - a fallback for excluding some live-value area
-# from golden screenshot comparison when nothing better is available (an
-# app-side freeze hook - see the main README's "Golden-file regression
-# testing" section - is strongly preferred where one exists: masking hides
-# real regressions in that region too, not just noise). Masking both sides
-# of a comparison identically makes that region a no-op for AE/diff
-# purposes, rather than either freezing real device
-# time or accepting golden failures on every run.
-_mask_rect_apply() {
-  local src="$1" geometry="$2" dst="$3"
-  if [[ ! "$geometry" =~ ^([0-9]+)x([0-9]+)\+([0-9]+)\+([0-9]+)$ ]]; then
-    log_error "invalid --mask-rect '$geometry' (expected WxH+X+Y, e.g. 200x30+0+198)"
-    return 1
-  fi
-  local w="${BASH_REMATCH[1]}" h="${BASH_REMATCH[2]}" x="${BASH_REMATCH[3]}" y="${BASH_REMATCH[4]}"
-  local x2=$((x + w)) y2=$((y + h))
-  "${IM_CONVERT_CMD[@]}" "$src" -fill black -draw "rectangle $x,$y $x2,$y2" "$dst"
-}
-
 # Strips this framework's own "[HH:MM:SS] " log-line prefix (the HOST
 # machine's real wall-clock time when each step ran, via lib/log.sh's
 # _log_ts - NOT the emulator's own clock) before comparing two run logs,
@@ -164,18 +131,26 @@ update_golden() {
   log_info "golden updated: $golden_dir"
 }
 
-# compare_golden <run_out_dir> <golden_seq_dir> <fuzz_percent> [mask_rect]
+# compare_golden <run_out_dir> <golden_seq_dir> <fuzz_percent>
 # Returns 0 if the run matches its golden baseline (screenshots pixel-
 # identical within `fuzz_percent`, same set of files, scrubbed run.log
 # identical), 1 otherwise. Writes per-file diff images/text for any
 # mismatch into <run_out_dir>/diffs/ and leaves that directory absent if
-# everything matched. `mask_rect`, if given (WxH+X+Y), is blacked out on
-# BOTH images before comparing (see _mask_rect_apply) - use it to exclude
-# a screen region that's expected to vary run-to-run regardless of
-# behavior, e.g. this app's clock/status bar (its own README/app.conf
-# usage passes one for exactly that).
+# everything matched.
+#
+# This comparison is deliberately mask-unaware: a screen region with
+# genuine, expected non-determinism (e.g. the OS watchface's rotating
+# hint text) is masked at SCREENSHOT-capture time instead (run_screenshot/
+# _mask_rect_apply, lib/steps.sh's own --mask-rect / run_sequence.sh's
+# whole-run --mask-rect) - the stored golden PNG and this run's own
+# screenshot already have an identical solid-black rectangle baked in by
+# the time either file reaches this function, so a plain pixel comparison
+# already treats that region as a no-op, with no special-casing needed
+# here. This also means a committed golden file's masked region is always
+# the same deterministic black box, not some arbitrary non-deterministic
+# value that would otherwise jitter on every unrelated re-approval.
 compare_golden() {
-  local run_dir="$1" golden_dir="$2" fuzz="${3:-0}" mask_rect="${4:-}"
+  local run_dir="$1" golden_dir="$2" fuzz="${3:-0}"
   local mismatch=0
 
   if [ ! -d "$golden_dir" ]; then
@@ -186,11 +161,6 @@ compare_golden() {
   local IM_COMPARE_CMD=()
   if ! _im_compare_cmd; then
     log_error "ImageMagick not found (need 'magick' or 'compare' on PATH) - cannot compare screenshots"
-    return 1
-  fi
-  local IM_CONVERT_CMD=()
-  if [ -n "$mask_rect" ] && ! _im_convert_cmd; then
-    log_error "ImageMagick not found (need 'magick' or 'convert' on PATH) - cannot apply --mask-rect"
     return 1
   fi
 
@@ -208,8 +178,6 @@ compare_golden() {
 
   local diff_dir="$run_dir/diffs"
   mkdir -p "$diff_dir"
-  local mask_tmp=""
-  [ -n "$mask_rect" ] && mask_tmp="$diff_dir/.masked" && mkdir -p "$mask_tmp"
 
   # Every golden PNG must exist in this run, pixel-identical within fuzz.
   local golden_png
@@ -223,17 +191,6 @@ compare_golden() {
       mismatch=1
       continue
     fi
-    # Compare masked COPIES when a mask is given - the stored golden PNG
-    # and this run's own screenshot both stay untouched on disk (so a
-    # human reviewing either still sees the real clock), only these
-    # throwaway temp copies feed into `compare`.
-    local golden_cmp="$golden_png" run_cmp="$run_png"
-    if [ -n "$mask_rect" ]; then
-      golden_cmp="$mask_tmp/golden_$fname"
-      run_cmp="$mask_tmp/run_$fname"
-      _mask_rect_apply "$golden_png" "$mask_rect" "$golden_cmp" || return 1
-      _mask_rect_apply "$run_png" "$mask_rect" "$run_cmp" || return 1
-    fi
     # ImageMagick's compare prints the AE (Absolute Error - count of
     # differing pixels, as "<count> (<normalized 0-1 fraction>)", e.g.
     # "0 (0)" or "100 (1)") to stderr regardless of exit status, and also
@@ -244,7 +201,7 @@ compare_golden() {
     # drives the pass/fail decision; the leading number is only used for
     # the human-readable message.
     local ae_output cmp_status
-    ae_output="$("${IM_COMPARE_CMD[@]}" -metric AE -fuzz "${fuzz}%" "$golden_cmp" "$run_cmp" \
+    ae_output="$("${IM_COMPARE_CMD[@]}" -metric AE -fuzz "${fuzz}%" "$golden_png" "$run_png" \
         "$diff_dir/$fname" 2>&1 1>/dev/null)"
     cmp_status=$?
     if [ "$cmp_status" -ne 0 ]; then
@@ -254,7 +211,6 @@ compare_golden() {
       rm -f "$diff_dir/$fname"   # matched - no diff image worth keeping
     fi
   done
-  rm -rf "$mask_tmp"
 
   # A screenshot this run produced that golden doesn't have at all is new
   # or renamed - flag it too rather than silently ignoring it.

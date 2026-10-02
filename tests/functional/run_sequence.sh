@@ -20,7 +20,9 @@
 # screenshots.
 #
 # Usage:
-#   tests/functional/run_sequence.sh <seq-file> [--no-container] [--touch] [extra flags...]
+#   tests/functional/run_sequence.sh <seq-file> [--no-container] [--touch]
+#                                     [--prebuilt-build DIR] [extra flags...]
+#   tests/functional/run_sequence.sh --build-only DIR
 #
 # <seq-file> may be given relative to the repo root or as an absolute path
 # under the repo - either way it's resolved against the repo root for
@@ -29,6 +31,21 @@
 #
 # --no-container: run natively against a shared host emulator instead of
 # inside the container image.
+#
+# --build-only DIR: build once (npm install + pebble build) inside the
+# same image every sequence container uses, and copy the result to
+# DIR/build on the host, instead of running any sequence. Runs no
+# sequence at all - just builds. Used by run_all.sh (see its own comment)
+# to build ONCE for a whole batch instead of once per sequence container -
+# a standalone single-sequence run has no such batch to amortize a shared
+# build across, so this isn't meant to be used outside of run_all.sh.
+#
+# --prebuilt-build DIR: skip this container's own npm install + pebble
+# build and reuse the build/ tree a prior --build-only DIR run already
+# produced, mounted read-only. DIR must be the SAME directory passed to
+# that --build-only call. Container-only (rejected with --no-container,
+# which has no per-container build to skip in the first place). Like
+# --build-only, this exists for run_all.sh's batch use, not standalone.
 #
 # --touch: starts Xvfb and runs the emulator without --vnc inside the
 # container instead of the default --vnc-only path every other sequence
@@ -52,11 +69,28 @@
 # same container).
 set -eu
 
-SEQ_ARG="${1:?usage: run_sequence.sh <seq-file> [--no-container] [--touch] [extra flags...]}"
-shift
-
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 IMAGE="${PEBBLE_TEST_IMAGE:-pebble-another-timer-tests}"
+
+# --build-only DIR: build once (inside the same image every sequence
+# container uses, so identical SDK/toolchain - no version-drift risk) and
+# copy the result to DIR/build on the host, instead of running any
+# sequence - used by run_all.sh to build ONCE for a whole batch, then have
+# every sequence container reuse it via --prebuilt-build below instead of
+# repeating npm install + pebble build once per container. See
+# container/run-sequence-in-container.sh's own --build-only handling.
+if [ "${1:-}" = "--build-only" ]; then
+  OUT_BUILD_DIR="${2:?usage: run_sequence.sh --build-only <output-dir>}"
+  mkdir -p "$OUT_BUILD_DIR"
+  OUT_BUILD_DIR="$(cd "$OUT_BUILD_DIR" && pwd)"
+  exec podman run --rm --init --platform linux/amd64 \
+    -v "$REPO_ROOT":/src:ro \
+    -v "$OUT_BUILD_DIR":/out-build \
+    "$IMAGE" --build-only
+fi
+
+SEQ_ARG="${1:?usage: run_sequence.sh <seq-file> [--no-container] [--touch] [extra flags...]}"
+shift
 
 # Accept an absolute path under the repo (what a human tab-completes to)
 # as well as a repo-relative one (what run_all.sh passes).
@@ -84,6 +118,8 @@ EXTRA_ARGS=()
 GOLDEN_MOUNT=()
 TOUCH_ENV=()
 TOUCH_REQUESTED=0
+PREBUILT_MOUNT=()
+PREBUILT_ENV=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --no-container) CONTAINER=0; shift ;;
@@ -110,9 +146,28 @@ while [ $# -gt 0 ]; do
     # is done (so --touch before --no-container on the command line still
     # works).
     --touch) TOUCH_REQUESTED=1; shift ;;
+    # Set by run_all.sh (DIR == the same dir it passed to --build-only
+    # earlier for this batch) when it already built once for the whole
+    # batch - mounts that build read-only and tells the container's own
+    # entrypoint to reuse it instead of repeating npm install + pebble
+    # build (see container/run-sequence-in-container.sh's PREBUILT_BUILD
+    # handling). Container-only - validated against --no-container below,
+    # once argument parsing is done (so either flag order works, same
+    # reasoning as --touch above).
+    --prebuilt-build) PREBUILT_BUILD_DIR="$2"; shift 2 ;;
     *) EXTRA_ARGS+=("$1"); shift ;;
   esac
 done
+
+if [ -n "${PREBUILT_BUILD_DIR:-}" ]; then
+  if [ "$CONTAINER" != "1" ]; then
+    echo "--prebuilt-build is incompatible with --no-container: there's no per-container build to skip in native mode." >&2
+    exit 1
+  fi
+  PREBUILT_HOST="$(cd "$PREBUILT_BUILD_DIR/build" && pwd)"
+  PREBUILT_MOUNT=(-v "$PREBUILT_HOST:/prebuilt-build:ro")
+  PREBUILT_ENV=(-e "PREBUILT_BUILD=1")
+fi
 
 if [ "$TOUCH_REQUESTED" = "1" ]; then
   if [ "$CONTAINER" != "1" ]; then
@@ -170,4 +225,6 @@ podman run --rm --init --platform linux/amd64 \
   "${GOLDEN_MOUNT[@]+"${GOLDEN_MOUNT[@]}"}" \
   "${RUN_ID_ENV[@]+"${RUN_ID_ENV[@]}"}" \
   "${TOUCH_ENV[@]+"${TOUCH_ENV[@]}"}" \
+  "${PREBUILT_MOUNT[@]+"${PREBUILT_MOUNT[@]}"}" \
+  "${PREBUILT_ENV[@]+"${PREBUILT_ENV[@]}"}" \
   "$IMAGE" "$SEQ_REL" "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"

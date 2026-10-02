@@ -44,23 +44,38 @@
 #                            -fuzz` for golden screenshot comparison
 #                            (default 0 - exact match). Only meaningful
 #                            with --golden-dir.
-#   --mask-rect WxH+X+Y      Black out this pixel region on BOTH images
-#                            before golden comparison (see lib/golden.sh's
-#                            _mask_rect_apply) - use it to exclude a
-#                            screen region expected to vary run-to-run
-#                            regardless of behavior, e.g. a clock/status
-#                            bar. This is the RECOMMENDED way to get
-#                            reproducible golden screenshots - unlike
-#                            pinning the emulator's clock (see the note
-#                            below), masking works for every sequence,
-#                            including ones that wait for a real timer to
-#                            fire, since it never touches the emulator's
-#                            actual clock at all. Stored golden PNGs and
-#                            this run's own screenshots are left
-#                            untouched on disk either way - only
-#                            throwaway temp copies are masked for the
-#                            comparison itself. Only meaningful with
-#                            --golden-dir.
+#   --mask-rect WxH+X+Y      Black out this pixel region on every
+#                            screenshot THIS RUN CAPTURES (lib/steps.sh's
+#                            run_screenshot/_mask_rect_apply), baked into
+#                            the saved PNG itself at capture time - not
+#                            applied later, only for comparison. A single
+#                            SCREENSHOT step's own `SCREENSHOT label
+#                            --mask-rect WxH+X+Y` overrides this whole-run
+#                            default for just that one screenshot, so one
+#                            screenshot's genuinely-expected non-
+#                            determinism (e.g. the OS watchface's rotating
+#                            hint text) doesn't force every OTHER
+#                            screenshot in the same sequence to also mask
+#                            that same screen region. Use either form to
+#                            exclude a screen region expected to vary
+#                            run-to-run regardless of behavior, e.g. a
+#                            clock/status bar. This is the RECOMMENDED way
+#                            to get reproducible golden screenshots -
+#                            unlike pinning the emulator's clock (see the
+#                            note below), masking works for every
+#                            sequence, including ones that wait for a real
+#                            timer to fire, since it never touches the
+#                            emulator's actual clock at all. Because
+#                            masking happens at capture time, a masked
+#                            region is always the same deterministic solid
+#                            black in every screenshot this produces,
+#                            golden or not - golden-comparison itself
+#                            (lib/golden.sh) has no mask awareness at all,
+#                            it just compares files that already match in
+#                            that region by construction. Meaningful for
+#                            any run, not just one with --golden-dir -
+#                            every SCREENSHOT this produces gets it, same
+#                            as any other run.
 #   -h, --help               Show this help.
 #
 # Any screen showing a live value (a clock, a bottom status bar, a running
@@ -239,7 +254,7 @@ if [ -n "$GOLDEN_DIR" ]; then
       exit 1
     fi
   else
-    if ! compare_golden "$RUN_OUT_DIR" "$GOLDEN_SEQ_DIR" "$FUZZ" "$MASK_RECT"; then
+    if ! compare_golden "$RUN_OUT_DIR" "$GOLDEN_SEQ_DIR" "$FUZZ"; then
       exit 1
     fi
   fi

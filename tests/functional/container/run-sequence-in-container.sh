@@ -13,6 +13,13 @@
 #
 # Usage (via `podman run ... <image> <args>`):
 #   <seq-file-relative-to-repo-root> [extra run_sequence.sh flags...]
+#   --build-only
+#     Builds once (npm install + pebble build) and copies the resulting
+#     build/ tree out to /out-build (must be mounted writable by the
+#     caller), then exits - runs no sequence at all. Used by run_all.sh
+#     to build ONCE for a whole batch instead of once per sequence
+#     container - see its own comment on PREBUILT_BUILD below for the
+#     other half of this mechanism.
 #
 # What this does, in order:
 # 1. Copies the read-only /src mount (the repo, mounted by
@@ -20,9 +27,13 @@
 #    scratch directory - never builds
 #    in-place against /src, so N containers running in parallel against
 #    the SAME host checkout never race on build/ output.
-# 2. npm install + the copy's own tests/functional_framework/run_sequence.sh
-#    handle the rest (pebble build is implicit in `pebble install`'s own
-#    waf invocation, same as every other place in this project).
+# 2. npm install + pebble build produce build/ in that scratch directory -
+#    UNLESS the caller already built once for this whole batch and mounted
+#    the result read-only at /prebuilt-build (PREBUILT_BUILD=1 - see
+#    run_all.sh), in which case that's copied into place instead, skipping
+#    npm install/pebble build here entirely. Either way, the copy's own
+#    tests/functional_framework/run_sequence.sh handles the rest from
+#    there, same as before.
 # 3. Wraps the actual run in libfaketime (see below) so the emulator's
 #    displayed clock is deterministic across runs/containers without
 #    needing --mask-rect or any emu-set-time pinning at all - live-
@@ -98,6 +109,30 @@
 #    depending on which sequence overrides the display and which doesn't.
 set -eu
 
+# --build-only: produce a shared build/ tree and exit - no sequence runs,
+# no faketime, none of the rest of this file applies. See this file's own
+# header comment and run_all.sh's for the full mechanism.
+if [ "${1:-}" = "--build-only" ]; then
+  SCRATCH="$(mktemp -d /tmp/pebble-proj.XXXXXX)"
+  cp -r /src/. "$SCRATCH/"
+  cd "$SCRATCH"
+  npm install --silent
+  export APP_TEST_HOOKS="${APP_TEST_HOOKS:-1}"
+  pebble build
+  # waf's app_bundle task names the output .pbw after the CURRENT project
+  # directory's own basename (live-verified: a /tmp/pebble-proj.XXXXXX
+  # build produces build/pebble-proj.XXXXXX.pbw) - `pebble install` with
+  # no explicit path expects a .pbw matching ITS OWN CWD's basename, which
+  # every consuming container's scratch dir has a different (random) name
+  # for. Rename to a fixed, known name here so the consuming side (see
+  # PREBUILT_BUILD below) can deterministically rename it again to match
+  # ITS OWN scratch dir, regardless of what this build's own scratch dir
+  # happened to be called.
+  mv "$SCRATCH/build/$(basename "$SCRATCH").pbw" "$SCRATCH/build/shared.pbw"
+  cp -r "$SCRATCH/build" /out-build/
+  exit 0
+fi
+
 SEQ_ARG="${1:?usage: <seq-file-relative-to-repo-root> [extra run_sequence.sh flags...]}"
 shift
 
@@ -151,22 +186,43 @@ SCRATCH="$(mktemp -d /tmp/pebble-proj.XXXXXX)"
 RUN_ID="${RUN_ID_OVERRIDE:-$(date '+%Y%m%d_%H%M%S')_$(basename "$SCRATCH")}"
 cp -r /src/. "$SCRATCH/"
 cd "$SCRATCH"
-npm install --silent
 
 export APP_TEST_HOOKS="${APP_TEST_HOOKS:-1}"
 
-# This pebble-tool fork's `pebble install --emulator` does NOT auto-build
-# on its own - live-verified: with no pre-existing build/, it fails
-# outright ("You must either run this command from a project directory or
-# specify the pbw to install.") rather than triggering waf itself the way
-# CLAUDE.md's build-command notes describe. Build explicitly before
-# handing off to run_sequence.sh, which - like every native .seq file in
-# this project - only ever calls `pebble install` directly and relies on
-# an implicit auto-build that doesn't actually happen in a from-scratch
-# checkout (native runs this session likely got away with it only because
-# a stale build/ from an earlier manual `pebble build` was already
-# sitting there).
-pebble build
+if [ "${PREBUILT_BUILD:-0}" = "1" ]; then
+  # run_all.sh already built ONCE for this whole batch (--build-only, same
+  # image, same source, same APP_TEST_HOOKS - so identical output
+  # regardless of which container produces it) and mounted the result
+  # read-only at /prebuilt-build - reuse it instead of repeating npm
+  # install + pebble build in every single sequence container. See
+  # run_all.sh's own comment for the time savings this buys.
+  #
+  # rm -rf first: the /src copy above may have brought along a stale
+  # build/ of its own (e.g. a leftover from a native `pebble build` run
+  # directly against the real checkout) - start clean so only the
+  # prebuilt one's contents end up here, not some merge of both.
+  rm -rf "$SCRATCH/build"
+  cp -r /prebuilt-build "$SCRATCH/build"
+  # See --build-only's own comment above for why this rename is needed:
+  # `pebble install` (no explicit path) expects a .pbw matching THIS
+  # container's own scratch dir basename, not whichever one originally
+  # produced the shared build.
+  cp "$SCRATCH/build/shared.pbw" "$SCRATCH/build/$(basename "$SCRATCH").pbw"
+else
+  npm install --silent
+  # This pebble-tool fork's `pebble install --emulator` does NOT auto-build
+  # on its own - live-verified: with no pre-existing build/, it fails
+  # outright ("You must either run this command from a project directory or
+  # specify the pbw to install.") rather than triggering waf itself the way
+  # CLAUDE.md's build-command notes describe. Build explicitly before
+  # handing off to run_sequence.sh, which - like every native .seq file in
+  # this project - only ever calls `pebble install` directly and relies on
+  # an implicit auto-build that doesn't actually happen in a from-scratch
+  # checkout (native runs this session likely got away with it only because
+  # a stale build/ from an earlier manual `pebble build` was already
+  # sitting there).
+  pebble build
+fi
 
 export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/faketime/libfaketimeMT.so.1
 export FAKETIME="$FAKETIME_OFFSET_SECONDS"

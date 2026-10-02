@@ -64,14 +64,25 @@ SCREENSHOT exit_guard_reprompt_open
 # anything.
 APPMSG --string 10028="0,1,2,3,4,5"
 SLEEP 1
-APPMSG --int 10020=0 10029=161 10030=8 10033=0 --string 10031="12:00"
+# The 161±8 previously here was right at the edge of its own tolerance
+# window: a solo containerized run measured 168s real (center-correct, not
+# a bad estimate), but a full-suite run under real parallel/shared-build
+# timing conditions still tipped it to BAD (2026-10-02). Recentered with
+# more margin.
+APPMSG --int 10020=0 10029=168 10030=12 10033=0 --string 10031="12:00"
 SCREENSHOT after_reentrant_call_should_still_show_two_rows
 # Expect: STILL two rows, "Don't exit" / "Exit anyway" - not collapsed to
 # a single "Ok".
 
 # Select "Exit anyway" (row 1) and confirm the app genuinely exits -
 # i.e. the fix held, not just that the labels looked right.
+#
+# The OS idle watchface's own hint text rotates between messages, outside
+# this app's control - masked here rather than tuned like an app-side
+# value, scoped to just this screenshot (see wakeup_conflict_exit_guard_
+# reprompt.seq's identical checkpoint for the full reasoning and how this
+# rect was measured).
 TAP down
 TAP select
 SLEEP 1
-SCREENSHOT after_exit_anyway
+SCREENSHOT after_exit_anyway --mask-rect 170x45+15+93
