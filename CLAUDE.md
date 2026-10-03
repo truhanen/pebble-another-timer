@@ -303,8 +303,17 @@ real exclusion window actually behaves.
   independently
   (`cd tests/wakeup_test_app && pebble build && pebble install --emulator
   emery --vnc`) alongside the main app in the same emulator.
-- `tests/functional_framework/` — a generic (app-agnostic, copyable to other
-  Pebble projects) bash interpreter for scripted emulator walkthroughs:
+- `tests/functional_framework/` — a **git submodule** pointing at its own
+  repo, [truhanen/pebble-functional-test-framework](https://github.com/truhanen/pebble-functional-test-framework)
+  (history was extracted from this repo with `git filter-repo`, so old blame/
+  log for it lives there now, not here). It's generic/app-agnostic by design
+  (reusable across Pebble projects), which is why it's split out. A fresh
+  clone or pull that moves the submodule pointer needs `git submodule update
+  --init --recursive` before these paths exist on disk. To change the
+  framework itself: edit/commit/push inside `tests/functional_framework/`
+  like any other repo, then from here `git add tests/functional_framework &&
+  git commit` to bump the pinned commit. It's a bash interpreter for
+  scripted emulator walkthroughs:
   flat plain-text `.seq` files (button presses, AppMessages, sleeps,
   screenshots, installs, raw `pebble` CLI passthrough, with `IMPORT` to
   share setup between sequences) run via its own `run_sequence.sh`/
