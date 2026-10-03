@@ -73,31 +73,36 @@ test_core:
 	gcc -I src/c tests/test_timer_calc.c src/c/timer_calc.c -o /tmp/pebble-another-timer-test_core
 	/tmp/pebble-another-timer-test_core
 
-# Rebuild whenever tests/functional/container/Containerfile or
-# run-sequence-in-container.sh change - NOT needed for app source changes,
-# since every container run mounts (tests/functional/run_sequence.sh) and
-# copies (container/run-sequence-in-container.sh) the repo fresh.
+# Rebuild whenever tests/functional_framework/container/Containerfile or
+# entrypoint.sh change - NOT needed for app source changes, since every
+# container run mounts (container/launch.sh) and copies (container/
+# entrypoint.sh) the repo fresh.
 .PHONY: build_functional_test_image
 build_functional_test_image:
-	podman build --platform linux/amd64 -t pebble-another-timer-tests \
-		-f tests/functional/container/Containerfile .
+	tests/functional_framework/container/build_image.sh --conf tests/functional/app.conf
+
+# PATTERN restricts which sequences run (forwarded as run_batch.sh's own
+# --pattern) - e.g. `make test_functional_golden PATTERN='alarm_*'`.
+# Unset/empty (the default) runs every sequence, matching run_batch.sh's
+# own default.
+PATTERN ?=
 
 # Plain pass/fail run of the whole functional suite, containerized (see
-# tests/functional/container/README.md for why this is required rather than
-# just recommended) - no golden comparison.
+# tests/functional_framework/container/README.md for why this is required
+# rather than just recommended) - no golden comparison.
 .PHONY: test_functional
 test_functional:
-	tests/functional/run_all.sh
+	tests/functional_framework/run_batch.sh --conf tests/functional/app.conf $(if $(PATTERN),--pattern '$(PATTERN)')
 
 # What CI should run: the full suite, compared against the committed
 # golden baseline.
 .PHONY: test_functional_golden
 test_functional_golden:
-	tests/functional/run_all.sh --golden-dir tests/functional/golden
+	tests/functional_framework/run_batch.sh --conf tests/functional/app.conf --golden-dir tests/functional/golden $(if $(PATTERN),--pattern '$(PATTERN)')
 
 # Re-approves the current output of every sequence as the new golden
 # baseline - run this after a deliberate, reviewed UI change, never as a
 # way to make a failing test_functional_golden pass without looking at why.
 .PHONY: update_functional_golden
 update_functional_golden:
-	tests/functional/run_all.sh --golden-dir tests/functional/golden --update-golden
+	tests/functional_framework/run_batch.sh --conf tests/functional/app.conf --golden-dir tests/functional/golden --update-golden $(if $(PATTERN),--pattern '$(PATTERN)')

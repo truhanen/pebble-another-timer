@@ -161,15 +161,15 @@ run_appmsg() {
 # comment below for the full "why" behind each check.
 _touch_preflight() {
   if [ "$VNC" = "1" ]; then
-    log_error "$1 requires a real windowed emulator (--no-vnc) - qemu's own --vnc framebuffer never delivers touch input to the guest. Run this sequence via tests/functional/run_sequence.sh --touch (see its README's TOUCH section)."
+    log_error "$1 requires a real windowed emulator (--no-vnc) - qemu's own --vnc framebuffer never delivers touch input to the guest. Run this sequence via run_sequence.sh --touch (see container/README.md's TOUCH section)."
     return 1
   fi
   if [ -z "${DISPLAY:-}" ]; then
-    log_error "$1 requires \$DISPLAY (an Xvfb-backed X11 display for the emulator's real window) - not supported outside tests/functional/run_sequence.sh --touch."
+    log_error "$1 requires \$DISPLAY (an Xvfb-backed X11 display for the emulator's real window) - not supported outside run_sequence.sh --touch (container mode)."
     return 1
   fi
   if ! command -v xdotool >/dev/null 2>&1; then
-    log_error "$1 requires xdotool, not found on PATH - container-only feature, see tests/functional/container/Containerfile."
+    log_error "$1 requires xdotool, not found on PATH - container-only feature, see container/Containerfile."
     return 1
   fi
 }
@@ -199,8 +199,8 @@ _touch_find_window() {
 # target coordinates, for an xdotool click against a real windowed
 # emulator). This is why every emulator-facing keyword above unconditionally
 # honors $VNC while this one requires it to be OFF - see the container
-# entrypoint's own comment (tests/functional/container/run-sequence-in-
-# container.sh) for how a sequence opts into that.
+# entrypoint's own comment (container/entrypoint.sh) for how a sequence
+# opts into that.
 #
 # hold_s (default 0.6s) is a genuine HOLD, not a tap: this app treats a
 # too-quick tap-and-release as a cancelled gesture and reverts out of

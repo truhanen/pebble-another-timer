@@ -307,21 +307,27 @@ real exclusion window actually behaves.
   Pebble projects) bash interpreter for scripted emulator walkthroughs:
   flat plain-text `.seq` files (button presses, AppMessages, sleeps,
   screenshots, installs, raw `pebble` CLI passthrough, with `IMPORT` to
-  share setup between sequences) run via its own `run_sequence.sh`. See its
-  own README for the instruction-set reference. `tests/functional/` holds
-  this app's own config (`app.conf`) and sequences (`sequences/common/` for
-  shared setup like wipe+prep, `sequences/walkthroughs/` for actual test
-  scenarios).
+  share setup between sequences) run via its own `run_sequence.sh`/
+  `run_batch.sh`. Container-based execution (deterministic clock, parallel-
+  safe) is built into the framework itself under `container/` - see its own
+  README and `container/README.md` for the instruction-set/conf-file/
+  container reference. `tests/functional/` holds this app's own config
+  (`app.conf` - including this app's `IMAGE_TAG`/`SDK_VERSION`/`BUILD_ENV`
+  container settings) and sequences (`sequences/common/` for shared setup
+  like wipe+prep, `sequences/walkthroughs/` for actual test scenarios).
 
-  **`tests/functional/run_sequence.sh <seq-file>` is the one entrypoint to
-  run a single sequence for this app** - don't invoke
-  `tests/functional_framework/run_sequence.sh` directly. It runs inside the
-  `pebble-another-timer-tests` container image by default (see
-  `container/README.md` for image setup) - reproducible clock, no races
-  against a shared emulator - or natively against a shared host emulator
-  with `--no-container`, which is the right choice for fast interactive
-  dev/debugging but whose screenshots aren't reproducible run to run (see
-  below). E.g.:
+  `tests/functional/run_sequence.sh <seq-file>` is a thin, app-specific
+  shim that just pins `--conf` to this app's own `app.conf` - either it or
+  `tests/functional_framework/run_sequence.sh --conf tests/functional/
+  app.conf --seq <seq-file>` work identically. It runs inside this app's
+  own container image by default (`app.conf`'s `CONTAINER=1`/`IMAGE_TAG` -
+  build it first with `tests/functional_framework/container/
+  build_image.sh --conf tests/functional/app.conf`; see `tests/
+  functional_framework/container/README.md` for full setup) - reproducible
+  clock, no races against a shared emulator - or natively against a shared
+  host emulator with `--no-container`, which is the right choice for fast
+  interactive dev/debugging but whose screenshots aren't reproducible run
+  to run (see below). E.g.:
   ```bash
   tests/functional/run_sequence.sh \
     tests/functional/sequences/walkthroughs/create_and_start_timer.seq
@@ -334,8 +340,8 @@ real exclusion window actually behaves.
   container mode) is incompatible with `--no-container` and rejected
   outright - a real touchscreen event only reaches the guest through a
   genuine SDL/X11 window (Xvfb+xdotool), which is container-only; there is
-  no supported native equivalent (see `container/Containerfile`'s own
-  comment).
+  no supported native equivalent (see `tests/functional_framework/
+  container/Containerfile`'s own comment).
 
   A native run is still subject to every gotcha in the `pebble-emulator`
   skill (idle-exit, `--vnc` consistency, `--app-uuid` matching) - the
@@ -376,16 +382,19 @@ real exclusion window actually behaves.
   files' own header comments for what's intentionally left as a manual-only
   gap.
 
-  **`tests/functional/run_all.sh` (the "does the whole suite pass" /
-  CI / golden-approval entrypoint) is containerized-only - it has no
-  native mode.** `tests/functional/run_sequence.sh --no-container` (see
-  above) is still fully supported and is the right choice for fast
-  interactive dev/debugging a single sequence, but its screenshots aren't
-  reproducible run to run for anything the `TestSet*Display` override
-  families (see above) don't cover, so it's never trusted as a real
-  pass/fail verdict or as a source for approving a golden baseline -
-  `update_golden()`/`promote_golden.sh`
-  (`tests/functional_framework/lib/golden.sh`) mechanically refuse to do so
-  from a native run. See `tests/functional/container/README.md` for setup.
-  Any CI job for this project must call `run_all.sh`, not
-  `run_sequence.sh --no-container`.
+  **`make test_functional`/`test_functional_golden`/`update_functional_golden`**
+  (thin wrappers around `tests/functional_framework/run_batch.sh --conf
+  tests/functional/app.conf`, the "does the whole suite pass" / CI /
+  golden-approval entrypoint) are containerized-only - there is no native
+  mode. `tests/functional/run_sequence.sh --no-container` (see above) is
+  still fully supported and is the right choice for fast interactive
+  dev/debugging a single sequence, but its screenshots aren't reproducible
+  run to run for anything the `TestSet*Display` override families (see
+  above) don't cover, so it's never trusted as a real pass/fail verdict or
+  as a source for approving a golden baseline - `update_golden()`/
+  `promote_golden.sh` (`tests/functional_framework/lib/golden.sh`)
+  mechanically refuse to do so from a native run. See
+  `tests/functional_framework/container/README.md` for setup (`make
+  build_functional_test_image` builds the image). Any CI job for this
+  project must call `make test_functional_golden`, not `run_sequence.sh
+  --no-container`.

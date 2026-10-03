@@ -93,24 +93,24 @@ update_golden() {
   # Refuse to approve a baseline from a native run: the emulator's
   # displayed clock/elapsed counters are only reproducible run-to-run
   # under the containerized harness's pinned libfaketime clock (see
-  # tests/functional/container/README.md's "Why this exists at all") - a
-  # native run's screenshots can differ on every single invocation for
-  # reasons that have nothing to do with an actual regression, making them
-  # actively harmful as a golden baseline (every future native comparison
-  # against them would be spuriously noisy, and even a future
-  # containerized comparison could subtly mismatch if the native baseline
-  # happened to capture a clock value the masking wasn't tuned for). The
-  # marker this checks for (this framework's own run_sequence.sh writing a
-  # `.containerized` file, only when PEBBLE_TEST_CONTAINERIZED=1) is set
-  # unconditionally by container/run-sequence-in-container.sh, so any run
-  # produced via the containerized harness (tests/functional/run_sequence.sh
-  # or tests/functional/run_all.sh) already satisfies this - nothing extra
-  # to do for the normal case. PEBBLE_TEST_ALLOW_NATIVE_GOLDEN=1 is a loud,
-  # deliberately inconvenient (env var, not a flag) escape hatch for a
-  # genuine one-off exception; there should be no routine reason to use it.
+  # container/README.md's "Why this exists at all") - a native run's
+  # screenshots can differ on every single invocation for reasons that
+  # have nothing to do with an actual regression, making them actively
+  # harmful as a golden baseline (every future native comparison against
+  # them would be spuriously noisy, and even a future containerized
+  # comparison could subtly mismatch if the native baseline happened to
+  # capture a clock value the masking wasn't tuned for). The marker this
+  # checks for (run_sequence.sh itself writing a `.containerized` file,
+  # only when PEBBLE_TEST_CONTAINERIZED=1) is set unconditionally by
+  # container/entrypoint.sh, so any run produced via CONTAINER=1/
+  # --container (run_sequence.sh or run_batch.sh) already satisfies this -
+  # nothing extra to do for the normal case. PEBBLE_TEST_ALLOW_NATIVE_GOLDEN=1
+  # is a loud, deliberately inconvenient (env var, not a flag) escape hatch
+  # for a genuine one-off exception; there should be no routine reason to
+  # use it.
   if [ ! -e "$run_dir/.containerized" ] && [ "${PEBBLE_TEST_ALLOW_NATIVE_GOLDEN:-}" != "1" ]; then
     log_error "refusing to approve golden baseline from a native (non-containerized) run: $run_dir"
-    log_error "golden baselines must come from the containerized harness (tests/functional/run_sequence.sh / tests/functional/run_all.sh) - see tests/functional/container/README.md for why."
+    log_error "golden baselines must come from the containerized harness (run_sequence.sh/run_batch.sh with CONTAINER=1 or --container) - see container/README.md for why."
     log_error "genuine one-off exception: set PEBBLE_TEST_ALLOW_NATIVE_GOLDEN=1 (not recommended)."
     return 1
   fi
