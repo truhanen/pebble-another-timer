@@ -1,0 +1,3 @@
+[submodule "tests/functional_framework"]
+	path = tests/functional_framework
+	url = https://github.com/truhanen/pebble-functional-test-framework.git
