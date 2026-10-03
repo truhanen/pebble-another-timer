@@ -25,6 +25,7 @@ Releases/
 
 # Per-run output (screenshots, logs) from tests/functional_framework
 tests/functional/out/
+scripts/create_screenshots_out/
 
 # Ignore Apple Files
 # General

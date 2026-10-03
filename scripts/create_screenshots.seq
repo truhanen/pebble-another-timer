@@ -1,0 +1,187 @@
+# Generates reference screenshots of the app's main views via
+# tests/functional_framework (container + TOUCH mode), replacing the old
+# scripts/create_screenshots.sh's manual button/touch driving and its
+# interactive pause-for-a-human-to-type-on-the-emulator steps - everything
+# here, including the touch dial and the on-screen label keyboard, is
+# scripted. Run via scripts/create_screenshots.sh, which invokes this
+# through run_sequence.sh and copies the resulting PNGs into screenshots/.
+#
+# Requires an APP_TEST_HOOKS=1 build (see CLAUDE.md) for the
+# TestSetTimerIndex/State/Remaining backdoor and the TestSetClockDisplay/
+# TestSetLaunchElapsedDisplaySec display freezes used throughout -
+# scripts/create_screenshots.conf already sets BUILD_ENV=APP_TEST_HOOKS=1
+# for container builds, and container mode builds automatically before
+# running any instructions below (no explicit BUILD step needed here).
+# That conf is its own file, separate from tests/functional/app.conf,
+# specifically to avoid inheriting that one's GOLDEN_DIR default (see its
+# own header comment).
+#
+# Needs --container (TOUCH only works there, no native equivalent) -
+# auto-detected from the TOUCH/TOUCHDOWN/TOUCHUP instructions below, no
+# --touch flag needed (see tests/functional_framework/container/README.md).
+#
+# Numbering note: SCREENSHOT auto-numbers files in the order they're taken
+# across this whole run, so the numbers below are NOT the old hand-picked
+# ones from create_screenshots.sh's git history (that script ran two
+# separate installs - an empty-list "+ New timer" flow and a four-timer
+# config flow - and picked each file's final number independent of
+# execution order). That's not reproducible here: every screenshot taken
+# within ONE install/session has to stay contiguous in the output (you
+# can't splice another install's screenshots into the middle of an
+# in-progress, uncommitted "+ New timer" flow without a WIPE destroying
+# it first). This walkthrough instead runs in one straightforward
+# chronological order and lets the numbers fall out naturally - preserving
+# "01_main_view.png" specifically, since README.md embeds that exact
+# filename as the hero image, by making it the very first screenshot taken.
+
+VAR US=$'\x1f'
+VAR RS=$'\x1e'
+
+# ---------------------------------------------------------------------
+# Install 1: four labeled timers (one running, one paused, two stopped),
+# plus that running timer's control menu and its long-press edit menu.
+# ---------------------------------------------------------------------
+IMPORT ../tests/functional/sequences/common/wipe_and_prep.seq
+
+# AutoReturnStart/Stop and RunOnCreate all default ON (timer_store.c) and
+# would otherwise race this walkthrough's own send-app-message-driven
+# state changes below (see create_screenshots.sh's git history for the
+# original rationale). Sent twice: pypkjs may echo back a stale saved
+# config on launch (request_config() in main.c), racing the first send -
+# resending a moment later guarantees ours is the last word.
+LOG "Disabling AutoReturnStart/Stop and RunOnCreate"
+APPMSG --int 10003=0 10018=0 10015=0
+SLEEP 1.5
+APPMSG --int 10003=0 10018=0 10015=0
+SLEEP 1
+
+# Freeze the bottom-bar clock/elapsed display (TestSetClockDisplay /
+# TestSetLaunchElapsedDisplaySec) so screenshots don't show live,
+# non-reproducible values - same convention as every sequence under
+# tests/functional/sequences/walkthroughs/.
+APPMSG --int 10033=0 --string 10031="12:00"
+
+LOG "Configuring 4 labeled timers"
+APPMSG --string 10000="Pasta${US}600${RS}Tea${US}180${RS}Laundry${US}1500${RS}Workout${US}3600"
+SLEEP 2
+
+# TestSetTimerIndex/State/Remaining (10020/10021/10022), sent together in
+# one message - bypasses the normal start/pause flow entirely. Pasta
+# (index 0) running with 8:30 left; Tea (index 1) PAUSED directly (not
+# started-then-paused) with 1:15 left, since this install only needs the
+# already-paused state for its first screenshot below.
+LOG "Pasta (index 0) running at 8:30 left, Tea (index 1) paused at 1:15 left"
+APPMSG --int 10020=0 10021=1 10022=510
+APPMSG --int 10020=1 10021=2 10022=75
+SLEEP 1
+
+# "+ New timer" is always the leading row; RunningFirst (default on)
+# sorts Pasta/Tea above the two stopped timers - one press down from
+# "+ New timer" reaches Tea's row.
+TAP down
+SLEEP 1
+
+APPMSG --int 10033=0 --string 10031="12:00"
+SCREENSHOT main_view
+
+LOG "Flipping Tea to running to capture its control menu and edit menu"
+APPMSG --int 10020=1 10021=1 10022=75
+SLEEP 1
+
+TAP select
+SLEEP 1
+APPMSG --int 10033=0 --string 10031="12:00"
+SCREENSHOT running_timer_control_menu
+
+TAP back
+SLEEP 1
+
+# A genuine long-press (push, wait, release) - a plain TAP only opens the
+# control menu above, not this per-row edit menu (Duration/Label/After
+# finished).
+LONGPRESS select
+SLEEP 1
+APPMSG --int 10033=0 --string 10031="12:00"
+SCREENSHOT timer_edit_menu
+
+TAP back
+SLEEP 1
+
+# ---------------------------------------------------------------------
+# Install 2: empty list -> "+ New timer" -> box dial -> touch dial ->
+# label keyboard -> committed single timer.
+# ---------------------------------------------------------------------
+IMPORT ../tests/functional/sequences/common/wipe_and_prep.seq
+
+LOG "Disabling AutoReturnStart/Stop and RunOnCreate again for this fresh install"
+APPMSG --int 10003=0 10018=0 10015=0
+SLEEP 1.5
+APPMSG --int 10003=0 10018=0 10015=0
+SLEEP 1
+
+APPMSG --int 10033=0 --string 10031="12:00"
+SCREENSHOT main_view_no_timers
+
+TAP select
+SLEEP 1
+APPMSG --int 10033=0 --string 10031="12:00"
+SCREENSHOT duration_dial
+
+# Dial centre (100, 135), radius 70 (outer selection ring, not the inner
+# "Cancel" zone), screenspace angle 90deg (0 = straight up, clockwise) -
+# the "15 minutes" mark, same point touch_dial_set_via_position.seq
+# derives and uses.
+TOUCHDOWN 170 135
+SLEEP 0.2
+APPMSG --int 10033=0 --string 10031="12:00"
+SCREENSHOT duration_touch_dial
+
+# A ~1.2s total hold (not just the 0.2s settle above) before release -
+# touch_keyboard_label.seq found a shorter hold flaky for landing this
+# exact dial-commit-then-keyboard-open transition; carrying that same fix
+# over here, since this flow also opens the keyboard afterward (unlike
+# touch_dial_set_via_position.seq, which disables KeyboardOnNewTimer and
+# so never makes this transition at all).
+SLEEP 1.0
+TOUCHUP
+
+# Keyboard opens automatically (KeyboardOnNewTimer defaults on, left
+# untouched here, unlike the other touch_dial_*.seq sequences).
+# multitap_keyboard's caret blinks for its first CARET_IDLE_MS=4000 after
+# opening - wait that out before screenshotting anything on this screen,
+# so the caret has settled to its deterministic steady-on resting state
+# (same fix as touch_keyboard_label.seq).
+SLEEP 4.5
+
+# Types "pasta" on the 3x4 touch keyboard grid (origin (1,46), cell
+# 66x45 - see touch_keyboard_label.seq's own header comment for the full
+# derivation: x = col*66+34, y = row*45+68). Keys are row-major letter
+# groups: key1="abc", key6="pqrs", key7="tuv". A tap on a DIFFERENT key
+# commits whatever letter was pending on the previous one; repeated taps
+# on the SAME key cycle through its letters.
+# key6 "pqrs" tap 1 -> p
+TOUCH 34 158 0.1
+# key1 "abc" tap 1 -> a (commits p)
+TOUCH 100 68 0.1
+# key6 tap 1 -> p
+TOUCH 34 158 0.1
+# key6 tap 2 -> q
+TOUCH 34 158 0.1
+# key6 tap 3 -> r
+TOUCH 34 158 0.1
+# key6 tap 4 -> s
+TOUCH 34 158 0.1
+# key7 "tuv" tap 1 -> t (commits s)
+TOUCH 100 158 0.1
+# key1 tap 1 -> a (commits t)
+TOUCH 100 68 0.1
+
+APPMSG --int 10033=0 --string 10031="12:00"
+SCREENSHOT label_input
+
+# SELECT commits the pending final "a" and submits the whole label -
+# multitap_keyboard_window.c's prv_select_click.
+TAP select
+SLEEP 0.5
+APPMSG --int 10033=0 --string 10031="12:00"
+SCREENSHOT main_view_one_timer
