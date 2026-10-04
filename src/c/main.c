@@ -2918,7 +2918,7 @@ static void wc_click_config(void *ctx) {
   window_single_click_subscribe(BUTTON_ID_BACK, wc_back_click);
 }
 
-static void ml_draw_state_icon(GContext *gctx, int x, int y, TimerState st, GColor color); // defined below
+static void ml_draw_state_icon(GContext *gctx, int x, int row_top_y, int row_h, TimerState st, GColor color); // defined below
 static void ml_draw_arrow_progress(GContext *gctx, GRect box, float frac, GColor outline, GColor fill); // defined below
 static void ml_row_colors(const Timer *t, bool selected, int64_t now, GColor *bg, GColor *fg); // defined below
 static void ml_draw_primary_line(GContext *gctx, GRect b, const Timer *t, GColor fg); // defined below
@@ -3597,26 +3597,134 @@ static void ml_row_colors(const Timer *t, bool selected, int64_t now, GColor *bg
   }
 }
 
-static void ml_draw_state_icon(GContext *gctx, int x, int y, TimerState st, GColor color) {
+// Tiny upright pixel glyphs, hand-drawn as line/rect primitives rather
+// than a bitmap resource (consistent with every other icon in this file -
+// the arrow-progress-bar above, the old play/pause/square glyphs this
+// replaces). Only the letters ON/OFF/PS actually need exist. Drawn
+// rotated 90deg clockwise (see draw_state_label_rotated below) so a 2-3
+// character state word reads within the row's narrow icon column -
+// replacing the old play-triangle/pause-bars/square icons, which read as
+// VCR transport-control buttons (misleading: selecting a stopped timer
+// really does start it, so a "play" glyph looks like a button to press
+// rather than a status report).
+//
+// ML_GLYPH_H (the glyph's "across the letter" axis, which becomes each
+// letter's on-screen width after rotation) is shared by every letter and
+// deliberately the larger dimension - that's the axis with real room to
+// spare (the icon column's width budget). Each glyph's "down the letter"
+// axis (which becomes the stacking/reading direction - the scarce axis a
+// 2-3 character word has to fit within) is normally ML_GLYPH_W_DEFAULT
+// (3), EXCEPT 'N', which is a 4-wide exception: at 3 columns its diagonal
+// collapses into a shape easily misread as 'H' (confirmed on a real
+// screenshot); there's ample slack in the stacking budget to let just
+// this one letter use a column more (see ml_glyph_width_for_char).
+// Confirmed to fit the available space (see CLAUDE.md/git history for
+// the pixel-budget checks this was validated against before
+// implementing).
+#define ML_GLYPH_W_DEFAULT 3
+#define ML_GLYPH_H 5
+#define ML_GLYPH_GAP 1
+// Device pixels per glyph cell - 2 gives real stroke boldness (vs. the
+// hairline 1px strokes of the first version) while still comfortably
+// fitting the longest label ("OFF") within the row's height budget.
+#define ML_GLYPH_PX 2
+static const char *const ML_GLYPH_O[ML_GLYPH_H] = {"111","101","101","101","111"};
+static const char *const ML_GLYPH_N[ML_GLYPH_H] = {"1001","1101","1111","1011","1001"}; // 4 wide - see comment above
+static const char *const ML_GLYPH_F[ML_GLYPH_H] = {"111","100","110","100","100"};
+static const char *const ML_GLYPH_P[ML_GLYPH_H] = {"111","101","111","100","100"};
+static const char *const ML_GLYPH_S[ML_GLYPH_H] = {"011","100","010","001","110"};
+
+static const char *const *ml_glyph_for_char(char c) {
+  switch (c) {
+    case 'O': return ML_GLYPH_O;
+    case 'N': return ML_GLYPH_N;
+    case 'F': return ML_GLYPH_F;
+    case 'P': return ML_GLYPH_P;
+    case 'S': return ML_GLYPH_S;
+    default:  return NULL;
+  }
+}
+
+static int ml_glyph_width_for_char(char c) {
+  return (c == 'N') ? 4 : ML_GLYPH_W_DEFAULT;
+}
+
+// Total pixel length (along the rotated reading direction) a label needs -
+// used to vertically center it within the row before drawing. Each
+// character's own footprint along this axis is its own glyph width (see
+// ml_glyph_width_for_char - NOT ML_GLYPH_H, using the wrong one here
+// previously wasted ~2px of unintended extra gap between every stacked
+// character).
+static int ml_state_label_len(const char *label) {
+  int total = 0;
+  int n = (int)strlen(label);
+  for (int i = 0; i < n; i++) {
+    total += ml_glyph_width_for_char(label[i]) * ML_GLYPH_PX;
+  }
+  return n > 0 ? total + (n - 1) * ML_GLYPH_GAP : 0;
+}
+
+// Draws `label` (e.g. "ON"/"OFF"/"PS") rotated 90deg clockwise, one
+// device pixel per glyph cell, stacking characters downward from
+// (x0, y0). Upright glyph (col, row) -> rotated-90-clockwise local
+// (row, glyph_w - 1 - col), where glyph_w is THIS character's own width
+// (see ml_glyph_width_for_char - usually ML_GLYPH_W_DEFAULT, 'N' is wider).
+//
+// Characters are drawn in REVERSED string order (last character first/
+// topmost) - this looks backwards on paper but isn't: live-verified
+// against a real screenshot that reading this rotated column in normal
+// (forward) string order top-to-bottom is NOT how it's naturally read -
+// a viewer reads it bottom-to-top instead (confirmed directly: the
+// un-reversed version rendered "ON" as a column that read "NO", "OFF" as
+// "FFO", and "PS" as "SP" - each exactly the reverse of the intended
+// word). Reversing the draw order compensates for that bottom-to-top
+// reading direction so the word reads correctly.
+static void draw_state_label_rotated(GContext *gctx, int x0, int y0, const char *label, GColor color) {
   graphics_context_set_fill_color(gctx, color);
-  if (st == TS_PAUSED) {
-    graphics_fill_rect(gctx, GRect(x, y, 3, 12), 0, GCornerNone);
-    graphics_fill_rect(gctx, GRect(x + 5, y, 3, 12), 0, GCornerNone);
-    return;
-  }
-  if (st == TS_RUNNING) {
-    const int h = 12;
-    const int w = 10;
-    for (int row = 0; row < h; row++) {
-      int d = (row <= (h / 2)) ? ((h / 2) - row) : (row - (h / 2));
-      int span = w - (d * w) / (h / 2 + 1);
-      if (span < 1) { span = 1; }
-      graphics_fill_rect(gctx, GRect(x, y + row, span, 1), 0, GCornerNone);
+  int n = (int)strlen(label);
+  int y = y0;
+  for (int i = n - 1; i >= 0; i--) {
+    char c = label[i];
+    const char *const *glyph = ml_glyph_for_char(c);
+    if (!glyph) { continue; }
+    int glyph_w = ml_glyph_width_for_char(c);
+    for (int row = 0; row < ML_GLYPH_H; row++) {
+      for (int col = 0; col < glyph_w; col++) {
+        if (glyph[row][col] == '1') {
+          int rx = row * ML_GLYPH_PX;
+          int ry = (glyph_w - 1 - col) * ML_GLYPH_PX;
+          graphics_fill_rect(gctx, GRect(x0 + rx, y + ry, ML_GLYPH_PX, ML_GLYPH_PX), 0, GCornerNone);
+        }
+      }
     }
-    return;
+    y += glyph_w * ML_GLYPH_PX + ML_GLYPH_GAP;
   }
-  // Stopped: simple square.
-  graphics_fill_rect(gctx, GRect(x, y + 1, 10, 10), 0, GCornerNone);
+}
+
+static const char *ml_state_label_for(TimerState st) {
+  switch (st) {
+    case TS_RUNNING: return "ON";
+    case TS_PAUSED:  return "PS";
+    default:         return "OFF";   // TS_IDLE / stopped
+  }
+}
+
+// row_h: the full row height available to center the (variable-length)
+// label within - see call site, which passes the row's own full height
+// rather than squeezing into the text's cap-height the way the old fixed-
+// 12px-tall icon did.
+static void ml_draw_state_icon(GContext *gctx, int x, int row_top_y, int row_h, TimerState st, GColor color) {
+  const char *label = ml_state_label_for(st);
+  int label_len = ml_state_label_len(label);
+  int y = row_top_y + (row_h - label_len) / 2;
+  // "ON"/"PS" (running/paused) are shorter than "OFF" and so, centered,
+  // sit a little higher in the row than "OFF" does - nudge them down to
+  // look better aligned across all three states. "ON" gets 1px less than
+  // "PS" (per-state tuning, not a shared constant) to fine-tune its own
+  // placement.
+  if (st == TS_RUNNING) { y += 1; }
+  else if (st == TS_PAUSED) { y += 2; }
+  draw_state_label_rotated(gctx, x, y, label, color);
 }
 
 // Arrow-shaped progress bar: a rectangular "shaft" plus a triangular "head",
@@ -3763,10 +3871,11 @@ static void ml_draw_primary_line(GContext *gctx, GRect b, const Timer *t, GColor
   GFont tf = fonts_get_system_font(small ? FONT_KEY_GOTHIC_18_BOLD : FONT_KEY_GOTHIC_24_BOLD);
   int th = small ? 22 : 28;
   int ty = (b.size.h - th) / 2 - 2;
-  int icon_x = 4;
-  int icon_y = ty + (th - 12) / 2 + 3;
-  ml_draw_state_icon(gctx, b.origin.x + icon_x, b.origin.y + icon_y, t->state, fg);
-  int time_x = icon_x + 16;
+  int icon_x = 3;
+  // Center within the row's own full height, not just the text's cap-height -
+  // see ml_draw_state_icon's own comment for why that extra room matters.
+  ml_draw_state_icon(gctx, b.origin.x + icon_x, b.origin.y, b.size.h, t->state, fg);
+  int time_x = icon_x + 12; // icon's own footprint is ML_GLYPH_H*ML_GLYPH_PX=10px; +2 for breathing room
   bool show_full_duration = (t->state == TS_RUNNING) || (t->state == TS_PAUSED);
   int32_t primary_secs = show_full_duration ? t->duration : tc_remaining_now(t, now_s());
   char rem[16]; tc_format_fixed(rem, sizeof(rem), primary_secs);
