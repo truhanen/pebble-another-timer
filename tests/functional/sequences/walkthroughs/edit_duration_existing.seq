@@ -31,7 +31,7 @@ SLEEP 1
 # NOT to) - values below are measured from a live run (backdoor-set 300 at
 # T0, minus real elapsed seconds observed at each checkpoint), not the
 # raw designed 300, with a small tolerance for run-to-run variance.
-APPMSG --int 10020=1 10029=296 10030=8 10033=0 --string 10031="12:00"
+APPMSG --int 10020=1 10027=296 10028=8 10031=0 --string 10029="12:00"
 SCREENSHOT initial_list
 
 # --- Idle Timer: row 2 (row 0 = "+ New timer", row 1 = Running Timer,
@@ -39,17 +39,17 @@ SCREENSHOT initial_list
 TAP down
 TAP down
 LONGPRESS select
-APPMSG --int 10033=0 --string 10031="12:00"
+APPMSG --int 10031=0 --string 10029="12:00"
 SCREENSHOT idle_edit_menu
 TAP select
-APPMSG --int 10033=0 --string 10031="12:00"
+APPMSG --int 10031=0 --string 10029="12:00"
 SCREENSHOT idle_duration_dial
 TAP up
 TAP select
 TAP up
 TAP select
 SLEEP 1
-APPMSG --int 10033=0 --string 10031="12:00"
+APPMSG --int 10031=0 --string 10029="12:00"
 SCREENSHOT idle_duration_changed_remaining_should_match
 
 # Confirming the dial's last field (apply_overwrite_only) already pops
@@ -70,16 +70,16 @@ SCREENSHOT idle_duration_changed_remaining_should_match
 # containerized run reliably measured 277s real at this checkpoint, well
 # outside that native-derived window. Recalibrated from a containerized
 # measurement, 2026-10-01.
-APPMSG --int 10020=1 10029=277 10030=12 10033=0 --string 10031="12:00"
+APPMSG --int 10020=1 10027=277 10028=12 10031=0 --string 10029="12:00"
 SCREENSHOT back_on_main_list_already
 
 # --- Running Timer: row 1 ---
 TAP up
 LONGPRESS select
-APPMSG --int 10033=0 --string 10031="12:00"
+APPMSG --int 10031=0 --string 10029="12:00"
 SCREENSHOT running_edit_menu
 TAP select
-APPMSG --int 10033=0 --string 10031="12:00"
+APPMSG --int 10031=0 --string 10029="12:00"
 SCREENSHOT running_duration_dial
 TAP up
 TAP select
@@ -97,7 +97,7 @@ SLEEP 1
 # accumulates more real round-trip variance than most. Widened further
 # for real contention headroom rather than re-centering on a still-
 # correct value.
-APPMSG --int 10020=1 10029=260 10030=25 10033=0 --string 10031="12:00"
+APPMSG --int 10020=1 10027=260 10028=25 10031=0 --string 10029="12:00"
 SCREENSHOT running_duration_changed_should_NOT_affect_live_countdown
 # The running row's FIRST/left number on its second line (the genuine
 # remaining time) should read a value consistent with 300 minus real

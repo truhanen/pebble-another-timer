@@ -40,11 +40,11 @@ IMPORT ../common/wipe_and_prep.seq
 # screenshots (same as create_and_start_timer.seq) - deliberately NOT
 # KeyboardOnNewTimer=0, see the header comment above.
 APPMSG --int 10015=0 10003=0
-APPMSG --int 10033=0 --string 10031="12:00"
+APPMSG --int 10031=0 --string 10029="12:00"
 SCREENSHOT list_empty
 
 TAP select
-APPMSG --int 10033=0 --string 10031="12:00"
+APPMSG --int 10031=0 --string 10029="12:00"
 SCREENSHOT duration_dial_default
 
 # Same "15 minutes" dial point as touch_dial_set_via_position.seq (see its
@@ -99,7 +99,7 @@ TOUCHUP
 # settled to its deterministic steady-on resting state before the
 # screenshot, independent of blink phase. Fixed 2026-10-01.
 SLEEP 4.5
-APPMSG --int 10033=0 --string 10031="12:00"
+APPMSG --int 10031=0 --string 10029="12:00"
 SCREENSHOT keyboard_open
 
 # "O" is the 3rd letter of key5 ("mno", cell centre (166, 113): row 1,
@@ -115,12 +115,12 @@ TOUCH 166 113 0.1
 # j -> k.
 TOUCH 100 113 0.1
 TOUCH 100 113 0.1
-APPMSG --int 10033=0 --string 10031="12:00"
+APPMSG --int 10031=0 --string 10029="12:00"
 SCREENSHOT keyboard_typed
 
 # SELECT commits the pending "k" and submits the whole label - see
 # multitap_keyboard_window.c's prv_select_click / multitap_keyboard_submit.
 TAP select
 SLEEP 0.5
-APPMSG --int 10033=0 --string 10031="12:00"
+APPMSG --int 10031=0 --string 10029="12:00"
 SCREENSHOT timer_created

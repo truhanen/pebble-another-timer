@@ -18,7 +18,7 @@ APPMSG --string 10000="$(printf 'Timer A\037300\0371')"
 SLEEP 1
 APPMSG --int 10020=0 10021=1 10022=300
 SLEEP 1
-APPMSG --int 10020=0 10029=296 10030=8 10033=0 --string 10031="12:00"
+APPMSG --int 10020=0 10027=296 10028=8 10031=0 --string 10029="12:00"
 SCREENSHOT running_300s
 
 # Pause/Resume/Stop below are genuine state transitions that read the
@@ -36,14 +36,14 @@ SCREENSHOT running_300s
 # dial, not this timer's run-control menu. One DOWN first.
 TAP down
 TAP select
-APPMSG --int 10020=0 10029=286 10030=8 10033=0 --string 10031="12:00"
+APPMSG --int 10020=0 10027=286 10028=8 10031=0 --string 10029="12:00"
 SCREENSHOT run_control_menu
 TAP down
 TAP select
 SLEEP 1
 # Best-effort estimate (~286s remaining, wide tolerance) - exact value
 # depends on real Pause-press timing, see the note above.
-APPMSG --int 10020=0 10029=286 10030=20 10033=0 --string 10031="12:00"
+APPMSG --int 10020=0 10027=286 10028=20 10031=0 --string 10029="12:00"
 SCREENSHOT paused
 
 # Resume: for TS_PAUSED, tc_detail_actions gives Stop=0/Start(Resume)=1.
@@ -53,19 +53,19 @@ TAP select
 SLEEP 1
 # Value measured from a live run (285s) - real Pause/Resume transitions
 # show more run-to-run variance than pure backdoor checkpoints even when
-# centered correctly (see wakeup_conflict_leak_on_state_change.seq's own
-# note), so this keeps a wider tolerance than the backdoor-only ones above
+# centered correctly (button presses add real timing
+# jitter), so this keeps a wider tolerance than the backdoor-only ones above
 # despite starting from a measured center, not a guess.
-APPMSG --int 10020=0 10029=285 10030=20 10033=0 --string 10031="12:00"
+APPMSG --int 10020=0 10027=285 10028=20 10031=0 --string 10029="12:00"
 SCREENSHOT resumed_running
 
 # Stop: back to the run-control menu, row 0.
 TAP select
-APPMSG --int 10033=0 --string 10031="12:00"
+APPMSG --int 10031=0 --string 10029="12:00"
 SCREENSHOT run_control_menu_again
 TAP select
 SLEEP 1
 # Stop resets to the full configured duration - an exact, time-independent
 # constant (see tc_reset()), unlike the paused/resumed estimates above.
-APPMSG --int 10020=0 10029=300 10030=5 10033=0 --string 10031="12:00"
+APPMSG --int 10020=0 10027=300 10028=5 10031=0 --string 10029="12:00"
 SCREENSHOT stopped_should_show_full_duration_not_remaining

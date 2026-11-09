@@ -15,7 +15,7 @@ APPMSG --string 10000="$(printf 'Original Name\037300\0371')"
 SLEEP 1
 APPMSG --int 10020=0 10021=1 10022=200
 SLEEP 1
-APPMSG --int 10020=0 10029=197 10030=8 10033=0 --string 10031="12:00"
+APPMSG --int 10020=0 10027=197 10028=8 10031=0 --string 10029="12:00"
 SCREENSHOT running_with_200s_left
 
 # Same id (1), different name/duration - per tc_reconcile's "same id,
@@ -26,5 +26,5 @@ SCREENSHOT running_with_200s_left
 # seconds observed), not the new 600 duration.
 APPMSG --string 10000="$(printf 'Renamed\037600\0371')"
 SLEEP 1
-APPMSG --int 10020=0 10029=188 10030=8 10033=0 --string 10031="12:00"
+APPMSG --int 10020=0 10027=188 10028=8 10031=0 --string 10029="12:00"
 SCREENSHOT should_show_new_name_still_running_about_200s_left_not_600

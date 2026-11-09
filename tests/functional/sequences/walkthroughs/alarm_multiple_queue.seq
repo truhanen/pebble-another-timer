@@ -59,7 +59,7 @@ SLEEP 16
 # see alarm_overtime_display.seq's own comment on the same effect), hence
 # the wider tolerance.
 SLEEP 7
-APPMSG --int 10020=0 10029=-27 10030=8 10033=0 --string 10031="12:00"
+APPMSG --int 10020=0 10027=-27 10028=8 10031=0 --string 10029="12:00"
 SCREENSHOT first_alarm_showing
 
 # Stop dismisses A's alarm; the queue advances to Timer B (idx 1), whose
@@ -69,7 +69,7 @@ SCREENSHOT first_alarm_showing
 # checkpoint above.
 TAP down
 SLEEP 1
-APPMSG --int 10020=1 10029=-32 10030=10 10033=0 --string 10031="12:00"
+APPMSG --int 10020=1 10027=-32 10028=10 10031=0 --string 10029="12:00"
 SCREENSHOT second_alarm_should_now_be_showing
 
 # Both timers are idle/stopped after their alarms are dismissed -
@@ -77,6 +77,6 @@ SCREENSHOT second_alarm_should_now_be_showing
 # exact, time-independent constant, safe to check tightly for both rows.
 TAP down
 SLEEP 1
-APPMSG --int 10020=0 10029=5 10030=2 10033=0 --string 10031="12:00"
-APPMSG --int 10020=1 10029=5 10030=2 10033=0 --string 10031="12:00"
+APPMSG --int 10020=0 10027=5 10028=2 10031=0 --string 10029="12:00"
+APPMSG --int 10020=1 10027=5 10028=2 10031=0 --string 10029="12:00"
 SCREENSHOT both_dismissed_back_to_list

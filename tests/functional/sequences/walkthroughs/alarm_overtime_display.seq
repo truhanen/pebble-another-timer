@@ -57,10 +57,10 @@ SLEEP 1
 APPMSG --int 10020=0 10021=1 10022=5
 SLEEP 1
 SLEEP 7
-APPMSG --int 10020=0 10029=-8 10030=5 10033=0 --string 10031="12:00"
+APPMSG --int 10020=0 10027=-8 10028=5 10031=0 --string 10029="12:00"
 SCREENSHOT alarm_just_fired_elapsed_near_0
 SLEEP 25
-APPMSG --int 10020=0 10029=-35 10030=8 10033=0 --string 10031="12:00"
+APPMSG --int 10020=0 10027=-35 10028=8 10031=0 --string 10029="12:00"
 # Renamed 2026-10-02 - "about_5s" was stale from before the gap above was
 # retuned from an original 5s to the current 25s (see this file's own
 # header comment on that history); the real value here is ~35s overtime.
@@ -71,5 +71,5 @@ SLEEP 1
 # duration (5s), an exact, time-independent constant, safe to check
 # tightly (paused/idle timers now respect the override too - see
 # remaining_override_get() in main.c).
-APPMSG --int 10020=0 10029=5 10030=2 10033=0 --string 10031="12:00"
+APPMSG --int 10020=0 10027=5 10028=2 10031=0 --string 10029="12:00"
 SCREENSHOT dismissed

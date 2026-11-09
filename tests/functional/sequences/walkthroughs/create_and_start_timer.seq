@@ -23,29 +23,29 @@ IMPORT ../common/wipe_and_prep.seq
 # are measured from a live run, not guessed; re-verify if this file's
 # button sequence changes.
 APPMSG --int 10016=0 10015=0 10003=0
-APPMSG --int 10033=0 --string 10031="12:00"
+APPMSG --int 10031=0 --string 10029="12:00"
 SCREENSHOT list_empty
 
 # SELECT on the (only) "+ New timer" row opens the duration dial, header
 # "Duration", defaulting to 00:01:00 with the minute field focused.
 TAP select
-APPMSG --int 10033=0 --string 10031="12:00"
+APPMSG --int 10031=0 --string 10029="12:00"
 SCREENSHOT duration_dial_default
 
 # UP/DOWN adjust the focused field; SELECT advances hour -> minute -> second
 # and, once on the last field, confirms instead of advancing further.
 TAP up
-APPMSG --int 10033=0 --string 10031="12:00"
+APPMSG --int 10031=0 --string 10029="12:00"
 SCREENSHOT duration_minute_adjusted
 TAP select
 TAP up
-APPMSG --int 10033=0 --string 10031="12:00"
+APPMSG --int 10031=0 --string 10029="12:00"
 SCREENSHOT duration_seconds_adjusted
 TAP select
 # Idle, just-created timer: duration is an exact, time-independent
 # constant (2:01 = 121s from the dial adjustments above), safe to check
 # tightly.
-APPMSG --int 10020=0 10029=121 10030=5 10033=0 --string 10031="12:00"
+APPMSG --int 10020=0 10027=121 10028=5 10031=0 --string 10029="12:00"
 SCREENSHOT timer_created
 
 # A short SELECT on the newly created (and already-focused) timer row
@@ -53,9 +53,9 @@ SCREENSHOT timer_created
 TAP select
 # Value measured from a live run (118s) - real button-driven Start
 # transitions show more run-to-run variance than pure backdoor
-# checkpoints even when centered correctly (see
-# wakeup_conflict_leak_on_state_change.seq's own note), so this keeps a
+# checkpoints even when centered correctly (button presses add real timing
+# jitter), so this keeps a
 # wider tolerance than the exact idle checkpoint above despite starting
 # from a measured center, not a guess.
-APPMSG --int 10020=0 10029=118 10030=20 10033=0 --string 10031="12:00"
+APPMSG --int 10020=0 10027=118 10028=20 10031=0 --string 10029="12:00"
 SCREENSHOT timer_running

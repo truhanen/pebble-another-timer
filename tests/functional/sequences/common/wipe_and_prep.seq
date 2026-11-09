@@ -8,9 +8,9 @@
 # IMPORTANT: every sequence that imports this file needs an
 # `APP_TEST_HOOKS=1 pebble build` (native runs only - the containerized/
 # golden path already defaults this, see `run-sequence-in-container.sh`'s
-# own `APP_TEST_HOOKS="${APP_TEST_HOOKS:-1}"`). This used to only matter
-# for the wakeup_conflict_*.seq walkthroughs (which needed
-# TestBlockedSystemWakeupMinuteOffsetsPos/Neg specifically), but since the
+# own `APP_TEST_HOOKS="${APP_TEST_HOOKS:-1}"`). It matters for every
+# sequence, not just a few: the test-only AppMessage hooks are compiled out
+# otherwise, and since the
 # TestSetTimerIndex/State/Remaining backdoor and the
 # TestSetTimerRemainingDisplay/TestSetClockDisplay/
 # TestSetLaunchElapsedDisplaySec display-override family used throughout
@@ -42,8 +42,8 @@ SLEEP 3
 # by design - they're APP-SIDE rendering overrides (see main.c's
 # inbox_received()), never touch the real emulator/system clock, so they
 # can't trigger that discontinuity and work identically for every
-# sequence, including alarm_*.seq/
-# wakeup_conflict_natural_fire_while_open.seq - expiry/wakeup logic always
+# sequence, including alarm_*.seq
+# (which wait for a real timer to fire) - expiry/wakeup logic always
 # uses the real clock regardless of this.
 #
 # IdleExitSec=0 (key 10011) disables idle auto-exit. See

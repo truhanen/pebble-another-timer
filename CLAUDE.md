@@ -254,31 +254,6 @@ only send one for a paused/idle timer if its exact value really is known
 way, and skipping avoids a spurious `"BAD"` marker on the detail window's
 header, which doesn't share `ml_draw_detail_line()`'s guard against this).
 
-`TestBlockedSystemWakeupMinuteOffsetsPos`/`...Neg` are handled the same
-way (`APP_TEST_HOOKS=1`-gated). Each is a comma-separated list
-of non-negative whole-minute offsets (e.g. `"0,2"`), simulating another
-app's wakeup occupying those minutes *relative to whichever timer's own
-end_time is currently being evaluated* — Pos counts minutes at/after that
-reference minute, Neg counts minutes before it, split into two fields
-specifically so parsing never has to handle a signed list. `test_wakeup_
-schedule()` (`main.c`) intercepts the ~3 real `wakeup_schedule()` call
-sites and refuses a request exactly like Pebble's real ±60s exclusion
-window would if it lands near a configured offset, otherwise calls through
-to the real API unchanged. Because the reference re-centers fresh on every
-call, offset `"0"` alone keeps blocking the right timer's own minute even
-as its end_time shifts (`+1 min`, `-1 min`) or as a *different* timer
-becomes the current target — no reconfiguration needed between phases of a
-multi-timer test. Sending either field re-triggers an immediate re-check
-(`handle_wakeup_result(rearm_wakeup(), ...)`); an absent field leaves that
-side's list unchanged, send an empty string to explicitly clear one side.
-This exists specifically for
-`tests/functional/sequences/walkthroughs/wakeup_conflict_*.seq` (see
-"Tests" below); replaces the old ad hoc `// TEMP-TEST-FORCE` one-line edit
-mentioned in the `tests/wakeup_test_app` note (and an earlier, less
-realistic single-timer-id `TestForceWakeupFailFor` version of this same
-hook) with something permanent, scriptable, and much closer to how the
-real exclusion window actually behaves.
-
 ## Tests
 
 - `tests/test_timer_calc.c` — plain `assert`-based C program, no framework,
@@ -289,20 +264,6 @@ real exclusion window actually behaves.
   needed: the modules under test take injected `get`/`set` storage functions,
   and tests supply an in-memory `Map`-backed `fakeStore` in place of
   `localStorage`.
-- `tests/wakeup_test_app/` — a separate, bare-minimum Pebble project (own
-  UUID/`.pbw`, since a watchapp is one process per package) for testing the
-  wakeup-conflict feature against a REAL other app's wakeup, not the
-  temporary `// TEMP-TEST-FORCE` hack sessions have used before (a one-line
-  edit forcing `rearm_wakeup()` in `main.c` to always return
-  `WAKEUP_ARM_FAILED`, reverted before finishing) - that hack is still fine
-  for simpler self-only conflict simulation, but never exercises Pebble's
-  actual cross-app wakeup exclusion or real pre-emption/graceful-close
-  timing the way this app does. Entirely AppMessage-driven
-  (`ScheduleWakeup`/`CancelWakeup` int keys) - see its own README for usage
-  and an end-to-end cross-app conflict test recipe. Build/install it
-  independently
-  (`cd tests/wakeup_test_app && pebble build && pebble install --emulator
-  emery --vnc`) alongside the main app in the same emulator.
 - `tests/functional_framework/` — a **git submodule** pointing at its own
   repo, [truhanen/pebble-functional-test-framework](https://github.com/truhanen/pebble-functional-test-framework)
   (history was extracted from this repo with `git filter-repo`, so old blame/
@@ -358,28 +319,14 @@ real exclusion window actually behaves.
   `--emulator`/`--vnc` automatically) but doesn't remove the underlying
   constraints.
 
-  `sequences/walkthroughs/wakeup_conflict_*.seq` cover the conflict-window
-  feature end to end under its current single-Ok/Don't-exit/Exit-anyway
-  design (silent auto-resolution when a free early-wake slot exists vs.
-  the single-row "Ok" informational window when none does, the 2-row
-  exit-guard re-prompt, the `handle_wakeup_result()` re-entrancy guard,
-  multi-timer plan eviction, natural-fire-while-open, and pausing a timer
-  that holds an accepted plan) using
-  `TestBlockedSystemWakeupMinuteOffsetsPos`/`...Neg` (see above) instead of
-  `tests/wakeup_test_app`'s real cross-app timing - deterministic and fast.
-  Needs an `APP_TEST_HOOKS=1` build like every other sequence now does (see
-  `wipe_and_prep.seq`'s own header comment - a normal build silently
-  ignores every `Test*` AppMessage rather than erroring, so a walkthrough
-  that never shows an expected conflict window is the first symptom to
-  check this against).
-  Written without a live emulator run available at the time (only read
-  against the source, not confirmed on screen) - verify the exact
-  row-index button sequences before trusting these as standing regression
-  tests, per each file's own "unverified" note.
+  Every sequence needs an `APP_TEST_HOOKS=1` build (see `wipe_and_prep.seq`'s
+  own header comment - a normal build silently ignores every `Test*`
+  AppMessage rather than erroring, so a walkthrough that shows live values
+  instead of the expected static ones is the first symptom to check this
+  against).
 
-  The rest of `sequences/walkthroughs/` covers core, non-wakeup-conflict
-  functionality along the same lines: run-control (pause/resume/stop,
-  ±1 min, restart), natural expiry + the alarm queue, the "+ New timer"
+  `sequences/walkthroughs/` covers core functionality: run-control
+  (pause/resume/stop, ±1 min, restart), natural expiry + the alarm queue, the "+ New timer"
   wizard (including discarding a draft), the long-press edit menu
   (duration/label/after-finished/vibration/sound), `RunningFirst`,
   `TimerConfig` reconcile preserving a running timer's live state across a

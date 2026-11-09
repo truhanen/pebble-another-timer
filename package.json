@@ -50,8 +50,6 @@
       "AudioVolume",
       "DefaultVibrationEnabled",
       "DefaultSoundEnabled",
-      "TestBlockedSystemWakeupMinuteOffsetsPos",
-      "TestBlockedSystemWakeupMinuteOffsetsNeg",
       "TestSetTimerRemainingDisplay",
       "TestSetTimerRemainingDisplayToleranceSec",
       "TestSetClockDisplay",

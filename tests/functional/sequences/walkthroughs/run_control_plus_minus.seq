@@ -33,7 +33,7 @@ TAP down
 TAP down
 # Measured: backdoor set remaining=300 at T0; this checkpoint landed ~14s
 # later (real, from a live run) -> actual ~286, not the designed 300.
-APPMSG --int 10020=0 10029=286 10030=8 10033=0 --string 10031="12:00"
+APPMSG --int 10020=0 10027=286 10028=8 10031=0 --string 10029="12:00"
 SCREENSHOT plus_one_selected
 TAP select
 SLEEP 1
@@ -42,7 +42,7 @@ SLEEP 1
 # happens containerized (see CLAUDE.md), and containerized round-trip
 # timing runs measurably slower here. Recalibrated from solo containerized
 # measurements, 2026-10-01: 348s here (was estimated 337).
-APPMSG --int 10020=0 10029=348 10030=10 10033=0 --string 10031="12:00"
+APPMSG --int 10020=0 10027=348 10028=10 10031=0 --string 10029="12:00"
 SCREENSHOT should_read_about_6_00
 
 # Re-enter (dl_select doesn't close the detail window on +/-1min, so the
@@ -51,13 +51,13 @@ SCREENSHOT should_read_about_6_00
 TAP down
 # Recalibrated from a containerized measurement, 2026-10-01: 344s (was
 # estimated 329).
-APPMSG --int 10020=0 10029=344 10030=10 10033=0 --string 10031="12:00"
+APPMSG --int 10020=0 10027=344 10028=10 10031=0 --string 10029="12:00"
 SCREENSHOT minus_one_selected
 TAP select
 SLEEP 1
 # Recalibrated from a containerized measurement, 2026-10-01: 280s (was
 # estimated 260).
-APPMSG --int 10020=0 10029=280 10030=12 10033=0 --string 10031="12:00"
+APPMSG --int 10020=0 10027=280 10028=12 10031=0 --string 10029="12:00"
 SCREENSHOT should_read_about_5_00
 
 # Force it down toward the floor with several more -1 min presses (this
@@ -75,5 +75,5 @@ SLEEP 1
 # previously here was measured natively; a solo containerized run
 # reliably measured ~29s real overtime at this checkpoint. Recalibrated
 # from a containerized measurement, 2026-10-01.
-APPMSG --int 10020=0 10029=-29 10030=15 10033=0 --string 10031="12:00"
+APPMSG --int 10020=0 10027=-29 10028=15 10031=0 --string 10029="12:00"
 SCREENSHOT after_many_minus_presses_should_not_be_negative

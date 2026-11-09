@@ -10,7 +10,7 @@
 IMPORT ../common/wipe_and_prep.seq
 
 APPMSG --int 10011=5
-APPMSG --int 10033=0 --string 10031="12:00"
+APPMSG --int 10031=0 --string 10029="12:00"
 SCREENSHOT list_idle_exit_5s
 SLEEP 8
 # Deliberately NOT sending a clock/elapsed override here - if idle-exit
@@ -25,6 +25,6 @@ SLEEP 8
 # PNG) - no AppMessage, no app interaction of any kind - masking the OS
 # watchface's own rotating hint text, which would otherwise make this
 # golden intermittently fail for reasons having nothing to do with
-# idle-exit (see wakeup_conflict_exit_guard_reprompt.seq's identical
-# checkpoint for the full reasoning and how this rect was measured).
+# idle-exit. Rect measured 2026-10-01 by a pixel diff across real captures of
+# both hint-text variants: tight bbox (19,97)-(182,135), padded to (15,93)-(185,138).
 SCREENSHOT should_have_auto_exited_to_watchface --mask-rect 170x45+15+93

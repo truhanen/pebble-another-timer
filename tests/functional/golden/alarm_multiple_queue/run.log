@@ -20,24 +20,24 @@ platform=emery vnc=1 app_uuid=1df6fc5c-261d-49c7-b339-6ea60cbe6649
 + pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=1 10021=1 10022=5
 [alarm_multiple_queue.seq:29] SLEEP 16
 [alarm_multiple_queue.seq:61] SLEEP 7
-[alarm_multiple_queue.seq:62] APPMSG --int 10020=0 10029=-27 10030=8 10033=0 --string 10031="12:00"
-+ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10029=-27 10030=8 10033=0 --string 10031=12:00
+[alarm_multiple_queue.seq:62] APPMSG --int 10020=0 10027=-27 10028=8 10031=0 --string 10029="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10027=-27 10028=8 10031=0 --string 10029=12:00
 [alarm_multiple_queue.seq:63] SCREENSHOT first_alarm_showing
 + pebble screenshot --emulator emery --vnc --no-open 01_first_alarm_showing.png
 [alarm_multiple_queue.seq:70] TAP down
 + pebble emu-button --emulator emery --vnc click down --duration 150
 [alarm_multiple_queue.seq:71] SLEEP 1
-[alarm_multiple_queue.seq:72] APPMSG --int 10020=1 10029=-32 10030=10 10033=0 --string 10031="12:00"
-+ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=1 10029=-32 10030=10 10033=0 --string 10031=12:00
+[alarm_multiple_queue.seq:72] APPMSG --int 10020=1 10027=-32 10028=10 10031=0 --string 10029="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=1 10027=-32 10028=10 10031=0 --string 10029=12:00
 [alarm_multiple_queue.seq:73] SCREENSHOT second_alarm_should_now_be_showing
 + pebble screenshot --emulator emery --vnc --no-open 02_second_alarm_should_now_be_showing.png
 [alarm_multiple_queue.seq:78] TAP down
 + pebble emu-button --emulator emery --vnc click down --duration 150
 [alarm_multiple_queue.seq:79] SLEEP 1
-[alarm_multiple_queue.seq:80] APPMSG --int 10020=0 10029=5 10030=2 10033=0 --string 10031="12:00"
-+ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10029=5 10030=2 10033=0 --string 10031=12:00
-[alarm_multiple_queue.seq:81] APPMSG --int 10020=1 10029=5 10030=2 10033=0 --string 10031="12:00"
-+ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=1 10029=5 10030=2 10033=0 --string 10031=12:00
+[alarm_multiple_queue.seq:80] APPMSG --int 10020=0 10027=5 10028=2 10031=0 --string 10029="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=0 10027=5 10028=2 10031=0 --string 10029=12:00
+[alarm_multiple_queue.seq:81] APPMSG --int 10020=1 10027=5 10028=2 10031=0 --string 10029="12:00"
++ pebble send-app-message --emulator emery --vnc --app-uuid 1df6fc5c-261d-49c7-b339-6ea60cbe6649 --int 10020=1 10027=5 10028=2 10031=0 --string 10029=12:00
 [alarm_multiple_queue.seq:82] SCREENSHOT both_dismissed_back_to_list
 + pebble screenshot --emulator emery --vnc --no-open 03_both_dismissed_back_to_list.png
 sequence PASSED - log: run.log

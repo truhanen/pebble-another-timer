@@ -17,21 +17,21 @@ SLEEP 1
 # directly, never reads through effective_now_for()).
 TAP down
 LONGPRESS select
-APPMSG --int 10033=0 --string 10031="12:00"
+APPMSG --int 10031=0 --string 10029="12:00"
 SCREENSHOT edit_menu
 TAP down
 TAP down
 TAP down
-APPMSG --int 10033=0 --string 10031="12:00"
+APPMSG --int 10031=0 --string 10029="12:00"
 SCREENSHOT vibration_row_selected
 TAP select
-APPMSG --int 10033=0 --string 10031="12:00"
+APPMSG --int 10031=0 --string 10029="12:00"
 SCREENSHOT vibration_toggled_off
 TAP down
-APPMSG --int 10033=0 --string 10031="12:00"
+APPMSG --int 10031=0 --string 10029="12:00"
 SCREENSHOT sound_row_selected
 TAP select
-APPMSG --int 10033=0 --string 10031="12:00"
+APPMSG --int 10031=0 --string 10029="12:00"
 SCREENSHOT sound_toggled_off
 TAP back
 
@@ -47,12 +47,12 @@ SLEEP 7
 # runs). Applying that same override here instead of leaving the value
 # live/unpinned, which was never actually pixel-reproducible run to run.
 # Corrected 2026-10-01.
-APPMSG --int 10020=0 10029=-8 10030=5 10033=0 --string 10031="12:00"
+APPMSG --int 10020=0 10027=-8 10028=5 10031=0 --string 10029="12:00"
 SCREENSHOT alarm_still_shows_with_both_disabled
 TAP down
 SLEEP 1
 # Idle/stopped after Stop - tc_reset() puts it back to the full configured
 # duration (5s), an exact, time-independent constant, safe to check
 # tightly (same as alarm_overtime_display.seq's own "dismissed" checkpoint).
-APPMSG --int 10020=0 10029=5 10030=2 10033=0 --string 10031="12:00"
+APPMSG --int 10020=0 10027=5 10028=2 10031=0 --string 10029="12:00"
 SCREENSHOT dismissed_cleanly

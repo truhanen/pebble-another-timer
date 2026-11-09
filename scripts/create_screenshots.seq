@@ -60,7 +60,7 @@ SLEEP 1
 # this walkthrough's 5 screenshots (35, 45, 55, 65, 75) - still fully
 # deterministic (each is an explicit override, not the real clock), just
 # not visibly stuck at one value either.
-APPMSG --int 10033=35 --string 10031="12:00"
+APPMSG --int 10031=35 --string 10029="12:00"
 
 LOG "Configuring 4 labeled timers"
 APPMSG --string 10000="Pasta${US}600${RS}Tea${US}180${RS}Laundry${US}1500${RS}Workout${US}3600"
@@ -78,7 +78,7 @@ SLEEP 1
 # list was empty before this config landed) - every main-view screenshot
 # in this walkthrough keeps the selection on "+ New timer", so no
 # navigation needed.
-APPMSG --int 10033=35 --string 10031="12:00"
+APPMSG --int 10031=35 --string 10029="12:00"
 SCREENSHOT main_view
 
 # ---------------------------------------------------------------------
@@ -103,7 +103,7 @@ SLEEP 1
 
 TAP select
 SLEEP 1
-APPMSG --int 10033=45 --string 10031="12:00"
+APPMSG --int 10031=45 --string 10029="12:00"
 SCREENSHOT duration_dial
 
 # Dial centre (100, 135), radius 70 (outer selection ring, not the inner
@@ -114,7 +114,7 @@ SCREENSHOT duration_dial
 # y = 135 - 70*cos(60deg) = 100.
 TOUCHDOWN 161 100
 SLEEP 0.2
-APPMSG --int 10033=55 --string 10031="12:00"
+APPMSG --int 10031=55 --string 10029="12:00"
 SCREENSHOT duration_dial_touch
 
 # A ~1.2s total hold (not just the 0.2s settle above) before release -
@@ -138,7 +138,7 @@ SLEEP 1.0
 TAP back
 SLEEP 1
 
-APPMSG --int 10033=65 --string 10031="12:00"
+APPMSG --int 10031=65 --string 10029="12:00"
 SCREENSHOT main_view_no_timers
 
 # Redo the same duration commit (same 10-minute point as above, so the
@@ -188,5 +188,5 @@ SLEEP 0.5
 # keep every main-view screenshot in this walkthrough focused the same way.
 TAP up
 SLEEP 1
-APPMSG --int 10033=75 --string 10031="12:00"
+APPMSG --int 10031=75 --string 10029="12:00"
 SCREENSHOT main_view_one_timer
